@@ -1,0 +1,62 @@
+{
+  "name": "garantiyaid-backend",
+  "version": "1.0.0",
+  "description": "",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test",
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "worker:notifications": "node src/workers/notification.worker.js",
+    "verify:workflow": "node --throw-deprecation scripts/verify-program-enrollment-workflow.js",
+    "verify:distribution": "npm run verify:distribution:phase1 && npm run verify:distribution:slots && npm run verify:distribution:allocations && npm run verify:distribution:schedules && npm run verify:distribution:claims && npm run verify:wallet && npm run verify:biometric",
+    "verify:distribution:phase1": "node --throw-deprecation scripts/verify-distribution-phase1.js",
+    "verify:distribution:slots": "node --throw-deprecation scripts/verify-distribution-slots-phase2.js",
+    "verify:distribution:allocations": "node --throw-deprecation scripts/verify-distribution-allocations-phase3.js",
+    "verify:distribution:schedules": "node --throw-deprecation scripts/verify-distribution-schedules-phase4.js",
+    "verify:distribution:claims": "node --throw-deprecation scripts/verify-distribution-claims-phase5.js",
+    "verify:wallet": "node --throw-deprecation scripts/verify-simulated-wallet-phase6.js",
+    "verify:biometric": "node --throw-deprecation scripts/verify-biometric-phase7.js",
+    "verify:notifications": "node --throw-deprecation scripts/verify-notifications-phase9.js",
+    "verify:chatbot": "node --throw-deprecation --test test/chatbot.test.js",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "prisma:seed": "node prisma/seed.js",
+    "security:static": "node scripts/security-static-check.js",
+    "security:audit": "npm audit --omit=dev --audit-level=high",
+    "security:check": "npm run security:static && npm run test && npm run prisma:validate && npm run security:audit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "bcrypt": "^6.0.0",
+    "bullmq": "^6.1.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
+    "helmet": "^8.3.0",
+    "ioredis": "^6.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
+    "pg": "^8.22.0",
+    "socket.io": "^4.8.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "prisma": "^7.9.1",
+    "socket.io-client": "^4.8.1"
+  },
+  "overrides": {
+    "fast-uri": "3.1.5"
+  }
+}

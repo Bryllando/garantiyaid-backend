@@ -1,0 +1,400 @@
+import { Router } from "express";
+import { authenticateStaff } from "../../middleware/authenticate.js";
+import { authorizeRoles } from "../../middleware/authorize.js";
+import { validateBody, validateParams, validateQuery } from "../../middleware/validate.js";
+import { biometricRateLimiter } from "../../middleware/rateLimit.js";
+import {
+  cancelDistribution,
+  createDistribution,
+  getDistribution,
+  listDistributions,
+  updateDistribution,
+} from "./distribution.controller.js";
+import {
+  DISTRIBUTION_MANAGE_ROLES,
+  DISTRIBUTION_READ_ROLES,
+  CLAIM_VERIFY_ROLES,
+  QR_TOKEN_MANAGE_ROLES,
+  WALLET_MANAGE_ROLES,
+  WALLET_READ_ROLES,
+} from "./distribution.policy.js";
+import {
+  createDistributionSchema,
+  distributionIdSchema,
+  distributionListQuerySchema,
+  updateDistributionSchema,
+} from "./distribution.schemas.js";
+import {
+  closeDistributionSlot,
+  generateDistributionSlots,
+  getDistributionSlot,
+  listDistributionSlots,
+  reopenDistributionSlot,
+  updateDistributionSlot,
+} from "./distributionSlot.controller.js";
+import {
+  distributionSlotListQuerySchema,
+  distributionSlotParamsSchema,
+  generateDistributionSlotsSchema,
+  updateDistributionSlotSchema,
+} from "./distributionSlot.schemas.js";
+import {
+  cancelDistributionAllocation,
+  createDistributionAllocations,
+  getDistributionAllocation,
+  listDistributionAllocations,
+  listEligibleDistributionEnrollments,
+  reactivateDistributionAllocation,
+} from "./distributionAllocation.controller.js";
+import {
+  createDistributionAllocationsSchema,
+  distributionAllocationListQuerySchema,
+  distributionAllocationParamsSchema,
+  eligibleEnrollmentListQuerySchema,
+} from "./distributionAllocation.schemas.js";
+import {
+  cancelDistributionSchedule,
+  createDistributionSchedule,
+  generateDistributionSchedules,
+  getDistributionSchedule,
+  listDistributionSchedules,
+  listSchedulableAllocations,
+  openDistribution,
+  reactivateDistributionSchedule,
+  rescheduleDistributionSchedule,
+} from "./distributionSchedule.controller.js";
+import {
+  createDistributionScheduleSchema,
+  distributionScheduleListQuerySchema,
+  distributionScheduleParamsSchema,
+  generateDistributionSchedulesSchema,
+  rescheduleDistributionScheduleSchema,
+  schedulableAllocationListQuerySchema,
+} from "./distributionSchedule.schemas.js";
+import {
+  generateQrTokens,
+  getClaim,
+  getQrToken,
+  listClaims,
+  listQrEligibleSchedules,
+  listQrScanLogs,
+  listQrTokens,
+  reissueQrToken,
+  revokeQrToken,
+  verifyQrClaim,
+} from "./distributionClaim.controller.js";
+import {
+  claimListQuerySchema,
+  claimParamsSchema,
+  generateQrTokensSchema,
+  qrEligibleScheduleListQuerySchema,
+  qrScanLogListQuerySchema,
+  qrTokenListQuerySchema,
+  qrTokenParamsSchema,
+  verifyQrClaimSchema,
+} from "./distributionClaim.schemas.js";
+import {
+  creditVerifiedClaim,
+  listCreditableClaims,
+  listDistributionTransactions,
+  reconcileDistribution,
+} from "../wallets/wallet.controller.js";
+import {
+  creditClaimParamsSchema,
+  creditClaimSchema,
+  creditableClaimListQuerySchema,
+  distributionTransactionListQuerySchema,
+} from "../wallets/wallet.schemas.js";
+import {
+  listBiometricAttempts,
+  verifyBiometricClaim,
+} from "../biometrics/biometricClaim.controller.js";
+import { BIOMETRIC_VERIFY_ROLES } from "../biometrics/biometric.policy.js";
+import {
+  biometricAttemptListQuerySchema,
+  verifyBiometricClaimSchema,
+} from "../biometrics/biometric.schemas.js";
+import { uploadBiometricCapture } from "../biometrics/biometric.upload.js";
+
+const distributionRoutes = Router();
+
+distributionRoutes.use(authenticateStaff);
+distributionRoutes.get(
+  "/",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateQuery(distributionListQuerySchema),
+  listDistributions,
+);
+distributionRoutes.post(
+  "/",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateBody(createDistributionSchema),
+  createDistribution,
+);
+distributionRoutes.get(
+  "/:distributionId/slots",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(distributionSlotListQuerySchema),
+  listDistributionSlots,
+);
+distributionRoutes.post(
+  "/:distributionId/slots/generate",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(generateDistributionSlotsSchema),
+  generateDistributionSlots,
+);
+distributionRoutes.get(
+  "/:distributionId/slots/:slotId",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionSlotParamsSchema),
+  getDistributionSlot,
+);
+distributionRoutes.patch(
+  "/:distributionId/slots/:slotId",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionSlotParamsSchema),
+  validateBody(updateDistributionSlotSchema),
+  updateDistributionSlot,
+);
+distributionRoutes.post(
+  "/:distributionId/slots/:slotId/close",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionSlotParamsSchema),
+  closeDistributionSlot,
+);
+distributionRoutes.post(
+  "/:distributionId/slots/:slotId/reopen",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionSlotParamsSchema),
+  reopenDistributionSlot,
+);
+distributionRoutes.get(
+  "/:distributionId/eligible-enrollments",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(eligibleEnrollmentListQuerySchema),
+  listEligibleDistributionEnrollments,
+);
+distributionRoutes.post(
+  "/:distributionId/allocations",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(createDistributionAllocationsSchema),
+  createDistributionAllocations,
+);
+distributionRoutes.get(
+  "/:distributionId/allocations",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(distributionAllocationListQuerySchema),
+  listDistributionAllocations,
+);
+distributionRoutes.get(
+  "/:distributionId/allocations/:allocationId",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionAllocationParamsSchema),
+  getDistributionAllocation,
+);
+distributionRoutes.post(
+  "/:distributionId/allocations/:allocationId/cancel",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionAllocationParamsSchema),
+  cancelDistributionAllocation,
+);
+distributionRoutes.post(
+  "/:distributionId/allocations/:allocationId/reactivate",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionAllocationParamsSchema),
+  reactivateDistributionAllocation,
+);
+distributionRoutes.get(
+  "/:distributionId/schedulable-allocations",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(schedulableAllocationListQuerySchema),
+  listSchedulableAllocations,
+);
+distributionRoutes.post(
+  "/:distributionId/schedules/generate",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(generateDistributionSchedulesSchema),
+  generateDistributionSchedules,
+);
+distributionRoutes.post(
+  "/:distributionId/schedules",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(createDistributionScheduleSchema),
+  createDistributionSchedule,
+);
+distributionRoutes.get(
+  "/:distributionId/schedules",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(distributionScheduleListQuerySchema),
+  listDistributionSchedules,
+);
+distributionRoutes.get(
+  "/:distributionId/schedules/:scheduleId",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionScheduleParamsSchema),
+  getDistributionSchedule,
+);
+distributionRoutes.post(
+  "/:distributionId/schedules/:scheduleId/reschedule",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionScheduleParamsSchema),
+  validateBody(rescheduleDistributionScheduleSchema),
+  rescheduleDistributionSchedule,
+);
+distributionRoutes.post(
+  "/:distributionId/schedules/:scheduleId/cancel",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionScheduleParamsSchema),
+  cancelDistributionSchedule,
+);
+distributionRoutes.post(
+  "/:distributionId/schedules/:scheduleId/reactivate",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionScheduleParamsSchema),
+  reactivateDistributionSchedule,
+);
+distributionRoutes.post(
+  "/:distributionId/open",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  openDistribution,
+);
+distributionRoutes.get(
+  "/:distributionId/qr-eligible-schedules",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(qrEligibleScheduleListQuerySchema),
+  listQrEligibleSchedules,
+);
+distributionRoutes.post(
+  "/:distributionId/qr-tokens/generate",
+  authorizeRoles(...QR_TOKEN_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(generateQrTokensSchema),
+  generateQrTokens,
+);
+distributionRoutes.get(
+  "/:distributionId/qr-tokens",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(qrTokenListQuerySchema),
+  listQrTokens,
+);
+distributionRoutes.get(
+  "/:distributionId/qr-tokens/:qrTokenId",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(qrTokenParamsSchema),
+  getQrToken,
+);
+distributionRoutes.post(
+  "/:distributionId/qr-tokens/:qrTokenId/revoke",
+  authorizeRoles(...QR_TOKEN_MANAGE_ROLES),
+  validateParams(qrTokenParamsSchema),
+  revokeQrToken,
+);
+distributionRoutes.post(
+  "/:distributionId/qr-tokens/:qrTokenId/reissue",
+  authorizeRoles(...QR_TOKEN_MANAGE_ROLES),
+  validateParams(qrTokenParamsSchema),
+  reissueQrToken,
+);
+distributionRoutes.post(
+  "/:distributionId/claims/verify-qr",
+  authorizeRoles(...CLAIM_VERIFY_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(verifyQrClaimSchema),
+  verifyQrClaim,
+);
+distributionRoutes.post(
+  "/:distributionId/claims/verify-biometric",
+  authorizeRoles(...BIOMETRIC_VERIFY_ROLES),
+  biometricRateLimiter,
+  validateParams(distributionIdSchema),
+  uploadBiometricCapture,
+  validateBody(verifyBiometricClaimSchema),
+  verifyBiometricClaim,
+);
+distributionRoutes.get(
+  "/:distributionId/biometric-attempts",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(biometricAttemptListQuerySchema),
+  listBiometricAttempts,
+);
+distributionRoutes.get(
+  "/:distributionId/claims",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(claimListQuerySchema),
+  listClaims,
+);
+distributionRoutes.get(
+  "/:distributionId/claims/:claimId",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(claimParamsSchema),
+  getClaim,
+);
+distributionRoutes.get(
+  "/:distributionId/creditable-claims",
+  authorizeRoles(...WALLET_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(creditableClaimListQuerySchema),
+  listCreditableClaims,
+);
+distributionRoutes.post(
+  "/:distributionId/claims/:claimId/credit",
+  authorizeRoles(...WALLET_MANAGE_ROLES),
+  validateParams(creditClaimParamsSchema),
+  validateBody(creditClaimSchema),
+  creditVerifiedClaim,
+);
+distributionRoutes.get(
+  "/:distributionId/transactions",
+  authorizeRoles(...WALLET_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(distributionTransactionListQuerySchema),
+  listDistributionTransactions,
+);
+distributionRoutes.get(
+  "/:distributionId/reconciliation",
+  authorizeRoles(...WALLET_READ_ROLES),
+  validateParams(distributionIdSchema),
+  reconcileDistribution,
+);
+distributionRoutes.get(
+  "/:distributionId/qr-scan-logs",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(qrScanLogListQuerySchema),
+  listQrScanLogs,
+);
+distributionRoutes.get(
+  "/:distributionId",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  getDistribution,
+);
+distributionRoutes.patch(
+  "/:distributionId",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(updateDistributionSchema),
+  updateDistribution,
+);
+distributionRoutes.post(
+  "/:distributionId/cancel",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  cancelDistribution,
+);
+
+export default distributionRoutes;

@@ -1,0 +1,748 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  SYSTEM_ADMIN
+  DSWD_STAFF
+  BARANGAY_FACILITATOR
+}
+
+enum EnrollmentStatus {
+  PENDING
+  FOR_VALIDATION
+  NEEDS_CORRECTION
+  APPROVED
+  REJECTED
+  SUSPENDED
+  WITHDRAWN
+}
+
+enum DocumentReviewStatus {
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+}
+
+enum ProgramStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum DistributionStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+enum DistributionSlotStatus {
+  AVAILABLE
+  FULL
+  CLOSED
+}
+
+enum AllocationStatus {
+  PENDING
+  ALLOCATED
+  CANCELLED
+  CLAIMED
+}
+
+enum ScheduleStatus {
+  SCHEDULED
+  CHECKED_IN
+  MISSED
+  CANCELLED
+}
+
+enum QrTokenStatus {
+  ACTIVE
+  USED
+  EXPIRED
+  REVOKED
+}
+
+enum ClaimStatus {
+  PENDING
+  VERIFIED
+  CLAIMED
+  REJECTED
+  VOIDED
+}
+
+enum VerificationMethod {
+  QR
+  BIOMETRIC
+  MANUAL
+  QR_AND_BIOMETRIC
+}
+
+enum BiometricDataStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum NotificationChannel {
+  IN_APP
+  SMS
+  EMAIL
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum ChatbotSenderType {
+  USER
+  BOT
+  STAFF
+}
+
+enum ChatbotSessionStatus {
+  ACTIVE
+  ESCALATED
+  RESOLVED
+  ENDED
+}
+
+model User {
+  userId              String    @id @default(uuid()) @map("user_id") @db.Uuid
+  employeeId          String    @unique @map("employee_id") @db.VarChar(30)
+  username            String?   @unique @db.VarChar(30)
+  fullName            String    @map("full_name") @db.VarChar(150)
+  email               String    @unique @db.VarChar(150)
+  passwordHash        String    @map("password_hash") @db.VarChar(255)
+  totpSecret          String?   @map("totp_secret") @db.VarChar(255)
+  totpEnabled         Boolean   @default(false) @map("totp_enabled")
+  lastTotpCounter     BigInt?   @map("last_totp_counter")
+  otpCodeHash         String?   @map("otp_code_hash") @db.VarChar(255)
+  otpExpiresAt        DateTime? @map("otp_expires_at") @db.Timestamptz(6)
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  lastFailedLoginAt   DateTime? @map("last_failed_login_at") @db.Timestamptz(6)
+  lockedUntil         DateTime? @map("locked_until") @db.Timestamptz(6)
+  role                UserRole
+  contactNumber       String?   @map("contact_number") @db.VarChar(20)
+  barangayId          String?   @map("barangay_id") @db.Uuid
+  isActive            Boolean   @default(true) @map("is_active")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barangay                Barangay?                      @relation("BarangayStaff", fields: [barangayId], references: [barangayId])
+  submittedEnrollments    Enrollment[]                   @relation("EnrollmentSubmitter")
+  reviewedEnrollments     Enrollment[]                   @relation("EnrollmentReviewer")
+  createdPrograms         Program[]                      @relation("ProgramCreator")
+  uploadedDocuments       BeneficiaryDocument[]          @relation("DocumentUploader")
+  reviewedDocuments       BeneficiaryDocument[]          @relation("DocumentReviewer")
+  enrolledBiometricData   BiometricData[]                @relation("BiometricEnroller")
+  recordedConsents        BiometricConsent[]             @relation("ConsentRecorder")
+  biometricAttempts       BiometricVerificationAttempt[] @relation("BiometricVerifier")
+  createdDistributions    Distribution[]                 @relation("DistributionCreator")
+  allocatedDistributions  DistributionAllocation[]       @relation("AllocationCreator")
+  verifiedClaims          Claim[]                        @relation("ClaimVerifier")
+  qrScanLogs              QrScanLog[]                    @relation("QrScanner")
+  auditLogs               AuditLog[]
+  staffSessions           StaffSession[]
+  idempotencyRecords      IdempotencyRecord[]
+  initiatedTransactions   Transaction[]                  @relation("TransactionInitiator")
+  initiatedNotifications  Notification[]                 @relation("NotificationInitiator")
+  assignedChatbotSessions ChatbotSession[]               @relation("ChatbotAssignedStaff")
+  resolvedChatbotSessions ChatbotSession[]               @relation("ChatbotResolvedBy")
+  chatbotMessages         ChatbotMessage[]               @relation("ChatbotStaffMessage")
+
+  @@map("users")
+}
+
+model StaffSession {
+  sessionId String    @id @map("session_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  ipAddress String?   @map("ip_address") @db.VarChar(64)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("staff_sessions")
+}
+
+model IdempotencyRecord {
+  idempotencyRecordId String   @id @default(uuid()) @map("idempotency_record_id") @db.Uuid
+  userId              String   @map("user_id") @db.Uuid
+  operation           String   @db.VarChar(150)
+  idempotencyKey      String   @map("idempotency_key") @db.Uuid
+  requestHash         String   @map("request_hash") @db.VarChar(64)
+  responseStatus      Int      @map("response_status")
+  responseBody        Json     @map("response_body")
+  expiresAt           DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([userId, operation, idempotencyKey])
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}
+
+model Barangay {
+  barangayId   String   @id @default(uuid()) @map("barangay_id") @db.Uuid
+  barangayCode String?  @unique @map("barangay_code") @db.VarChar(20)
+  barangayName String   @map("barangay_name") @db.VarChar(100)
+  city         String   @db.VarChar(100)
+  province     String   @db.VarChar(100)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  staff         User[]         @relation("BarangayStaff")
+  beneficiaries Beneficiary[]
+  distributions Distribution[]
+
+  @@map("barangays")
+}
+
+model Program {
+  programId             String        @id @default(uuid()) @map("program_id") @db.Uuid
+  programName           String        @map("program_name") @db.VarChar(150)
+  programCode           String        @unique @map("program_code") @db.VarChar(30)
+  programType           String        @map("program_type") @db.VarChar(20)
+  description           String?       @db.Text
+  grantAmount           Decimal?      @map("grant_amount") @db.Decimal(12, 2)
+  budgetAmount          Decimal?      @map("budget_amount") @db.Decimal(14, 2)
+  applicationStartDate  DateTime?     @map("application_start_date") @db.Date
+  applicationEndDate    DateTime?     @map("application_end_date") @db.Date
+  requiredDocumentTypes String[]      @default([]) @map("required_document_types")
+  status                ProgramStatus @default(DRAFT)
+  createdById           String        @map("created_by") @db.Uuid
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdBy     User               @relation("ProgramCreator", fields: [createdById], references: [userId])
+  criteria      ProgramCriterion[]
+  enrollments   Enrollment[]
+  distributions Distribution[]
+
+  @@index([status])
+  @@map("programs")
+}
+
+model ProgramCriterion {
+  criterionId   String   @id @default(uuid()) @map("criterion_id") @db.Uuid
+  programId     String   @map("program_id") @db.Uuid
+  criterionName String   @map("criterion_name") @db.VarChar(100)
+  fieldName     String   @map("field_name") @db.VarChar(50)
+  operator      String   @db.VarChar(30)
+  expectedValue Json     @map("expected_value")
+  isRequired    Boolean  @default(true) @map("is_required")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  program Program @relation(fields: [programId], references: [programId])
+
+  @@map("program_criteria")
+}
+
+model Beneficiary {
+  beneficiaryId String   @id @default(uuid()) @map("beneficiary_id") @db.Uuid
+  firstName     String   @map("first_name") @db.VarChar(100)
+  middleName    String?  @map("middle_name") @db.VarChar(100)
+  lastName      String   @map("last_name") @db.VarChar(100)
+  birthDate     DateTime @map("birth_date") @db.Date
+  sex           String   @db.VarChar(10)
+  address       String   @db.Text
+  barangayId    String   @map("barangay_id") @db.Uuid
+  contactNumber String?  @map("contact_number") @db.VarChar(20)
+  email         String?  @unique @db.VarChar(150)
+  passwordHash  String?  @map("password_hash") @db.VarChar(255)
+  isVerified    Boolean  @default(false) @map("is_verified")
+  philsysNumber String?  @unique @map("philsys_number") @db.VarChar(50)
+  status        String   @default("ACTIVE") @db.VarChar(20)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barangay          Barangay                       @relation(fields: [barangayId], references: [barangayId])
+  enrollments       Enrollment[]
+  documents         BeneficiaryDocument[]
+  biometricData     BiometricData?
+  biometricConsents BiometricConsent[]
+  biometricAttempts BiometricVerificationAttempt[]
+  walletAccount     WalletAccount?
+  allocations       DistributionAllocation[]
+  schedules         Schedule[]
+  qrTokens          QrToken[]
+  claims            Claim[]
+  transactions      Transaction[]
+  notifications     Notification[]
+  chatbotSessions   ChatbotSession[]
+
+  @@map("beneficiaries")
+}
+
+model Enrollment {
+  enrollmentId   String           @id @default(uuid()) @map("enrollment_id") @db.Uuid
+  beneficiaryId  String           @map("beneficiary_id") @db.Uuid
+  programId      String           @map("program_id") @db.Uuid
+  submittedById  String           @map("submitted_by") @db.Uuid
+  enrollmentDate DateTime         @default(now()) @map("enrollment_date") @db.Date
+  status         EnrollmentStatus @default(PENDING)
+  reviewedById   String?          @map("reviewed_by") @db.Uuid
+  reviewNotes    String?          @map("review_notes") @db.Text
+  reviewedAt     DateTime?        @map("reviewed_at") @db.Timestamptz(6)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  beneficiary Beneficiary              @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  program     Program                  @relation(fields: [programId], references: [programId])
+  submittedBy User                     @relation("EnrollmentSubmitter", fields: [submittedById], references: [userId])
+  reviewedBy  User?                    @relation("EnrollmentReviewer", fields: [reviewedById], references: [userId])
+  allocations DistributionAllocation[]
+
+  @@unique([beneficiaryId, programId])
+  @@index([programId, status])
+  @@index([status])
+  @@map("enrollments")
+}
+
+model BeneficiaryDocument {
+  documentId         String               @id @default(uuid()) @map("document_id") @db.Uuid
+  beneficiaryId      String               @map("beneficiary_id") @db.Uuid
+  uploadedById       String               @map("uploaded_by") @db.Uuid
+  documentType       String               @map("doc_type") @db.VarChar(50)
+  originalFileName   String               @map("original_file_name") @db.VarChar(255)
+  mimeType           String               @map("mime_type") @db.VarChar(100)
+  fileSize           Int                  @map("file_size")
+  checksum           String               @db.VarChar(64)
+  filePath           String               @map("file_path") @db.VarChar(255)
+  reviewStatus       DocumentReviewStatus @default(SUBMITTED) @map("review_status")
+  reviewedById       String?              @map("reviewed_by") @db.Uuid
+  reviewedAt         DateTime?            @map("reviewed_at") @db.Timestamptz(6)
+  reviewNotes        String?              @map("review_notes") @db.Text
+  replacesDocumentId String?              @unique @map("replaces_document_id") @db.Uuid
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  beneficiary         Beneficiary          @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  uploadedBy          User                 @relation("DocumentUploader", fields: [uploadedById], references: [userId])
+  reviewedBy          User?                @relation("DocumentReviewer", fields: [reviewedById], references: [userId])
+  replacesDocument    BeneficiaryDocument? @relation("DocumentReplacement", fields: [replacesDocumentId], references: [documentId])
+  replacementDocument BeneficiaryDocument? @relation("DocumentReplacement")
+
+  @@index([beneficiaryId, documentType])
+  @@index([beneficiaryId, documentType, reviewStatus])
+  @@map("beneficiary_documents")
+}
+
+model BiometricConsent {
+  consentId      String    @id @default(uuid()) @map("consent_id") @db.Uuid
+  beneficiaryId  String    @map("beneficiary_id") @db.Uuid
+  consentVersion String    @map("consent_version") @db.VarChar(20)
+  consentGiven   Boolean   @map("consent_given")
+  consentedAt    DateTime  @map("consented_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  retentionUntil DateTime  @map("retention_until") @db.Timestamptz(6)
+  recordedById   String    @map("recorded_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  beneficiary   Beneficiary    @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  recordedBy    User           @relation("ConsentRecorder", fields: [recordedById], references: [userId])
+  biometricData BiometricData?
+
+  @@map("biometric_consents")
+}
+
+model BiometricData {
+  biometricId       String              @id @default(uuid()) @map("biometric_id") @db.Uuid
+  beneficiaryId     String              @unique @map("beneficiary_id") @db.Uuid
+  enrolledById      String              @map("enrolled_by") @db.Uuid
+  consentId         String              @unique @map("consent_id") @db.Uuid
+  faceEmbedding     Bytes               @map("face_embedding") @db.ByteA
+  insightfaceModel  String              @map("insightface_model") @db.VarChar(50)
+  dataStatus        BiometricDataStatus @default(ACTIVE) @map("data_status")
+  livenessScore     Decimal?            @map("liveness_score") @db.Decimal(5, 4)
+  livenessPassed    Boolean?            @map("liveness_passed")
+  verificationCount Int                 @default(0) @map("verification_count")
+  lastVerifiedAt    DateTime?           @map("last_verified_at") @db.Timestamptz(6)
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  beneficiary Beneficiary                    @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  enrolledBy  User                           @relation("BiometricEnroller", fields: [enrolledById], references: [userId])
+  consent     BiometricConsent               @relation(fields: [consentId], references: [consentId])
+  attempts    BiometricVerificationAttempt[]
+
+  @@map("biometric_data")
+}
+
+model BiometricVerificationAttempt {
+  attemptId      String   @id @default(uuid()) @map("attempt_id") @db.Uuid
+  distributionId String?  @map("distribution_id") @db.Uuid
+  beneficiaryId  String   @map("beneficiary_id") @db.Uuid
+  biometricId    String?  @map("biometric_id") @db.Uuid
+  claimId        String?  @map("claim_id") @db.Uuid
+  verifiedById   String   @map("verified_by") @db.Uuid
+  result         String   @db.VarChar(30)
+  matchScore     Decimal? @map("match_score") @db.Decimal(5, 4)
+  livenessScore  Decimal? @map("liveness_score") @db.Decimal(5, 4)
+  deviceInfo     String?  @map("device_info") @db.VarChar(255)
+  processor      String   @db.VarChar(50)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  distribution Distribution?  @relation(fields: [distributionId], references: [distributionId])
+  beneficiary  Beneficiary    @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  biometric    BiometricData? @relation(fields: [biometricId], references: [biometricId], onDelete: SetNull)
+  claim        Claim?         @relation(fields: [claimId], references: [claimId], onDelete: SetNull)
+  verifiedBy   User           @relation("BiometricVerifier", fields: [verifiedById], references: [userId])
+
+  @@index([distributionId, result, createdAt])
+  @@index([beneficiaryId, createdAt])
+  @@map("biometric_verification_attempts")
+}
+
+model WalletAccount {
+  walletId          String    @id @default(uuid()) @map("wallet_id") @db.Uuid
+  beneficiaryId     String    @unique @map("beneficiary_id") @db.Uuid
+  balance           Decimal   @default(0) @db.Decimal(12, 2)
+  currency          String    @default("PHP") @db.VarChar(5)
+  accountStatus     String    @default("ACTIVE") @map("account_status") @db.VarChar(20)
+  lastTransactionAt DateTime? @map("last_transaction_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  beneficiary  Beneficiary   @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  transactions Transaction[]
+
+  @@map("wallet_accounts")
+}
+
+model Distribution {
+  distributionId          String             @id @default(uuid()) @map("distribution_id") @db.Uuid
+  programId               String             @map("program_id") @db.Uuid
+  createdById             String             @map("created_by") @db.Uuid
+  title                   String             @db.VarChar(200)
+  distributionDate        DateTime           @map("distribution_date") @db.Date
+  startTime               DateTime           @map("start_time") @db.Time(0)
+  endTime                 DateTime           @map("end_time") @db.Time(0)
+  slotDurationMinutes     Int                @map("slot_duration_mins")
+  location                String             @db.VarChar(200)
+  barangayId              String             @map("barangay_id") @db.Uuid
+  status                  DistributionStatus @default(DRAFT)
+  verificationRequirement VerificationMethod @default(QR) @map("verification_requirement")
+  createdAt               DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  program           Program                        @relation(fields: [programId], references: [programId])
+  createdBy         User                           @relation("DistributionCreator", fields: [createdById], references: [userId])
+  barangay          Barangay                       @relation(fields: [barangayId], references: [barangayId])
+  slots             DistributionSlot[]
+  allocations       DistributionAllocation[]
+  schedules         Schedule[]
+  qrTokens          QrToken[]
+  qrScanLogs        QrScanLog[]
+  claims            Claim[]
+  transactions      Transaction[]
+  biometricAttempts BiometricVerificationAttempt[]
+  notifications     Notification[]
+
+  @@map("distributions")
+}
+
+model DistributionSlot {
+  slotId         String                 @id @default(uuid()) @map("slot_id") @db.Uuid
+  distributionId String                 @map("distribution_id") @db.Uuid
+  slotStart      DateTime               @map("slot_start") @db.Timestamptz(6)
+  slotEnd        DateTime               @map("slot_end") @db.Timestamptz(6)
+  capacity       Int
+  slotStatus     DistributionSlotStatus @default(AVAILABLE) @map("slot_status")
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  distribution Distribution @relation(fields: [distributionId], references: [distributionId])
+  schedules    Schedule[]
+
+  @@unique([distributionId, slotStart])
+  @@index([distributionId, slotStatus, slotStart])
+  @@map("distribution_slots")
+}
+
+model DistributionAllocation {
+  allocationId     String           @id @default(uuid()) @map("allocation_id") @db.Uuid
+  distributionId   String           @map("distribution_id") @db.Uuid
+  beneficiaryId    String           @map("beneficiary_id") @db.Uuid
+  enrollmentId     String           @map("enrollment_id") @db.Uuid
+  amount           Decimal          @db.Decimal(12, 2)
+  allocationStatus AllocationStatus @default(PENDING) @map("allocation_status")
+  allocatedById    String           @map("allocated_by") @db.Uuid
+  allocatedAt      DateTime         @map("allocated_at") @db.Timestamptz(6)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  distribution Distribution @relation(fields: [distributionId], references: [distributionId])
+  beneficiary  Beneficiary  @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  enrollment   Enrollment   @relation(fields: [enrollmentId], references: [enrollmentId])
+  allocatedBy  User         @relation("AllocationCreator", fields: [allocatedById], references: [userId])
+  claim        Claim?
+
+  @@unique([distributionId, beneficiaryId])
+  @@unique([distributionId, enrollmentId])
+  @@index([distributionId, allocationStatus, createdAt])
+  @@index([enrollmentId])
+  @@map("distribution_allocations")
+}
+
+model Schedule {
+  scheduleId     String         @id @default(uuid()) @map("schedule_id") @db.Uuid
+  distributionId String         @map("distribution_id") @db.Uuid
+  beneficiaryId  String         @map("beneficiary_id") @db.Uuid
+  slotId         String         @map("slot_id") @db.Uuid
+  queueNumber    Int            @map("queue_number")
+  status         ScheduleStatus @default(SCHEDULED)
+  assignedByAi   Boolean        @default(false) @map("assigned_by_ai")
+  notificationAt DateTime?      @map("notification_at") @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  distribution  Distribution     @relation(fields: [distributionId], references: [distributionId])
+  beneficiary   Beneficiary      @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  slot          DistributionSlot @relation(fields: [slotId], references: [slotId])
+  claim         Claim?
+  notifications Notification[]
+
+  @@unique([distributionId, beneficiaryId])
+  @@unique([slotId, queueNumber])
+  @@map("schedules")
+}
+
+model QrToken {
+  qrTokenId      String        @id @default(uuid()) @map("qr_token_id") @db.Uuid
+  beneficiaryId  String        @map("beneficiary_id") @db.Uuid
+  distributionId String        @map("distribution_id") @db.Uuid
+  tokenHash      String        @unique @map("token_hash") @db.VarChar(255)
+  qrStatus       QrTokenStatus @default(ACTIVE) @map("qr_status")
+  expiresAt      DateTime      @map("expire_at") @db.Timestamptz(6)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  beneficiary  Beneficiary  @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  distribution Distribution @relation(fields: [distributionId], references: [distributionId])
+  scanLogs     QrScanLog[]
+
+  @@unique([beneficiaryId, distributionId])
+  @@index([distributionId, qrStatus, expiresAt])
+  @@map("qr_tokens")
+}
+
+model QrScanLog {
+  scanLogId          String   @id @default(uuid()) @map("scan_log_id") @db.Uuid
+  distributionId     String?  @map("distribution_id") @db.Uuid
+  qrTokenId          String?  @map("qr_token_id") @db.Uuid
+  submittedTokenHash String?  @map("submitted_token_hash") @db.VarChar(64)
+  claimId            String?  @map("claim_id") @db.Uuid
+  scannedById        String   @map("scanned_by") @db.Uuid
+  scanResult         String   @map("scan_result") @db.VarChar(20)
+  deviceInfo         String?  @map("device_info") @db.VarChar(255)
+  scannedAt          DateTime @default(now()) @map("scanned_at") @db.Timestamptz(6)
+
+  distribution Distribution? @relation(fields: [distributionId], references: [distributionId])
+  qrToken      QrToken?      @relation(fields: [qrTokenId], references: [qrTokenId])
+  claim        Claim?        @relation(fields: [claimId], references: [claimId])
+  scannedBy    User          @relation("QrScanner", fields: [scannedById], references: [userId])
+
+  @@index([distributionId, scanResult, scannedAt])
+  @@index([qrTokenId, scannedAt])
+  @@index([submittedTokenHash, scannedAt])
+  @@index([scanResult, scannedAt])
+  @@map("qr_scan_logs")
+}
+
+model Claim {
+  claimId            String             @id @default(uuid()) @map("claim_id") @db.Uuid
+  beneficiaryId      String             @map("beneficiary_id") @db.Uuid
+  distributionId     String             @map("distribution_id") @db.Uuid
+  scheduleId         String             @unique @map("schedule_id") @db.Uuid
+  verifiedById       String?            @map("verified_by") @db.Uuid
+  allocationId       String             @unique @map("allocation_id") @db.Uuid
+  claimStatus        ClaimStatus        @default(PENDING) @map("claim_status")
+  verificationMethod VerificationMethod @default(QR) @map("verification_method")
+  biometricVerified  Boolean            @default(false) @map("biometric_verified")
+  biometricScore     Decimal?           @map("biometric_score") @db.Decimal(5, 4)
+  qrVerified         Boolean            @default(false) @map("qr_verified")
+  isDuplicateFlag    Boolean            @default(false) @map("is_duplicate_flag")
+  claimedAt          DateTime?          @map("claimed_at") @db.Timestamptz(6)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  beneficiary       Beneficiary                    @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  distribution      Distribution                   @relation(fields: [distributionId], references: [distributionId])
+  schedule          Schedule                       @relation(fields: [scheduleId], references: [scheduleId])
+  verifiedBy        User?                          @relation("ClaimVerifier", fields: [verifiedById], references: [userId])
+  allocation        DistributionAllocation         @relation(fields: [allocationId], references: [allocationId])
+  qrScanLogs        QrScanLog[]
+  transactions      Transaction[]
+  biometricAttempts BiometricVerificationAttempt[]
+
+  @@unique([beneficiaryId, distributionId])
+  @@index([distributionId, claimStatus, createdAt])
+  @@map("claims")
+}
+
+model Transaction {
+  transactionId   String            @id @default(uuid()) @map("transaction_id") @db.Uuid
+  claimId         String?           @map("claim_id") @db.Uuid
+  distributionId  String?           @map("distribution_id") @db.Uuid
+  walletId        String            @map("wallet_id") @db.Uuid
+  beneficiaryId   String            @map("beneficiary_id") @db.Uuid
+  initiatedById   String?           @map("initiated_by") @db.Uuid
+  amount          Decimal           @db.Decimal(12, 2)
+  transactionType String            @map("transaction_type") @db.VarChar(30)
+  referenceNo     String            @unique @map("reference_no") @db.VarChar(100)
+  status          TransactionStatus @default(PENDING)
+  balanceBefore   Decimal           @map("balance_before") @db.Decimal(12, 2)
+  balanceAfter    Decimal           @map("balance_after") @db.Decimal(12, 2)
+  transferGroupId String?           @map("transfer_group_id") @db.Uuid
+  reversalOfId    String?           @unique @map("reversal_of_id") @db.Uuid
+  description     String?           @db.VarChar(255)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  claim        Claim?        @relation(fields: [claimId], references: [claimId])
+  distribution Distribution? @relation(fields: [distributionId], references: [distributionId])
+  wallet       WalletAccount @relation(fields: [walletId], references: [walletId])
+  beneficiary  Beneficiary   @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  initiatedBy  User?         @relation("TransactionInitiator", fields: [initiatedById], references: [userId])
+  reversalOf   Transaction?  @relation("TransactionReversal", fields: [reversalOfId], references: [transactionId])
+  reversal     Transaction?  @relation("TransactionReversal")
+
+  @@index([distributionId, status, createdAt])
+  @@index([walletId, createdAt])
+  @@index([claimId, transactionType])
+  @@index([transferGroupId])
+  @@map("transactions")
+}
+
+model Notification {
+  notificationId      String              @id @default(uuid()) @map("notification_id") @db.Uuid
+  beneficiaryId       String              @map("beneficiary_id") @db.Uuid
+  scheduleId          String?             @map("schedule_id") @db.Uuid
+  distributionId      String?             @map("distribution_id") @db.Uuid
+  initiatedById       String?             @map("initiated_by") @db.Uuid
+  channel             NotificationChannel
+  message             String              @db.Text
+  notificationType    String              @map("notification_type") @db.VarChar(30)
+  status              NotificationStatus  @default(PENDING)
+  providerMode        String              @default("SIMULATED") @map("provider_mode") @db.VarChar(20)
+  providerReference   String?             @unique @map("provider_reference") @db.VarChar(80)
+  simulated           Boolean             @default(true)
+  deduplicationKey    String?             @unique @map("deduplication_key") @db.VarChar(64)
+  attemptCount        Int                 @default(0) @map("attempt_count")
+  lastErrorCode       String?             @map("last_error_code") @db.VarChar(50)
+  scheduledFor        DateTime?           @map("scheduled_for") @db.Timestamptz(6)
+  processingToken     String?             @map("processing_token") @db.Uuid
+  processingStartedAt DateTime?           @map("processing_started_at") @db.Timestamptz(6)
+  sentAt              DateTime?           @map("sent_at") @db.Timestamptz(6)
+  failedAt            DateTime?           @map("failed_at") @db.Timestamptz(6)
+  createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  beneficiary  Beneficiary   @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  schedule     Schedule?     @relation(fields: [scheduleId], references: [scheduleId], onDelete: SetNull)
+  distribution Distribution? @relation(fields: [distributionId], references: [distributionId], onDelete: SetNull)
+  initiatedBy  User?         @relation("NotificationInitiator", fields: [initiatedById], references: [userId], onDelete: SetNull)
+
+  @@index([beneficiaryId, createdAt])
+  @@index([scheduleId, createdAt])
+  @@index([distributionId, status, createdAt])
+  @@index([status, scheduledFor])
+  @@index([notificationType, createdAt])
+  @@map("notifications")
+}
+
+model ChatbotSession {
+  sessionId        String               @id @default(uuid()) @map("session_id") @db.Uuid
+  beneficiaryId    String?              @map("beneficiary_id") @db.Uuid
+  accessTokenHash  String?              @unique @map("access_token_hash") @db.VarChar(64)
+  language         String?              @db.VarChar(10)
+  status           ChatbotSessionStatus @default(ACTIVE)
+  isEscalated      Boolean              @default(false) @map("is_escalated")
+  escalationReason String?              @map("escalation_reason") @db.VarChar(40)
+  escalatedAt      DateTime?            @map("escalated_at") @db.Timestamptz(6)
+  assignedStaffId  String?              @map("assigned_staff_id") @db.Uuid
+  assignedAt       DateTime?            @map("assigned_at") @db.Timestamptz(6)
+  resolvedById     String?              @map("resolved_by_id") @db.Uuid
+  resolvedAt       DateTime?            @map("resolved_at") @db.Timestamptz(6)
+  resolutionCode   String?              @map("resolution_code") @db.VarChar(40)
+  startedAt        DateTime             @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt          DateTime?            @map("ended_at") @db.Timestamptz(6)
+  lastActivityAt   DateTime             @default(now()) @map("last_activity_at") @db.Timestamptz(6)
+  retentionUntil   DateTime             @map("retention_until") @db.Timestamptz(6)
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  beneficiary   Beneficiary?     @relation(fields: [beneficiaryId], references: [beneficiaryId])
+  assignedStaff User?            @relation("ChatbotAssignedStaff", fields: [assignedStaffId], references: [userId], onDelete: Restrict)
+  resolvedBy    User?            @relation("ChatbotResolvedBy", fields: [resolvedById], references: [userId], onDelete: Restrict)
+  messages      ChatbotMessage[]
+
+  @@index([status, lastActivityAt])
+  @@index([beneficiaryId, status, lastActivityAt])
+  @@index([assignedStaffId, status, lastActivityAt])
+  @@index([retentionUntil])
+  @@map("chatbot_sessions")
+}
+
+model ChatbotMessage {
+  messageId       String            @id @default(uuid()) @map("message_id") @db.Uuid
+  sessionId       String            @map("session_id") @db.Uuid
+  sequence        Int
+  senderType      ChatbotSenderType @map("sender_type")
+  staffUserId     String?           @map("staff_user_id") @db.Uuid
+  messageText     String            @map("message_text") @db.Text
+  intentDetected  String?           @map("intent_detected") @db.VarChar(100)
+  confidenceScore Decimal?          @map("confidence_score") @db.Decimal(5, 4)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  session   ChatbotSession @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  staffUser User?          @relation("ChatbotStaffMessage", fields: [staffUserId], references: [userId], onDelete: Restrict)
+
+  @@unique([sessionId, sequence])
+  @@index([sessionId, createdAt, messageId])
+  @@index([staffUserId, createdAt])
+  @@map("chatbot_messages")
+}
+
+model AuditLog {
+  auditId        String   @id @default(uuid()) @map("audit_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  actorType      String   @default("STAFF") @map("actor_type") @db.VarChar(20)
+  action         String   @db.VarChar(100)
+  entityAffected String   @map("entity_affected") @db.VarChar(50)
+  recordId       String?  @map("record_id") @db.Uuid
+  ipAddress      String?  @map("ip_address") @db.VarChar(64)
+  details        Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [userId])
+
+  @@index([entityAffected, recordId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

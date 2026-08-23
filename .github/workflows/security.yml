@@ -1,0 +1,29 @@
+name: Backend security checks
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "20 2 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://ci_user:ci_password@127.0.0.1:5432/garantiyaid_ci
+      JWT_ACCESS_SECRET: ci-only-secret-that-is-longer-than-sixty-four-characters-and-never-used-elsewhere
+      FIELD_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:generate
+      - run: npm run security:check
