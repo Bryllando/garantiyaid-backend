@@ -17,6 +17,10 @@ export const createBarangaySchema = z.object({
 });
 
 export const updateBarangaySchema = createBarangaySchema.partial().extend({
+  barangayCode: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+    z.union([z.string().trim().min(1).max(20), z.null()]).optional(),
+  ),
   isActive: z.boolean().optional(),
 }).refine((value) => Object.keys(value).length > 0, "At least one field must be supplied.");
 

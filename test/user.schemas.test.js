@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createStaffUserSchema,
+  resetStaffTotpSchema,
   updateStaffUserSchema,
 } from "../src/modules/users/user.schemas.js";
 
@@ -61,4 +62,19 @@ test("Barangay Facilitator requires both username and barangay assignment", () =
 test("staff username updates normalize case and allow an explicit clear", () => {
   assert.equal(updateStaffUserSchema.parse({ username: " New.Admin " }).username, "new.admin");
   assert.equal(updateStaffUserSchema.parse({ username: "" }).username, null);
+});
+
+test("staff contact updates allow an explicit clear", () => {
+  assert.equal(updateStaffUserSchema.parse({ contactNumber: "" }).contactNumber, null);
+});
+
+test("TOTP reset requires all three identity-verification attestations", () => {
+  const verified = {
+    staffIdVerified: true,
+    validIdVerified: true,
+    supervisorConfirmed: true,
+  };
+
+  assert.deepEqual(resetStaffTotpSchema.parse(verified), verified);
+  assert.equal(resetStaffTotpSchema.safeParse({ ...verified, validIdVerified: false }).success, false);
 });

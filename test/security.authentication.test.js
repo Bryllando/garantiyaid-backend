@@ -5,6 +5,8 @@ import jwt from "jsonwebtoken";
 import { env } from "../src/config/env.js";
 import {
   accountIsLocked,
+  generateRecoveryCodes,
+  hashRecoveryCode,
   nextLoginFailureState,
   signAccessToken,
   verifyAccessToken,
@@ -136,4 +138,14 @@ test("password policy enforces 12 characters for new staff and bcrypt's byte lim
   assert.equal(newStaffPasswordSchema.safeParse("Short123").success, false);
   assert.equal(newStaffPasswordSchema.safeParse("A secure 12+ character passphrase").success, true);
   assert.equal(loginPasswordSchema.safeParse("😀".repeat(19)).success, false);
+});
+
+test("staff recovery codes are unique, normalized, and safe to store as hashes", () => {
+  const codes = generateRecoveryCodes();
+
+  assert.equal(codes.length, 8);
+  assert.equal(new Set(codes).size, 8);
+  assert.equal(codes.every((code) => /^(?:[A-F0-9]{4}-){3}[A-F0-9]{4}$/.test(code)), true);
+  assert.equal(hashRecoveryCode(codes[0]), hashRecoveryCode(codes[0].toLowerCase().replaceAll("-", "")));
+  assert.notEqual(hashRecoveryCode(codes[0]), codes[0]);
 });

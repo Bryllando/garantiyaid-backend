@@ -162,6 +162,7 @@ model User {
   qrScanLogs              QrScanLog[]                    @relation("QrScanner")
   auditLogs               AuditLog[]
   staffSessions           StaffSession[]
+  staffRecoveryCodes      StaffRecoveryCode[]
   idempotencyRecords      IdempotencyRecord[]
   initiatedTransactions   Transaction[]                  @relation("TransactionInitiator")
   initiatedNotifications  Notification[]                 @relation("NotificationInitiator")
@@ -185,6 +186,19 @@ model StaffSession {
   @@index([userId, revokedAt])
   @@index([expiresAt])
   @@map("staff_sessions")
+}
+
+model StaffRecoveryCode {
+  recoveryCodeId String    @id @default(uuid()) @map("recovery_code_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  codeHash       String    @unique @map("code_hash") @db.VarChar(64)
+  usedAt         DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@map("staff_recovery_codes")
 }
 
 model IdempotencyRecord {

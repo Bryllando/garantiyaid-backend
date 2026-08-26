@@ -1,7 +1,11 @@
 import prisma from "../../lib/prisma.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
-import { barangaySelect, getBarangayOrThrow } from "./barangay.service.js";
+import {
+  assertBarangayCanDeactivate,
+  barangaySelect,
+  getBarangayOrThrow,
+} from "./barangay.service.js";
 
 export const listBarangays = asyncHandler(async (req, res) => {
   const { activeOnly, search } = req.validatedQuery;
@@ -51,6 +55,11 @@ export const createBarangay = asyncHandler(async (req, res) => {
 export const updateBarangay = asyncHandler(async (req, res) => {
   await getBarangayOrThrow(req.validatedParams.barangayId);
   const barangay = await prisma.$transaction(async (tx) => {
+    await assertBarangayCanDeactivate(
+      req.validatedParams.barangayId,
+      req.validatedBody,
+      tx,
+    );
     const updatedBarangay = await tx.barangay.update({
       where: { barangayId: req.validatedParams.barangayId },
       data: req.validatedBody,

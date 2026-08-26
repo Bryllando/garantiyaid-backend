@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import prisma from "../../lib/prisma.js";
@@ -10,6 +10,7 @@ import { decryptTotpSecret, findValidTotpCounter } from "./totp.service.js";
 const JWT_ALGORITHM = "HS256";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DUMMY_PASSWORD_HASH = "$2b$12$ZSGoWkbD9XCXsf.MA/3FeeB.AaMH.ebbF1gB1AnqiJx8NReGnmCJe";
+const RECOVERY_CODE_COUNT = 8;
 
 export const staffUserSelect = {
   userId: true,
@@ -19,6 +20,7 @@ export const staffUserSelect = {
   email: true,
   role: true,
   contactNumber: true,
+  totpEnabled: true,
   barangayId: true,
   isActive: true,
   createdAt: true,
@@ -32,6 +34,22 @@ export const staffUserSelect = {
     },
   },
 };
+
+export function normalizeRecoveryCode(value) {
+  return typeof value === "string" ? value.replace(/[^a-f0-9]/gi, "").toUpperCase() : "";
+}
+
+export function hashRecoveryCode(value) {
+  return createHash("sha256").update(normalizeRecoveryCode(value)).digest("hex");
+}
+
+export function generateRecoveryCodes() {
+  const codes = new Set();
+  while (codes.size < RECOVERY_CODE_COUNT) {
+    codes.add(randomBytes(8).toString("hex").toUpperCase().match(/.{4}/g).join("-"));
+  }
+  return [...codes];
+}
 
 function requireJwtSecret() {
   if (!env.jwtAccessSecret) {
@@ -256,7 +274,7 @@ function invalidCredentialsError() {
 }
 
 export async function authenticateStaff(
-  { identifier, password, totpCode },
+  { identifier, password, totpCode, recoveryCode },
   context = {},
 ) {
   const matches = await prisma.user.findMany({
@@ -320,8 +338,52 @@ export async function authenticateStaff(
     };
   }
 
-  if (!totpCode) {
+  if (!totpCode && !recoveryCode) {
     return { user: eligibleUser, requiresTotp: true, requiresTotpEnrollment: false };
+  }
+
+  if (recoveryCode) {
+    const codeHash = hashRecoveryCode(recoveryCode);
+    const storedCode = await prisma.staffRecoveryCode.findFirst({
+      where: { userId: eligibleUser.userId, codeHash, usedAt: null },
+      select: { recoveryCodeId: true },
+    });
+    const consumed = storedCode
+      ? await prisma.$transaction(async (tx) => {
+          const result = await tx.staffRecoveryCode.updateMany({
+            where: { recoveryCodeId: storedCode.recoveryCodeId, usedAt: null },
+            data: { usedAt: new Date() },
+          });
+          if (result.count !== 1) return false;
+          await tx.user.update({
+            where: { userId: eligibleUser.userId },
+            data: {
+              failedLoginAttempts: 0,
+              lastFailedLoginAt: null,
+              lockedUntil: null,
+            },
+          });
+          return true;
+        })
+      : false;
+
+    if (!consumed) {
+      const failure = await recordFailedLogin(eligibleUser, context, "INVALID_RECOVERY_CODE");
+      if (failure.isNowLocked) throw accountLockedError(failure.lockedUntil);
+      throw new AppError(401, "INVALID_RECOVERY_CODE", "The recovery code is invalid or has already been used.");
+    }
+
+    const safeUser = await prisma.user.findUnique({
+      where: { userId: eligibleUser.userId },
+      select: staffUserSelect,
+    });
+
+    return {
+      user: safeUser,
+      requiresTotp: false,
+      requiresTotpEnrollment: false,
+      authenticationMethod: "RECOVERY_CODE",
+    };
   }
 
   const matchedCounter = eligibleUser.totpSecret
@@ -375,5 +437,6 @@ export async function authenticateStaff(
     user: safeUser,
     requiresTotp: false,
     requiresTotpEnrollment: false,
+    authenticationMethod: "TOTP",
   };
 }

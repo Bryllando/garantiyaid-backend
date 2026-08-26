@@ -12,6 +12,11 @@ const optionalText = (maxLength) => z.preprocess(
   z.string().trim().max(maxLength).optional(),
 );
 
+const optionalNullableText = (maxLength) => z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+  z.union([z.string().trim().min(1).max(maxLength), z.null()]).optional(),
+);
+
 const optionalBarangayId = z.preprocess(
   (value) => (value === "" ? undefined : value),
   z.uuid().optional(),
@@ -25,6 +30,12 @@ const optionalUsername = z.preprocess(
 export const userIdSchema = z.object({
   userId: z.uuid(),
 });
+
+export const resetStaffTotpSchema = z.object({
+  staffIdVerified: z.boolean().refine(Boolean, "Verify the staff ID before resetting TOTP."),
+  validIdVerified: z.boolean().refine(Boolean, "Verify a valid ID before resetting TOTP."),
+  supervisorConfirmed: z.boolean().refine(Boolean, "Obtain supervisor confirmation before resetting TOTP."),
+}).strict();
 
 export const createStaffUserSchema = z.object({
   employeeId: z.string().trim().min(1).max(30).transform((value) => value.toUpperCase()),
@@ -76,7 +87,7 @@ export const updateStaffUserSchema = z.object({
   ),
   fullName: z.string().trim().min(1).max(150).optional(),
   email: z.string().trim().toLowerCase().email().max(150).optional(),
-  contactNumber: optionalText(20),
+  contactNumber: optionalNullableText(20),
   role: z.enum(staffRoles).optional(),
   barangayId: z.union([z.uuid(), z.null()]).optional(),
   isActive: z.boolean().optional(),

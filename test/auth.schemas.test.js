@@ -42,3 +42,19 @@ test("staff login requires a login identifier", () => {
     password: "TemporaryPassword123",
   }).success, false);
 });
+
+test("staff login accepts one recovery code and rejects mixed second factors", () => {
+  const result = loginSchema.parse({
+    identifier: "staff-001",
+    password: "TemporaryPassword123",
+    recoveryCode: "abcd-1234-ef56-7890",
+  });
+
+  assert.equal(result.recoveryCode, "ABCD-1234-EF56-7890");
+  assert.equal(loginSchema.safeParse({
+    identifier: "staff-001",
+    password: "TemporaryPassword123",
+    totpCode: "123456",
+    recoveryCode: "ABCD-1234-EF56-7890",
+  }).success, false);
+});

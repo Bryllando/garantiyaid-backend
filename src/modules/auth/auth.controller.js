@@ -5,6 +5,8 @@ import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
 import {
   authenticateStaff as authenticateStaffCredentials,
+  generateRecoveryCodes,
+  hashRecoveryCode,
   issueAccessToken,
   staffUserSelect,
 } from "./auth.service.js";
@@ -49,9 +51,23 @@ export const login = asyncHandler(async (req, res) => {
         entityAffected: "USER",
         recordId: result.user.userId,
         ipAddress,
-        details: { sessionId: issuedSession.sessionId },
+        details: {
+          sessionId: issuedSession.sessionId,
+          authenticationMethod: result.authenticationMethod ?? "TOTP",
+        },
       },
     });
+    if (result.authenticationMethod === "RECOVERY_CODE") {
+      await tx.auditLog.create({
+        data: {
+          userId: result.user.userId,
+          action: "STAFF_RECOVERY_CODE_USED",
+          entityAffected: "USER",
+          recordId: result.user.userId,
+          ipAddress,
+        },
+      });
+    }
     return issuedSession;
   });
 
@@ -126,7 +142,9 @@ export const confirmTotp = [
       throw new AppError(401, "INVALID_TOTP_CODE", "The TOTP code is invalid or expired.");
     }
 
-    await prisma.$transaction(async (tx) => {
+    const recoveryCodes = generateRecoveryCodes();
+
+    const { confirmedUser, accessToken } = await prisma.$transaction(async (tx) => {
       const updated = await tx.user.updateMany({
         where: {
           userId: user.userId,
@@ -149,6 +167,14 @@ export const confirmTotp = [
         throw new AppError(401, "INVALID_TOTP_CODE", "The TOTP code is invalid or expired.");
       }
 
+      await tx.staffRecoveryCode.deleteMany({ where: { userId: user.userId } });
+      await tx.staffRecoveryCode.createMany({
+        data: recoveryCodes.map((recoveryCode) => ({
+          userId: user.userId,
+          codeHash: hashRecoveryCode(recoveryCode),
+        })),
+      });
+
       await tx.auditLog.create({
         data: {
           userId: user.userId,
@@ -156,16 +182,20 @@ export const confirmTotp = [
           entityAffected: "USER",
           recordId: user.userId,
           ipAddress: clientIpAddress(req),
+          details: { recoveryCodeCount: recoveryCodes.length },
         },
       });
-    });
 
-    const confirmedUser = await prisma.user.findUniqueOrThrow({
-      where: { userId: user.userId },
-      select: staffUserSelect,
-    });
-    const { accessToken } = await issueAccessToken(confirmedUser, {
-      ipAddress: clientIpAddress(req),
+      const confirmedUser = await tx.user.findUniqueOrThrow({
+        where: { userId: user.userId },
+        select: staffUserSelect,
+      });
+      const { accessToken } = await issueAccessToken(confirmedUser, {
+        ipAddress: clientIpAddress(req),
+        database: tx,
+      });
+
+      return { confirmedUser, accessToken };
     });
 
     return res.status(200).json({
@@ -173,6 +203,7 @@ export const confirmTotp = [
       data: {
         accessToken,
         user: confirmedUser,
+        recoveryCodes,
       },
     });
   }),

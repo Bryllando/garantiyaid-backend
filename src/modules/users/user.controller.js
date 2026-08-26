@@ -84,6 +84,73 @@ export const getStaffUser = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: { user } });
 });
 
+export const resetStaffTotp = asyncHandler(async (req, res) => {
+  const targetUser = await getStaffUserOrThrow(req.validatedParams.userId);
+
+  if (targetUser.userId === req.auth.userId) {
+    throw new AppError(
+      403,
+      "SELF_TOTP_RESET_FORBIDDEN",
+      "Another System Administrator must reset your authenticator.",
+    );
+  }
+
+  if (!targetUser.isActive) {
+    throw new AppError(400, "STAFF_ACCOUNT_INACTIVE", "Reactivate this staff account before resetting TOTP.");
+  }
+
+  const resetAt = new Date();
+  const { user, revokedSessionCount } = await prisma.$transaction(async (tx) => {
+    const revokedSessions = await tx.staffSession.updateMany({
+      where: { userId: targetUser.userId, revokedAt: null },
+      data: { revokedAt: resetAt },
+    });
+
+    await tx.staffRecoveryCode.deleteMany({ where: { userId: targetUser.userId } });
+
+    const resetUser = await tx.user.update({
+      where: { userId: targetUser.userId },
+      data: {
+        totpSecret: null,
+        totpEnabled: false,
+        lastTotpCounter: null,
+        otpCodeHash: null,
+        otpExpiresAt: null,
+        failedLoginAttempts: 0,
+        lastFailedLoginAt: null,
+        lockedUntil: null,
+      },
+      select: staffUserSelect,
+    });
+
+    await tx.auditLog.create({
+      data: {
+        userId: req.auth.userId,
+        action: "STAFF_TOTP_RESET",
+        entityAffected: "USER",
+        recordId: targetUser.userId,
+        ipAddress: clientIpAddress(req),
+        details: {
+          targetEmployeeId: targetUser.employeeId,
+          identityVerification: req.validatedBody,
+          revokedSessionCount: revokedSessions.count,
+        },
+      },
+    });
+
+    return { user: resetUser, revokedSessionCount: revokedSessions.count };
+  });
+
+  res.status(200).json({
+    success: true,
+    data: {
+      user,
+      revokedSessionCount,
+      message: "Authenticator reset. The staff member must sign in and enroll a new authenticator.",
+    },
+  });
+});
+
 export const updateStaffUser = asyncHandler(async (req, res) => {
   const existingUser = await getStaffUserOrThrow(req.validatedParams.userId);
 
