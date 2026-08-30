@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import prisma from "../../lib/prisma.js";
 import { AppError } from "../../utils/AppError.js";
 import { distributionAccessWhere } from "./distribution.policy.js";
@@ -14,6 +15,10 @@ export const DISTRIBUTION_SCHEDULE_FIELDS = Object.freeze([
 export const distributionSlotSelect = {
   slotId: true,
   distributionId: true,
+  sessionId: true,
+  sessionLabel: true,
+  location: true,
+  serviceAreas: true,
   slotStart: true,
   slotEnd: true,
   capacity: true,
@@ -28,6 +33,7 @@ export const distributionSlotParentSelect = {
   startTime: true,
   endTime: true,
   slotDurationMinutes: true,
+  location: true,
   barangayId: true,
   status: true,
 };
@@ -70,35 +76,137 @@ export function distributionSlotToResponse(slot) {
   };
 }
 
-export function buildDistributionSlotRows(distribution, capacity) {
-  const startMinutes = timeMinutes(distribution.startTime);
-  const endMinutes = timeMinutes(distribution.endTime);
-  const eventMinutes = endMinutes - startMinutes;
+function normalizedServiceArea(value) {
+  return value?.trim().toLocaleLowerCase("en-PH") ?? "";
+}
 
-  if (eventMinutes % distribution.slotDurationMinutes !== 0) {
+export function distributionSlotCoversBeneficiary(slot, beneficiary) {
+  return slot.serviceAreas.length === 0 || Boolean(
+    normalizedServiceArea(beneficiary.sitioPurok)
+    && slot.serviceAreas.some((area) => (
+      normalizedServiceArea(area) === normalizedServiceArea(beneficiary.sitioPurok)
+    ))
+  );
+}
+
+export function assertDistributionSlotCoverage(slot, beneficiary) {
+  if (!distributionSlotCoversBeneficiary(slot, beneficiary)) {
     throw new AppError(
       409,
-      "DISTRIBUTION_SLOT_INTERVAL_UNEVEN",
-      "Distribution time range must divide evenly by the configured slot duration.",
+      "DISTRIBUTION_SLOT_SERVICE_AREA_MISMATCH",
+      "The selected session does not cover the beneficiary's Sitio or Purok.",
+      {
+        slotId: slot.slotId,
+        sitioPurok: beneficiary.sitioPurok ?? null,
+        serviceAreas: slot.serviceAreas,
+      },
+    );
+  }
+}
+
+function defaultSession(distribution, capacity) {
+  return {
+    label: "Main session",
+    date: distribution.distributionDate,
+    startTime: distribution.startTime,
+    endTime: distribution.endTime,
+    location: distribution.location,
+    capacity,
+    serviceAreas: [],
+  };
+}
+
+export function buildDistributionSlotRows(distribution, capacityOrSessions) {
+  const sessions = Array.isArray(capacityOrSessions)
+    ? capacityOrSessions
+    : [defaultSession(distribution, capacityOrSessions)];
+  const eventDate = distribution.distributionDate.toISOString().slice(0, 10);
+  const firstSessionDate = sessions
+    .map((session) => session.date.toISOString().slice(0, 10))
+    .sort()[0];
+  if (firstSessionDate !== eventDate) {
+    throw new AppError(
+      409,
+      "DISTRIBUTION_FIRST_SESSION_DATE_MISMATCH",
+      "The event date must match the first service session date.",
     );
   }
 
+  const coverageModes = new Set(sessions.map((session) => (
+    session.serviceAreas.length === 0 ? "WHOLE_BARANGAY" : "BY_SERVICE_AREA"
+  )));
+  if (coverageModes.size > 1) {
+    throw new AppError(
+      409,
+      "DISTRIBUTION_SESSION_COVERAGE_MIXED",
+      "Use either whole-Barangay sessions or Sitio/Purok sessions, not both in one event.",
+    );
+  }
+
+  const preparedSessions = sessions.map((session) => {
+    const startMinutes = timeMinutes(session.startTime);
+    const endMinutes = timeMinutes(session.endTime);
+    const eventMinutes = endMinutes - startMinutes;
+
+    if (eventMinutes <= 0) {
+      throw new AppError(
+        409,
+        "INVALID_DISTRIBUTION_SESSION_TIME_RANGE",
+        "Every service session must end after it starts.",
+      );
+    }
+
+    if (eventMinutes % distribution.slotDurationMinutes !== 0) {
+      throw new AppError(
+        409,
+        "DISTRIBUTION_SLOT_INTERVAL_UNEVEN",
+        "Every service-session time range must divide evenly by the configured slot duration.",
+      );
+    }
+
+    return {
+      ...session,
+      sessionId: randomUUID(),
+      startMinutes,
+      endMinutes,
+      startsAt: philippineInstant(session.date, startMinutes),
+      endsAt: philippineInstant(session.date, endMinutes),
+    };
+  }).sort((left, right) => left.startsAt - right.startsAt);
+
+  for (let index = 1; index < preparedSessions.length; index += 1) {
+    if (preparedSessions[index].startsAt < preparedSessions[index - 1].endsAt) {
+      throw new AppError(
+        409,
+        "DISTRIBUTION_SESSIONS_OVERLAP",
+        "Service sessions for one distribution event cannot overlap.",
+      );
+    }
+  }
+
   const slots = [];
-  for (
-    let slotStartMinutes = startMinutes;
-    slotStartMinutes < endMinutes;
-    slotStartMinutes += distribution.slotDurationMinutes
-  ) {
-    slots.push({
-      distributionId: distribution.distributionId,
-      slotStart: philippineInstant(distribution.distributionDate, slotStartMinutes),
-      slotEnd: philippineInstant(
-        distribution.distributionDate,
-        slotStartMinutes + distribution.slotDurationMinutes,
-      ),
-      capacity,
-      slotStatus: "AVAILABLE",
-    });
+  for (const session of preparedSessions) {
+    for (
+      let slotStartMinutes = session.startMinutes;
+      slotStartMinutes < session.endMinutes;
+      slotStartMinutes += distribution.slotDurationMinutes
+    ) {
+      // ponytail: session metadata is repeated per slot; normalize when sessions need editing.
+      slots.push({
+        distributionId: distribution.distributionId,
+        sessionId: session.sessionId,
+        sessionLabel: session.label,
+        location: session.location,
+        serviceAreas: session.serviceAreas,
+        slotStart: philippineInstant(session.date, slotStartMinutes),
+        slotEnd: philippineInstant(
+          session.date,
+          slotStartMinutes + distribution.slotDurationMinutes,
+        ),
+        capacity: session.capacity,
+        slotStatus: "AVAILABLE",
+      });
+    }
   }
 
   return slots;

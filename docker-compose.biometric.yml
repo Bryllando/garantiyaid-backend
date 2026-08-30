@@ -1,0 +1,18 @@
+services:
+  biometric-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile.biometric-ai
+    image: garantiyaid/deepface-antisp:0.0.96-cpu
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5005:5000"
+    environment:
+      DEEPFACE_AUTH_TOKEN: ${BIOMETRIC_SERVICE_API_KEY:?Set BIOMETRIC_SERVICE_API_KEY in .env}
+      DEEPFACE_FACE_RECOGNITION_MODELS: ArcFace
+      DEEPFACE_FACE_DETECTION_MODELS: opencv
+    volumes:
+      - biometric-ai-models:/root/.deepface/weights
+
+volumes:
+  biometric-ai-models:

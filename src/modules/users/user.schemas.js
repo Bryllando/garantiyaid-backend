@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { newStaffPasswordSchema } from "../auth/password.schemas.js";
 
 const staffRoles = ["SYSTEM_ADMIN", "DSWD_STAFF", "BARANGAY_FACILITATOR"];
+const creatableStaffRoles = ["DSWD_STAFF", "BARANGAY_FACILITATOR"];
 const usernameRoles = ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"];
 const username = z.string().trim().toLowerCase().min(4).max(30).regex(
   /^[a-z][a-z0-9._]{3,29}$/,
@@ -38,12 +38,10 @@ export const resetStaffTotpSchema = z.object({
 }).strict();
 
 export const createStaffUserSchema = z.object({
-  employeeId: z.string().trim().min(1).max(30).transform((value) => value.toUpperCase()),
   username: optionalUsername,
   fullName: z.string().trim().min(1).max(150),
   email: z.string().trim().toLowerCase().email().max(150),
-  password: newStaffPasswordSchema,
-  role: z.enum(staffRoles),
+  role: z.enum(creatableStaffRoles),
   contactNumber: optionalText(20),
   barangayId: optionalBarangayId,
 }).strict().superRefine((value, context) => {
@@ -51,7 +49,7 @@ export const createStaffUserSchema = z.object({
     context.addIssue({
       code: "custom",
       path: ["username"],
-      message: "A username is required for System Administrators and Barangay Facilitators.",
+      message: "A username is required for Barangay Facilitators.",
     });
   }
 
@@ -59,7 +57,7 @@ export const createStaffUserSchema = z.object({
     context.addIssue({
       code: "custom",
       path: ["username"],
-      message: "DSWD Staff must log in with their official employee ID and cannot have a username.",
+      message: "DSWD Staff sign in with their generated Staff ID and cannot have a username.",
     });
   }
 
@@ -88,7 +86,6 @@ export const updateStaffUserSchema = z.object({
   fullName: z.string().trim().min(1).max(150).optional(),
   email: z.string().trim().toLowerCase().email().max(150).optional(),
   contactNumber: optionalNullableText(20),
-  role: z.enum(staffRoles).optional(),
   barangayId: z.union([z.uuid(), z.null()]).optional(),
   isActive: z.boolean().optional(),
 }).strict().refine(

@@ -40,6 +40,7 @@ function creditableClaim(overrides = {}) {
     allocation: { allocationStatus: "ALLOCATED" },
     schedule: { status: "CHECKED_IN" },
     beneficiary: { status: "ACTIVE" },
+    disputes: [],
     ...overrides,
   };
 }
@@ -97,6 +98,27 @@ test("credit eligibility requires a verified claim, checked-in schedule, active 
     qrVerified: false,
     biometricVerified: true,
   })));
+  assert.doesNotThrow(() => assertClaimCreditable(creditableClaim({
+    verificationMethod: "BIOMETRIC_AND_SIGNATURE",
+    qrVerified: false,
+    biometricVerified: true,
+    signatureVerified: true,
+  })));
+  assert.throws(
+    () => assertClaimCreditable(creditableClaim({
+      verificationMethod: "BIOMETRIC_AND_SIGNATURE",
+      qrVerified: false,
+      biometricVerified: true,
+      signatureVerified: false,
+    })),
+    (error) => error.code === "CLAIM_IDENTITY_NOT_VERIFIED",
+  );
+  assert.throws(
+    () => assertClaimCreditable(creditableClaim({
+      disputes: [{ disputeId: beneficiaryId, status: "UNDER_REVIEW" }],
+    })),
+    (error) => error.code === "ACTIVE_CLAIM_DISPUTE",
+  );
   assert.throws(
     () => assertClaimCreditable(creditableClaim({ claimStatus: "CLAIMED" })),
     (error) => error.code === "CLAIM_NOT_CREDITABLE",

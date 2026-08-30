@@ -1,8 +1,13 @@
+import { randomBytes } from "node:crypto";
 import prisma from "../../lib/prisma.js";
 import { AppError } from "../../utils/AppError.js";
 import { staffUserSelect } from "../auth/auth.service.js";
 
 export { staffUserSelect };
+
+export function generateTemporaryPassword() {
+  return randomBytes(12).toString("base64url");
+}
 
 export async function getStaffUserOrThrow(userId) {
   const user = await prisma.user.findUnique({
@@ -35,16 +40,17 @@ export async function assertActiveBarangay(barangayId) {
 export async function assertStaffLoginIdentifiersAvailable(
   { employeeId, username },
   excludedUserId,
+  database = prisma,
 ) {
   if (username && username.toUpperCase() === employeeId.toUpperCase()) {
     throw new AppError(
       409,
       "STAFF_IDENTIFIER_CONFLICT",
-      "Username and employee ID must be different.",
+      "Username and Staff ID must be different.",
     );
   }
 
-  const conflict = await prisma.user.findFirst({
+  const conflict = await database.user.findFirst({
     where: {
       ...(excludedUserId ? { userId: { not: excludedUserId } } : {}),
       OR: [
@@ -63,13 +69,52 @@ export async function assertStaffLoginIdentifiersAvailable(
     throw new AppError(
       409,
       "STAFF_IDENTIFIER_CONFLICT",
-      "That username or employee ID is already used by another staff account.",
+      "That username or Staff ID is already used by another staff account.",
     );
   }
 }
 
+const generatedStaffIdPrefixes = Object.freeze({
+  DSWD_STAFF: "DSWD",
+  BARANGAY_FACILITATOR: "BSTF",
+});
+
+export function formatGeneratedStaffId(role, sequenceValue) {
+  const prefix = generatedStaffIdPrefixes[role];
+
+  if (!prefix || sequenceValue == null) {
+    throw new AppError(500, "STAFF_ID_GENERATION_FAILED", "A Staff ID could not be generated.");
+  }
+
+  const number = BigInt(sequenceValue);
+
+  if (number < 1n) {
+    throw new AppError(500, "STAFF_ID_GENERATION_FAILED", "A Staff ID could not be generated.");
+  }
+
+  return `${prefix}-${number.toString().padStart(4, "0")}`;
+}
+
+export async function generateStaffId(role, database) {
+  const rows = role === "DSWD_STAFF"
+    ? await database.$queryRaw`SELECT nextval('dswd_staff_id_seq') AS value`
+    : role === "BARANGAY_FACILITATOR"
+      ? await database.$queryRaw`SELECT nextval('barangay_staff_id_seq') AS value`
+      : null;
+
+  return formatGeneratedStaffId(role, rows?.[0]?.value);
+}
+
 export function resolveStaffUserUpdate(existingUser, input) {
-  const nextRole = input.role ?? existingUser.role;
+  if (Object.hasOwn(input, "role")) {
+    throw new AppError(
+      400,
+      "STAFF_ROLE_IMMUTABLE",
+      "A staff account role cannot be changed after its Staff ID is assigned.",
+    );
+  }
+
+  const nextRole = existingUser.role;
   const submittedBarangayId = Object.hasOwn(input, "barangayId")
     ? input.barangayId
     : existingUser.barangayId;
@@ -83,13 +128,11 @@ export function resolveStaffUserUpdate(existingUser, input) {
   }
 
   if (nextRole !== "BARANGAY_FACILITATOR" && submittedBarangayId) {
-    if (existingUser.role !== "BARANGAY_FACILITATOR" || !input.role) {
-      throw new AppError(
-        400,
-        "INVALID_BARANGAY_ASSIGNMENT",
-        "Only barangay facilitators can have a barangay assignment.",
-      );
-    }
+    throw new AppError(
+      400,
+      "INVALID_BARANGAY_ASSIGNMENT",
+      "Only barangay facilitators can have a barangay assignment.",
+    );
   }
 
   const usernameWasSubmitted = Object.hasOwn(input, "username");
@@ -108,19 +151,15 @@ export function resolveStaffUserUpdate(existingUser, input) {
     throw new AppError(
       400,
       "USERNAME_NOT_ALLOWED",
-      "DSWD Staff must log in with their official employee ID and cannot have a username.",
+      "DSWD Staff sign in with their generated Staff ID and cannot have a username.",
     );
   }
 
   return {
     ...input,
-    ...(nextRole === "BARANGAY_FACILITATOR"
-      ? { barangayId: submittedBarangayId }
-      : existingUser.barangayId
-        ? { barangayId: null }
-        : {}),
+    ...(Object.hasOwn(input, "barangayId") ? { barangayId: submittedBarangayId } : {}),
     ...(usernameIsAllowed
-      ? { username: submittedUsername }
+      ? usernameWasSubmitted ? { username: submittedUsername } : {}
       : existingUser.username || usernameWasSubmitted
         ? { username: null }
         : {}),

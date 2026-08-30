@@ -76,6 +76,7 @@ export const listBeneficiaries = asyncHandler(async (req, res) => {
       OR: [
         { firstName: { contains: search, mode: "insensitive" } },
         { lastName: { contains: search, mode: "insensitive" } },
+        { sitioPurok: { contains: search, mode: "insensitive" } },
         { email: { contains: search, mode: "insensitive" } },
         { philsysNumber: { contains: search, mode: "insensitive" } },
       ],

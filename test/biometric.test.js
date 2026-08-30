@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import express from "express";
+import { env } from "../src/config/env.js";
 import beneficiaryRoutes from "../src/modules/beneficiaries/beneficiary.routes.js";
 import distributionRoutes from "../src/modules/distributions/distribution.routes.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
@@ -10,6 +11,8 @@ import {
   BIOMETRIC_ATTEMPT_RESULTS,
   biometricAttemptListQuerySchema,
   biometricEnrollmentSchema,
+  claimSignatureParamsSchema,
+  submitClaimSignatureSchema,
   verifyBiometricClaimSchema,
 } from "../src/modules/biometrics/biometric.schemas.js";
 import {
@@ -31,9 +34,17 @@ import {
   consentEffectiveStatus,
   decryptBiometricTemplate,
   encryptBiometricTemplate,
+  normalizeBiometricEmbedding,
+  parseDeepFaceRepresentation,
   processBiometricEnrollment,
   processBiometricVerification,
 } from "../src/modules/biometrics/biometric.service.js";
+import {
+  decryptSignatureImage,
+  encryptSignatureImage,
+  parseSignatureDataUrl,
+  signatureImageHash,
+} from "../src/modules/biometrics/claimSignature.service.js";
 import {
   ACCEPTED_BIOMETRIC_FILE_EXTENSIONS,
   ACCEPTED_BIOMETRIC_MIME_TYPES,
@@ -78,7 +89,7 @@ function jpegCapture(seed) {
 }
 
 test("Phase 7 schemas control verification policies, multipart fields, filters, and result values", () => {
-  assert.deepEqual(VERIFICATION_REQUIREMENTS, ["QR", "BIOMETRIC", "QR_AND_BIOMETRIC"]);
+  assert.deepEqual(VERIFICATION_REQUIREMENTS, ["QR", "BIOMETRIC", "QR_AND_BIOMETRIC", "BIOMETRIC_AND_SIGNATURE"]);
   const distribution = createDistributionSchema.parse({
     programId: beneficiaryId,
     title: "Biometric distribution",
@@ -102,6 +113,10 @@ test("Phase 7 schemas control verification policies, multipart fields, filters, 
     result: "NO_MATCH",
   });
   assert.equal(BIOMETRIC_ATTEMPT_RESULTS.includes("PROCESSOR_ERROR"), true);
+  const claimId = "33333333-3333-4333-8333-333333333333";
+  assert.deepEqual(claimSignatureParamsSchema.parse({ distributionId: consentId, claimId }), { distributionId: consentId, claimId });
+  assert.equal(submitClaimSignatureSchema.parse({ signatureDataUrl: `data:image/png;base64,${pngCapture("signature").buffer.toString("base64")}`, signatureMethod: "DRAWN", pointCount: 20, attestation: true }).signatureMethod, "DRAWN");
+  assert.equal(submitClaimSignatureSchema.parse({ signatureDataUrl: `data:image/png;base64,${pngCapture("typed").buffer.toString("base64")}`, signatureMethod: "TYPED", typedName: "Pedro Santos", attestation: true }).typedName, "Pedro Santos");
 });
 
 test("Phase 7 RBAC separates metadata, consent, enrollment, verification, and deletion", () => {
@@ -128,19 +143,91 @@ test("biometric templates use authenticated encryption bound to beneficiary and 
   );
 });
 
+test("live signature evidence accepts PNG only, is hashed, and is encrypted for one claim", () => {
+  const claimId = "33333333-3333-4333-8333-333333333333";
+  const image = pngCapture("beneficiary-signature").buffer;
+  const parsed = parseSignatureDataUrl(`data:image/png;base64,${image.toString("base64")}`);
+  const encrypted = encryptSignatureImage(parsed, claimId, beneficiaryId, consentId);
+  assert.equal(signatureImageHash(parsed).length, 64);
+  assert.equal(encrypted.includes(parsed), false);
+  assert.deepEqual(decryptSignatureImage(encrypted, claimId, beneficiaryId, consentId), parsed);
+  assert.throws(
+    () => decryptSignatureImage(encrypted, "44444444-4444-4444-8444-444444444444", beneficiaryId, consentId),
+    (error) => error.code === "INVALID_SIGNATURE_EVIDENCE",
+  );
+  assert.throws(() => parseSignatureDataUrl(`data:image/jpeg;base64,${image.toString("base64")}`), (error) => error.code === "INVALID_SIGNATURE_IMAGE");
+});
+
 test("the development processor is deterministic, detects mismatch, and rejects low-entropy liveness", async () => {
-  const enrolledCapture = pngCapture("pedro");
-  assert.equal(assertValidBiometricCapture(enrolledCapture), "image/png");
-  const enrollment = await processBiometricEnrollment(enrolledCapture);
-  assert.equal(enrollment.livenessPassed, true);
-  assert.equal(enrollment.embedding.length, 128);
-  const match = await processBiometricVerification(pngCapture("pedro"), enrollment.embedding);
-  const mismatch = await processBiometricVerification(pngCapture("maria"), enrollment.embedding);
-  const spoof = await processBiometricVerification(pngCapture("ignored", true), enrollment.embedding);
-  assert.equal(match.matchPassed, true);
-  assert.equal(match.livenessPassed, true);
-  assert.equal(mismatch.matchPassed, false);
-  assert.equal(spoof.livenessPassed, false);
+  const processorMode = env.biometricProcessorMode;
+  env.biometricProcessorMode = "SIMULATED";
+  try {
+    const enrolledCapture = pngCapture("pedro");
+    assert.equal(assertValidBiometricCapture(enrolledCapture), "image/png");
+    const enrollment = await processBiometricEnrollment(enrolledCapture);
+    assert.equal(enrollment.livenessPassed, true);
+    assert.equal(enrollment.embedding.length, 128);
+    const match = await processBiometricVerification(pngCapture("pedro"), enrollment.embedding);
+    const mismatch = await processBiometricVerification(pngCapture("maria"), enrollment.embedding);
+    const spoof = await processBiometricVerification(pngCapture("ignored", true), enrollment.embedding);
+    assert.equal(match.matchPassed, true);
+    assert.equal(match.livenessPassed, true);
+    assert.equal(mismatch.matchPassed, false);
+    assert.equal(spoof.livenessPassed, false);
+  } finally {
+    env.biometricProcessorMode = processorMode;
+  }
+});
+
+test("DeepFace ArcFace output is normalized and requires exactly one face", () => {
+  const rawEmbedding = Array.from({ length: 512 }, (_, index) => index - 256);
+  const embedding = parseDeepFaceRepresentation({ results: [{ embedding: rawEmbedding }] });
+  const magnitude = Math.sqrt(embedding.reduce((sum, value) => sum + value ** 2, 0));
+  assert.equal(embedding.length, 512);
+  assert.ok(Math.abs(magnitude - 1) < 1e-12);
+  assert.deepEqual(normalizeBiometricEmbedding(rawEmbedding), embedding);
+  assert.throws(
+    () => parseDeepFaceRepresentation({ results: [] }),
+    (error) => error.code === "BIOMETRIC_FACE_COUNT_INVALID",
+  );
+  assert.throws(
+    () => parseDeepFaceRepresentation({ results: [{ embedding: rawEmbedding }, { embedding: rawEmbedding }] }),
+    (error) => error.code === "BIOMETRIC_FACE_COUNT_INVALID",
+  );
+});
+
+test("remote biometric processing requests ArcFace anti-spoofing and matches locally", async () => {
+  const previous = {
+    fetch: globalThis.fetch,
+    mode: env.biometricProcessorMode,
+    url: env.biometricServiceUrl,
+    key: env.biometricServiceApiKey,
+  };
+  const rawEmbedding = Array.from({ length: 512 }, (_, index) => index - 256);
+  env.biometricProcessorMode = "REMOTE";
+  env.biometricServiceUrl = "http://biometric-ai.test";
+  env.biometricServiceApiKey = "test-biometric-token-with-32-characters";
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "http://biometric-ai.test/represent");
+    assert.equal(options.headers.authorization, `Bearer ${env.biometricServiceApiKey}`);
+    assert.equal(options.body.get("model_name"), "ArcFace");
+    assert.equal(options.body.get("anti_spoofing"), "true");
+    assert.equal(options.body.get("max_faces"), "2");
+    return Response.json({ results: [{ embedding: rawEmbedding }] });
+  };
+  try {
+    const enrollment = await processBiometricEnrollment(pngCapture("remote-enrollment"));
+    const verification = await processBiometricVerification(pngCapture("remote-verification"), enrollment.embedding);
+    assert.equal(enrollment.model, "ArcFace");
+    assert.equal(enrollment.processor, "REMOTE_DEEPFACE_ARCFACE");
+    assert.equal(enrollment.livenessPassed, true);
+    assert.equal(verification.matchPassed, true);
+  } finally {
+    globalThis.fetch = previous.fetch;
+    env.biometricProcessorMode = previous.mode;
+    env.biometricServiceUrl = previous.url;
+    env.biometricServiceApiKey = previous.key;
+  }
 });
 
 test("biometric captures support common camera and scanner JPEG/JFIF, PNG, and WebP declarations", () => {
@@ -263,6 +350,10 @@ test("QR is preserved by default and blocked only for biometric-only distributio
     () => assertQrVerificationConfigured({ verificationRequirement: "BIOMETRIC" }),
     (error) => error.code === "QR_NOT_REQUIRED",
   );
+  assert.throws(
+    () => assertQrVerificationConfigured({ verificationRequirement: "BIOMETRIC_AND_SIGNATURE" }),
+    (error) => error.code === "QR_NOT_REQUIRED",
+  );
 });
 
 test("Phase 7 route surface exposes consent lifecycle, enrollment, verification, attempts, and deletion", () => {
@@ -277,5 +368,6 @@ test("Phase 7 route surface exposes consent lifecycle, enrollment, verification,
     { path: "/:beneficiaryId/biometrics", methods: ["delete"] },
   ]) assert.equal(beneficiarySurface.some((route) => JSON.stringify(route) === JSON.stringify(expected)), true);
   assert.equal(distributionSurface.some((route) => route.path === "/:distributionId/claims/verify-biometric"), true);
+  assert.equal(distributionSurface.some((route) => route.path === "/:distributionId/claims/:claimId/signature"), true);
   assert.equal(distributionSurface.some((route) => route.path === "/:distributionId/biometric-attempts"), true);
 });

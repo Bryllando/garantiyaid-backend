@@ -4,7 +4,10 @@ import { env } from "../../config/env.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
-import { publishBiometricVerificationResult } from "../../realtime/publishers.js";
+import {
+  publishBiometricVerificationResult,
+  publishClaimSignatureResult,
+} from "../../realtime/publishers.js";
 import { idempotencyKeySchema } from "../distributions/distributionAllocation.schemas.js";
 import {
   assertDistributionOpenForClaims,
@@ -24,6 +27,12 @@ import {
   decryptBiometricTemplate,
   processBiometricVerification,
 } from "./biometric.service.js";
+import {
+  encryptSignatureImage,
+  parseSignatureDataUrl,
+  signatureEvidenceToResponse,
+  signatureImageHash,
+} from "./claimSignature.service.js";
 
 function jsonSafe(value) {
   return JSON.parse(JSON.stringify(value));
@@ -33,6 +42,18 @@ function idempotencyKey(req) {
   const rawKey = req.get("idempotency-key");
   if (!rawKey) {
     throw new AppError(400, "IDEMPOTENCY_KEY_REQUIRED", "An Idempotency-Key UUID header is required for biometric claim verification.");
+  }
+  const parsed = idempotencyKeySchema.safeParse(rawKey.trim());
+  if (!parsed.success) {
+    throw new AppError(400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be a valid UUID.");
+  }
+  return parsed.data;
+}
+
+function signatureIdempotencyKey(req) {
+  const rawKey = req.get("idempotency-key");
+  if (!rawKey) {
+    throw new AppError(400, "IDEMPOTENCY_KEY_REQUIRED", "An Idempotency-Key UUID header is required for signature submission.");
   }
   const parsed = idempotencyKeySchema.safeParse(rawKey.trim());
   if (!parsed.success) {
@@ -52,6 +73,12 @@ function requestHash(file, beneficiaryId, deviceInfo) {
 function assertMatchingRequest(record, hash) {
   if (record.requestHash !== hash) {
     throw new AppError(409, "IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was already used with a different biometric verification request.");
+  }
+}
+
+function assertMatchingSignatureRequest(record, hash) {
+  if (record.requestHash !== hash) {
+    throw new AppError(409, "IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was already used with different signature evidence.");
   }
 }
 
@@ -195,6 +222,33 @@ async function persistRejectedRequest(req, {
   });
 }
 
+function assertSignatureClaimReady(claim, distributionId) {
+  if (!claim || claim.distributionId !== distributionId) {
+    throw new AppError(404, "SIGNATURE_CLAIM_NOT_FOUND", "The pending claim was not found for this distribution event.");
+  }
+  if (claim.signatureVerified || claim.signature) {
+    throw new AppError(409, "SIGNATURE_ALREADY_RECORDED", "A protected signature is already recorded for this claim.");
+  }
+  if (
+    claim.claimStatus !== "PENDING"
+    || claim.verificationMethod !== "BIOMETRIC_AND_SIGNATURE"
+    || !claim.biometricVerified
+  ) {
+    throw new AppError(409, "CLAIM_NOT_READY_FOR_SIGNATURE", "Complete a successful face verification before collecting the beneficiary signature.");
+  }
+}
+
+function assertTypedSignatureName(claim, signatureMethod, typedName) {
+  if (signatureMethod !== "TYPED") return;
+  const normalize = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-PH");
+  const expectedName = [claim.beneficiary.firstName, claim.beneficiary.middleName, claim.beneficiary.lastName]
+    .filter(Boolean)
+    .join(" ");
+  if (normalize(typedName) !== normalize(expectedName)) {
+    throw new AppError(400, "SIGNATURE_NAME_MISMATCH", "The typed signature must match the beneficiary's full legal name.");
+  }
+}
+
 export const verifyBiometricClaim = asyncHandler(async (req, res) => {
   assertBiometricVerifyAllowed(req.staffUser);
   assertValidBiometricCapture(req.file);
@@ -271,7 +325,7 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
     const result = await persistRejectedRequest(req, {
       identity, hash, distributionId, beneficiaryId, biometricId: profile.biometricId,
       result: "PROCESSOR_ERROR", status: 503, code: error.code, message: error.message,
-      deviceInfo, processor: "REMOTE_INSIGHTFACE",
+      deviceInfo, processor: "REMOTE_DEEPFACE_ARCFACE",
     });
     return sendBiometricResult(res, distributionId, beneficiaryId, result);
   } finally {
@@ -403,10 +457,15 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
       where: { biometricId: profile.biometricId },
       data: { verificationCount: { increment: 1 }, lastVerifiedAt: new Date() },
     });
+    const nextRequiredVerification = completedVerification
+      ? null
+      : currentDistribution.verificationRequirement === "BIOMETRIC_AND_SIGNATURE" ? "SIGNATURE" : "QR";
     await tx.auditLog.create({
       data: {
         userId: req.auth.userId,
-        action: completedVerification ? "CLAIM_VERIFIED_BY_BIOMETRIC" : "CLAIM_AWAITING_QR",
+        action: completedVerification
+          ? "CLAIM_VERIFIED_BY_BIOMETRIC"
+          : nextRequiredVerification === "SIGNATURE" ? "CLAIM_AWAITING_SIGNATURE" : "CLAIM_AWAITING_QR",
         entityAffected: "CLAIM",
         recordId: claim.claimId,
         ipAddress: clientIpAddress(req),
@@ -432,7 +491,7 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
           ...biometricProcessingDisclosure,
         },
         verificationComplete: completedVerification,
-        nextRequiredVerification: completedVerification ? null : "QR",
+        nextRequiredVerification,
         walletTransactionCreated: false,
       },
     });
@@ -440,6 +499,150 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
     return { replayed: false, responseStatus: 201, responseBody };
   });
   return sendBiometricResult(res, distributionId, beneficiaryId, result);
+});
+
+export const submitClaimSignature = asyncHandler(async (req, res) => {
+  assertBiometricVerifyAllowed(req.staffUser);
+  const { distributionId, claimId } = req.validatedParams;
+  const { signatureDataUrl, signatureMethod, pointCount, typedName, deviceInfo } = req.validatedBody;
+  const image = parseSignatureDataUrl(signatureDataUrl);
+  const clearImage = () => image.fill(0);
+  res.once("finish", clearImage);
+  res.once("close", clearImage);
+  const imageSha256 = signatureImageHash(image);
+  const key = signatureIdempotencyKey(req);
+  const hash = createHash("sha256").update(JSON.stringify({ claimId, imageSha256, signatureMethod, pointCount: pointCount ?? null, typedName: typedName ?? null, deviceInfo: deviceInfo ?? null })).digest("hex");
+  const identity = {
+    userId: req.auth.userId,
+    operation: `CLAIM_SIGNATURE:${distributionId}:${claimId}`,
+    idempotencyKey: key,
+  };
+  await prisma.idempotencyRecord.deleteMany({ where: { expiresAt: { lte: new Date() } } });
+  const replay = await findReplay(identity);
+  if (replay) {
+    assertMatchingSignatureRequest(replay, hash);
+    image.fill(0);
+    res.set("Idempotency-Replayed", "true");
+    return res.status(replay.responseStatus).json(replay.responseBody);
+  }
+
+  const distribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
+  assertDistributionOpenForClaims(distribution);
+  if (distribution.verificationRequirement !== "BIOMETRIC_AND_SIGNATURE") {
+    image.fill(0);
+    throw new AppError(409, "SIGNATURE_NOT_REQUIRED", "This distribution event is not configured for Face + Signature verification.");
+  }
+  const pendingClaim = await prisma.claim.findUnique({
+    where: { claimId },
+    select: {
+      claimId: true,
+      beneficiaryId: true,
+      distributionId: true,
+      claimStatus: true,
+      verificationMethod: true,
+      biometricVerified: true,
+      signatureVerified: true,
+      beneficiary: { select: { firstName: true, middleName: true, lastName: true } },
+      signature: { select: { signatureId: true } },
+    },
+  });
+  assertSignatureClaimReady(pendingClaim, distributionId);
+  assertTypedSignatureName(pendingClaim, signatureMethod, typedName);
+  const encryptedImage = encryptSignatureImage(image, claimId, pendingClaim.beneficiaryId, distributionId);
+  image.fill(0);
+
+  const result = await runBiometricClaimTransaction(async (tx) => {
+    const concurrent = await tx.idempotencyRecord.findUnique({
+      where: { userId_operation_idempotencyKey: identity },
+    });
+    if (concurrent && concurrent.expiresAt > new Date()) {
+      assertMatchingSignatureRequest(concurrent, hash);
+      return { replayed: true, responseStatus: concurrent.responseStatus, responseBody: concurrent.responseBody };
+    }
+    const currentDistribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser, tx);
+    assertDistributionOpenForClaims(currentDistribution);
+    if (currentDistribution.verificationRequirement !== "BIOMETRIC_AND_SIGNATURE") {
+      throw new AppError(409, "SIGNATURE_NOT_REQUIRED", "This distribution event is not configured for Face + Signature verification.");
+    }
+    const currentClaim = await tx.claim.findUnique({
+      where: { claimId },
+      select: {
+        claimId: true,
+        beneficiaryId: true,
+        distributionId: true,
+        claimStatus: true,
+        verificationMethod: true,
+        biometricVerified: true,
+        signatureVerified: true,
+        beneficiary: { select: { firstName: true, middleName: true, lastName: true } },
+        signature: { select: { signatureId: true } },
+      },
+    });
+    assertSignatureClaimReady(currentClaim, distributionId);
+    assertTypedSignatureName(currentClaim, signatureMethod, typedName);
+    const signature = await tx.claimSignature.create({
+      data: {
+        claimId,
+        capturedById: req.auth.userId,
+        encryptedImage,
+        imageSha256,
+        signatureMethod,
+        pointCount: pointCount ?? null,
+        deviceInfo,
+      },
+      select: {
+        signatureId: true,
+        claimId: true,
+        capturedById: true,
+        imageSha256: true,
+        signatureMethod: true,
+        pointCount: true,
+        signedAt: true,
+      },
+    });
+    const claim = await tx.claim.update({
+      where: { claimId },
+      data: { claimStatus: "VERIFIED", signatureVerified: true, verifiedById: req.auth.userId },
+      select: claimMutationSelect,
+    });
+    await tx.auditLog.create({
+      data: {
+        userId: req.auth.userId,
+        action: "CLAIM_VERIFIED_BY_BIOMETRIC_AND_SIGNATURE",
+        entityAffected: "CLAIM",
+        recordId: claimId,
+        ipAddress: clientIpAddress(req),
+        details: {
+          distributionId,
+          beneficiaryId: claim.beneficiaryId,
+          signatureId: signature.signatureId,
+          imageSha256,
+          signatureMethod,
+          pointCount: pointCount ?? null,
+          typedNameMatched: signatureMethod === "TYPED",
+          attestationConfirmed: true,
+          encryptedAtRest: true,
+          rawSignatureReturned: false,
+          walletTransactionCreated: false,
+        },
+      },
+    });
+    const responseBody = jsonSafe({
+      success: true,
+      data: {
+        claim: claimMutationToResponse(claim),
+        signature: signatureEvidenceToResponse(signature),
+        verificationComplete: true,
+        nextRequiredVerification: null,
+        walletTransactionCreated: false,
+      },
+    });
+    await tx.idempotencyRecord.create({ data: idempotencyData(identity, hash, 201, responseBody) });
+    return { replayed: false, responseStatus: 201, responseBody };
+  });
+  res.set("Idempotency-Replayed", String(result.replayed));
+  await publishClaimSignatureResult(distributionId, result);
+  return res.status(result.responseStatus).json(result.responseBody);
 });
 
 export const listBiometricAttempts = asyncHandler(async (req, res) => {

@@ -16,6 +16,7 @@ function validBeneficiary(overrides = {}) {
     birthDate: "1990-05-20",
     sex: "male",
     address: "Cebu City",
+    sitioPurok: "Sitio Riverside",
     barangayId,
     ...overrides,
   };
@@ -35,6 +36,7 @@ test("create beneficiary normalizes the staff-web input contract", () => {
   assert.equal(result.contactNumber, "+639171234567");
   assert.equal(result.email, "juan@example.com");
   assert.equal(result.philsysNumber, null);
+  assert.equal(result.sitioPurok, "Sitio Riverside");
 });
 
 test("facilitator payload may omit barangayId so the server can derive it", () => {
@@ -73,6 +75,7 @@ test("nullable beneficiary fields can be intentionally cleared", () => {
     contactNumber: null,
     email: "",
     philsysNumber: null,
+    sitioPurok: "",
   });
 
   assert.deepEqual(result, {
@@ -80,6 +83,7 @@ test("nullable beneficiary fields can be intentionally cleared", () => {
     contactNumber: null,
     email: null,
     philsysNumber: null,
+    sitioPurok: null,
   });
 });
 
@@ -111,4 +115,3 @@ test("biometric consent accepts only a future ISO datetime with timezone", () =>
     retentionUntil: "tomorrow",
   }).success, false);
 });
-

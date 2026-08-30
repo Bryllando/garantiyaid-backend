@@ -120,6 +120,7 @@ export const receiptTransactionSelect = {
       verificationMethod: true,
       qrVerified: true,
       biometricVerified: true,
+      signatureVerified: true,
       claimedAt: true,
       allocation: {
         select: {
@@ -233,12 +234,20 @@ export function assertClaimCreditable(claim) {
       "Only a VERIFIED claim can be credited to a simulated wallet.",
     );
   }
+  if (claim.disputes?.some((dispute) => ["OPEN", "UNDER_REVIEW", "REFERRED"].includes(dispute.status))) {
+    throw new AppError(
+      409,
+      "ACTIVE_CLAIM_DISPUTE",
+      "Resolve the active claim dispute before recording a simulated benefit credit.",
+    );
+  }
   const verificationMethod = claim.verificationMethod
     ?? (claim.qrVerified ? "QR" : "BIOMETRIC");
   const identityRequirementSatisfied = {
     QR: claim.qrVerified,
     BIOMETRIC: claim.biometricVerified,
     QR_AND_BIOMETRIC: claim.qrVerified && claim.biometricVerified,
+    BIOMETRIC_AND_SIGNATURE: claim.biometricVerified && claim.signatureVerified,
     MANUAL: false,
   }[verificationMethod] ?? false;
   if (!identityRequirementSatisfied) {

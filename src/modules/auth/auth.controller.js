@@ -25,6 +25,13 @@ export const login = asyncHandler(async (req, res) => {
     requestId: req.requestId,
   });
 
+  if (result.requiresPasswordChange) {
+    return res.status(200).json({
+      success: true,
+      data: { requiresPasswordChange: true },
+    });
+  }
+
   if (result.requiresTotpEnrollment) {
     return res.status(200).json({
       success: true,
@@ -143,6 +150,7 @@ export const confirmTotp = [
     }
 
     const recoveryCodes = generateRecoveryCodes();
+    const recoveryCodeHashes = await Promise.all(recoveryCodes.map(hashRecoveryCode));
 
     const { confirmedUser, accessToken } = await prisma.$transaction(async (tx) => {
       const updated = await tx.user.updateMany({
@@ -169,9 +177,9 @@ export const confirmTotp = [
 
       await tx.staffRecoveryCode.deleteMany({ where: { userId: user.userId } });
       await tx.staffRecoveryCode.createMany({
-        data: recoveryCodes.map((recoveryCode) => ({
+        data: recoveryCodeHashes.map((codeHash) => ({
           userId: user.userId,
-          codeHash: hashRecoveryCode(recoveryCode),
+          codeHash,
         })),
       });
 

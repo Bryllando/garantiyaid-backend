@@ -10,6 +10,7 @@ export const beneficiarySelect = {
   birthDate: true,
   sex: true,
   address: true,
+  sitioPurok: true,
   barangayId: true,
   contactNumber: true,
   email: true,

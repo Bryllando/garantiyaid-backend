@@ -12,6 +12,7 @@ export const claimBeneficiarySelect = {
   middleName: true,
   lastName: true,
   barangayId: true,
+  sitioPurok: true,
   status: true,
   barangay: {
     select: {
@@ -36,6 +37,10 @@ export const qrEligibleScheduleSelect = {
     select: {
       slotId: true,
       distributionId: true,
+      sessionId: true,
+      sessionLabel: true,
+      location: true,
+      serviceAreas: true,
       slotStart: true,
       slotEnd: true,
       capacity: true,
@@ -68,6 +73,7 @@ export const claimPublicSelect = {
   biometricVerified: true,
   biometricScore: true,
   qrVerified: true,
+  signatureVerified: true,
   isDuplicateFlag: true,
   claimedAt: true,
   createdAt: true,
@@ -83,6 +89,10 @@ export const claimPublicSelect = {
         select: {
           slotId: true,
           distributionId: true,
+          sessionId: true,
+          sessionLabel: true,
+          location: true,
+          serviceAreas: true,
           slotStart: true,
           slotEnd: true,
           capacity: true,
@@ -109,6 +119,27 @@ export const claimPublicSelect = {
       role: true,
     },
   },
+  receipt: {
+    select: {
+      receiptId: true,
+      receiptNo: true,
+      evidenceHash: true,
+      issuedAt: true,
+      printCount: true,
+    },
+  },
+  disputes: {
+    orderBy: { filedAt: "desc" },
+    take: 1,
+    select: {
+      disputeId: true,
+      referenceNo: true,
+      status: true,
+      reasonCode: true,
+      outcome: true,
+      filedAt: true,
+    },
+  },
 };
 
 export const claimMutationSelect = {
@@ -123,6 +154,7 @@ export const claimMutationSelect = {
   biometricVerified: true,
   biometricScore: true,
   qrVerified: true,
+  signatureVerified: true,
   isDuplicateFlag: true,
   claimedAt: true,
   createdAt: true,
@@ -192,7 +224,8 @@ function minutesAsTime(minutes) {
   return `${hours}:${minute}`;
 }
 
-export function distributionQrExpiry(distribution) {
+export function distributionQrExpiry(distribution, slotEnd) {
+  if (slotEnd) return new Date(slotEnd);
   const dateOnly = distribution.distributionDate.toISOString().slice(0, 10);
   return new Date(
     `${dateOnly}T${minutesAsTime(timeMinutes(distribution.endTime))}:00${PHILIPPINE_OFFSET}`,
@@ -253,11 +286,11 @@ export function assertDistributionOpenForClaims(distribution) {
 }
 
 export function assertQrVerificationConfigured(distribution) {
-  if (distribution.verificationRequirement === "BIOMETRIC") {
+  if (!["QR", "QR_AND_BIOMETRIC"].includes(distribution.verificationRequirement)) {
     throw new AppError(
       409,
       "QR_NOT_REQUIRED",
-      "This distribution event is configured for biometric verification only.",
+      "This distribution event does not use QR verification.",
     );
   }
 }

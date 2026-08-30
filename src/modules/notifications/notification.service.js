@@ -42,6 +42,8 @@ export const notificationPublicSelect = {
         select: {
           slotStart: true,
           slotEnd: true,
+          sessionLabel: true,
+          location: true,
         },
       },
     },
@@ -89,6 +91,8 @@ export const notificationScheduleContextSelect = {
     select: {
       slotStart: true,
       slotEnd: true,
+      sessionLabel: true,
+      location: true,
     },
   },
   distribution: {
@@ -226,7 +230,7 @@ export function notificationRowFromSchedule(
   );
   const message = renderNotificationTemplate(notificationType, {
     distributionTitle: schedule.distribution.title,
-    location: schedule.distribution.location,
+    location: schedule.slot.location ?? schedule.distribution.location,
     slotStart: schedule.slot.slotStart,
     queueNumber: schedule.queueNumber,
   });

@@ -13,6 +13,8 @@ import {
 import {
   DISTRIBUTION_MANAGE_ROLES,
   DISTRIBUTION_READ_ROLES,
+  CLAIM_DISPUTE_FILE_ROLES,
+  CLAIM_DISPUTE_REVIEW_ROLES,
   CLAIM_VERIFY_ROLES,
   QR_TOKEN_MANAGE_ROLES,
   WALLET_MANAGE_ROLES,
@@ -107,14 +109,30 @@ import {
 } from "../wallets/wallet.schemas.js";
 import {
   listBiometricAttempts,
+  submitClaimSignature,
   verifyBiometricClaim,
 } from "../biometrics/biometricClaim.controller.js";
 import { BIOMETRIC_VERIFY_ROLES } from "../biometrics/biometric.policy.js";
 import {
   biometricAttemptListQuerySchema,
+  claimSignatureParamsSchema,
+  submitClaimSignatureSchema,
   verifyBiometricClaimSchema,
 } from "../biometrics/biometric.schemas.js";
 import { uploadBiometricCapture } from "../biometrics/biometric.upload.js";
+import {
+  createClaimDispute,
+  issueClaimReceipt,
+  listClaimDisputes,
+  recordClaimReceiptPrint,
+  reviewClaimDispute,
+} from "./distributionClaimAccountability.controller.js";
+import {
+  claimDisputeListQuerySchema,
+  claimDisputeParamsSchema,
+  createClaimDisputeSchema,
+  reviewClaimDisputeSchema,
+} from "./distributionClaimAccountability.schemas.js";
 
 const distributionRoutes = Router();
 
@@ -322,6 +340,47 @@ distributionRoutes.post(
   uploadBiometricCapture,
   validateBody(verifyBiometricClaimSchema),
   verifyBiometricClaim,
+);
+distributionRoutes.post(
+  "/:distributionId/claims/:claimId/signature",
+  authorizeRoles(...BIOMETRIC_VERIFY_ROLES),
+  biometricRateLimiter,
+  validateParams(claimSignatureParamsSchema),
+  validateBody(submitClaimSignatureSchema),
+  submitClaimSignature,
+);
+distributionRoutes.post(
+  "/:distributionId/claims/:claimId/receipt",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(claimParamsSchema),
+  issueClaimReceipt,
+);
+distributionRoutes.post(
+  "/:distributionId/claims/:claimId/receipt/print-events",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(claimParamsSchema),
+  recordClaimReceiptPrint,
+);
+distributionRoutes.post(
+  "/:distributionId/claims/:claimId/disputes",
+  authorizeRoles(...CLAIM_DISPUTE_FILE_ROLES),
+  validateParams(claimParamsSchema),
+  validateBody(createClaimDisputeSchema),
+  createClaimDispute,
+);
+distributionRoutes.get(
+  "/:distributionId/claim-disputes",
+  authorizeRoles(...DISTRIBUTION_READ_ROLES),
+  validateParams(distributionIdSchema),
+  validateQuery(claimDisputeListQuerySchema),
+  listClaimDisputes,
+);
+distributionRoutes.post(
+  "/:distributionId/claim-disputes/:disputeId/review",
+  authorizeRoles(...CLAIM_DISPUTE_REVIEW_ROLES),
+  validateParams(claimDisputeParamsSchema),
+  validateBody(reviewClaimDisputeSchema),
+  reviewClaimDispute,
 );
 distributionRoutes.get(
   "/:distributionId/biometric-attempts",

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { env } from "../src/config/env.js";
 import {
@@ -10,6 +10,7 @@ import {
   nextLoginFailureState,
   signAccessToken,
   verifyAccessToken,
+  verifyRecoveryCode,
 } from "../src/modules/auth/auth.service.js";
 import {
   findValidTotpCounter,
@@ -140,12 +141,16 @@ test("password policy enforces 12 characters for new staff and bcrypt's byte lim
   assert.equal(loginPasswordSchema.safeParse("😀".repeat(19)).success, false);
 });
 
-test("staff recovery codes are unique, normalized, and safe to store as hashes", () => {
+test("staff recovery codes are unique, normalized, and safe to store as salted hashes", async () => {
   const codes = generateRecoveryCodes();
+  const hash = await hashRecoveryCode(codes[0]);
 
   assert.equal(codes.length, 8);
   assert.equal(new Set(codes).size, 8);
   assert.equal(codes.every((code) => /^(?:[A-F0-9]{4}-){3}[A-F0-9]{4}$/.test(code)), true);
-  assert.equal(hashRecoveryCode(codes[0]), hashRecoveryCode(codes[0].toLowerCase().replaceAll("-", "")));
-  assert.notEqual(hashRecoveryCode(codes[0]), codes[0]);
+  assert.equal(await verifyRecoveryCode(codes[0].toLowerCase().replaceAll("-", ""), hash), true);
+  assert.equal(await verifyRecoveryCode(codes[1], hash), false);
+  assert.notEqual(await hashRecoveryCode(codes[0]), hash);
+  const legacyHash = createHash("sha256").update(codes[0].replaceAll("-", "")).digest("hex");
+  assert.equal(await verifyRecoveryCode(codes[0], legacyHash), true);
 });

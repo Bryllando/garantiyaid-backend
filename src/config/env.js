@@ -39,7 +39,7 @@ const environmentSchema = z.object({
   BIOMETRIC_SERVICE_URL: z.url().optional(),
   BIOMETRIC_SERVICE_API_KEY: z.string().min(32).optional(),
   BIOMETRIC_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
-  BIOMETRIC_MATCH_THRESHOLD: z.coerce.number().min(0.5).max(1).default(0.75),
+  BIOMETRIC_MATCH_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
   BIOMETRIC_LIVENESS_THRESHOLD: z.coerce.number().min(0.5).max(1).default(0.8),
   REDIS_URL: z.string().trim().refine(
     (value) => /^rediss?:\/\//i.test(value),

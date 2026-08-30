@@ -63,6 +63,7 @@ const beneficiaryFields = {
   birthDate,
   sex,
   address: z.string().trim().min(1).max(2000),
+  sitioPurok: optionalNullableText(120),
   barangayId: z.uuid().optional(),
   contactNumber: optionalContactNumber,
   email: optionalEmail,

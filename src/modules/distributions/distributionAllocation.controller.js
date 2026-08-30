@@ -21,6 +21,7 @@ import {
   buildEligibleEnrollmentSearchWhere,
   distributionAllocationSelect,
   distributionAllocationToResponse,
+  distributionCoveredServiceAreas,
   eligibleEnrollmentSelect,
   getDistributionAllocationOrThrow,
   getDistributionAllocationParentOrThrow,
@@ -117,17 +118,24 @@ export const listEligibleDistributionEnrollments = asyncHandler(async (req, res)
     req.staffUser,
   );
 
-  const where = {
+  const coveredServiceAreas = distributionCoveredServiceAreas(distribution);
+  const baseWhere = {
     programId: distribution.programId,
     status: "APPROVED",
     beneficiary: {
       barangayId: distribution.barangayId,
       status: "ACTIVE",
+      ...(coveredServiceAreas.length > 0 ? {
+        sitioPurok: { in: coveredServiceAreas },
+      } : {}),
     },
     allocations: { none: { distributionId } },
+  };
+  const where = {
+    ...baseWhere,
     ...buildEligibleEnrollmentSearchWhere(search),
   };
-  const [enrollments, total] = await Promise.all([
+  const [enrollments, total, coverageRows] = await Promise.all([
     prisma.enrollment.findMany({
       where,
       select: eligibleEnrollmentSelect,
@@ -140,13 +148,33 @@ export const listEligibleDistributionEnrollments = asyncHandler(async (req, res)
       take: pageSize,
     }),
     prisma.enrollment.count({ where }),
+    prisma.enrollment.findMany({
+      where: baseWhere,
+      select: { beneficiary: { select: { sitioPurok: true } } },
+    }),
   ]);
+  const serviceAreaCounts = new Map();
+  let unspecifiedServiceAreaCount = 0;
+  for (const row of coverageRows) {
+    const area = row.beneficiary.sitioPurok;
+    if (!area) {
+      unspecifiedServiceAreaCount += 1;
+    } else {
+      serviceAreaCounts.set(area, (serviceAreaCounts.get(area) ?? 0) + 1);
+    }
+  }
 
   return res.status(200).json({
     success: true,
     data: {
       enrollments,
       allocationAmount: distribution.program.grantAmount?.toString() ?? null,
+      summary: {
+        serviceAreas: [...serviceAreaCounts.entries()]
+          .map(([name, count]) => ({ name, count }))
+          .sort((left, right) => left.name.localeCompare(right.name, "en-PH")),
+        unspecifiedServiceAreaCount,
+      },
       pagination: {
         page,
         pageSize,
@@ -221,6 +249,7 @@ export const createDistributionAllocations = asyncHandler(async (req, res) => {
         select: {
           beneficiaryId: true,
           barangayId: true,
+          sitioPurok: true,
           status: true,
         },
       });

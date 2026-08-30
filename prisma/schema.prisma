@@ -79,11 +79,33 @@ enum ClaimStatus {
   VOIDED
 }
 
+enum ClaimDisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  REFERRED
+  RESOLVED
+}
+
+enum ClaimDisputeReason {
+  BENEFICIARY_DENIES_RECEIPT
+  AMOUNT_OR_ASSISTANCE_MISMATCH
+  SUSPECTED_IDENTITY_MISUSE
+  RECEIPT_OR_RECORD_ERROR
+  OTHER
+}
+
+enum ClaimDisputeOutcome {
+  CLAIM_CONFIRMED
+  BENEFICIARY_REMEDIATION
+  REFERRED_FOR_INVESTIGATION
+}
+
 enum VerificationMethod {
   QR
   BIOMETRIC
   MANUAL
   QR_AND_BIOMETRIC
+  BIOMETRIC_AND_SIGNATURE
 }
 
 enum BiometricDataStatus {
@@ -132,6 +154,7 @@ model User {
   fullName            String    @map("full_name") @db.VarChar(150)
   email               String    @unique @db.VarChar(150)
   passwordHash        String    @map("password_hash") @db.VarChar(255)
+  mustChangePassword  Boolean   @default(true) @map("must_change_password")
   totpSecret          String?   @map("totp_secret") @db.VarChar(255)
   totpEnabled         Boolean   @default(false) @map("totp_enabled")
   lastTotpCounter     BigInt?   @map("last_totp_counter")
@@ -156,6 +179,11 @@ model User {
   enrolledBiometricData   BiometricData[]                @relation("BiometricEnroller")
   recordedConsents        BiometricConsent[]             @relation("ConsentRecorder")
   biometricAttempts       BiometricVerificationAttempt[] @relation("BiometricVerifier")
+  capturedClaimSignatures ClaimSignature[]               @relation("ClaimSignatureCapturer")
+  issuedClaimReceipts     ClaimReceipt[]                 @relation("ClaimReceiptIssuer")
+  filedClaimDisputes      ClaimDispute[]                 @relation("ClaimDisputeFiler")
+  assignedClaimDisputes   ClaimDispute[]                 @relation("ClaimDisputeAssignee")
+  reviewedClaimDisputes   ClaimDispute[]                 @relation("ClaimDisputeReviewer")
   createdDistributions    Distribution[]                 @relation("DistributionCreator")
   allocatedDistributions  DistributionAllocation[]       @relation("AllocationCreator")
   verifiedClaims          Claim[]                        @relation("ClaimVerifier")
@@ -285,6 +313,7 @@ model Beneficiary {
   birthDate     DateTime @map("birth_date") @db.Date
   sex           String   @db.VarChar(10)
   address       String   @db.Text
+  sitioPurok    String?  @map("sitio_purok") @db.VarChar(120)
   barangayId    String   @map("barangay_id") @db.Uuid
   contactNumber String?  @map("contact_number") @db.VarChar(20)
   email         String?  @unique @db.VarChar(150)
@@ -484,6 +513,10 @@ model Distribution {
 model DistributionSlot {
   slotId         String                 @id @default(uuid()) @map("slot_id") @db.Uuid
   distributionId String                 @map("distribution_id") @db.Uuid
+  sessionId      String                 @map("session_id") @db.Uuid
+  sessionLabel   String                 @map("session_label") @db.VarChar(120)
+  location       String                 @db.VarChar(200)
+  serviceAreas   String[]               @default([]) @map("service_areas")
   slotStart      DateTime               @map("slot_start") @db.Timestamptz(6)
   slotEnd        DateTime               @map("slot_end") @db.Timestamptz(6)
   capacity       Int
@@ -496,6 +529,7 @@ model DistributionSlot {
 
   @@unique([distributionId, slotStart])
   @@index([distributionId, slotStatus, slotStart])
+  @@index([distributionId, sessionId, slotStart])
   @@map("distribution_slots")
 }
 
@@ -600,6 +634,7 @@ model Claim {
   biometricVerified  Boolean            @default(false) @map("biometric_verified")
   biometricScore     Decimal?           @map("biometric_score") @db.Decimal(5, 4)
   qrVerified         Boolean            @default(false) @map("qr_verified")
+  signatureVerified  Boolean            @default(false) @map("signature_verified")
   isDuplicateFlag    Boolean            @default(false) @map("is_duplicate_flag")
   claimedAt          DateTime?          @map("claimed_at") @db.Timestamptz(6)
   createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -613,10 +648,80 @@ model Claim {
   qrScanLogs        QrScanLog[]
   transactions      Transaction[]
   biometricAttempts BiometricVerificationAttempt[]
+  signature         ClaimSignature?
+  receipt           ClaimReceipt?
+  disputes          ClaimDispute[]
 
   @@unique([beneficiaryId, distributionId])
   @@index([distributionId, claimStatus, createdAt])
   @@map("claims")
+}
+
+model ClaimSignature {
+  signatureId     String   @id @default(uuid()) @map("signature_id") @db.Uuid
+  claimId         String   @unique @map("claim_id") @db.Uuid
+  capturedById    String   @map("captured_by") @db.Uuid
+  encryptedImage  Bytes    @map("encrypted_image")
+  imageSha256     String   @map("image_sha256") @db.VarChar(64)
+  signatureMethod String   @default("DRAWN") @map("signature_method") @db.VarChar(20)
+  pointCount      Int?     @map("point_count")
+  deviceInfo      String?  @map("device_info") @db.VarChar(255)
+  signedAt        DateTime @default(now()) @map("signed_at") @db.Timestamptz(6)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  claim      Claim @relation(fields: [claimId], references: [claimId], onDelete: Cascade)
+  capturedBy User  @relation("ClaimSignatureCapturer", fields: [capturedById], references: [userId])
+
+  @@index([capturedById, signedAt])
+  @@map("claim_signatures")
+}
+
+model ClaimReceipt {
+  receiptId      String    @id @default(uuid()) @map("receipt_id") @db.Uuid
+  claimId        String    @unique @map("claim_id") @db.Uuid
+  issuedById     String    @map("issued_by") @db.Uuid
+  receiptNo      String    @unique @map("receipt_no") @db.VarChar(60)
+  receiptVersion String    @default("GYA-CLAIM-1") @map("receipt_version") @db.VarChar(30)
+  evidenceHash   String    @map("evidence_hash") @db.VarChar(64)
+  snapshot       Json
+  printCount     Int       @default(0) @map("print_count")
+  lastPrintedAt  DateTime? @map("last_printed_at") @db.Timestamptz(6)
+  issuedAt       DateTime  @default(now()) @map("issued_at") @db.Timestamptz(6)
+
+  claim    Claim @relation(fields: [claimId], references: [claimId], onDelete: Restrict)
+  issuedBy User  @relation("ClaimReceiptIssuer", fields: [issuedById], references: [userId])
+
+  @@index([issuedById, issuedAt])
+  @@map("claim_receipts")
+}
+
+model ClaimDispute {
+  disputeId    String               @id @default(uuid()) @map("dispute_id") @db.Uuid
+  claimId      String               @map("claim_id") @db.Uuid
+  filedById    String               @map("filed_by") @db.Uuid
+  assignedToId String?              @map("assigned_to") @db.Uuid
+  reviewedById String?              @map("reviewed_by") @db.Uuid
+  referenceNo  String               @unique @map("reference_no") @db.VarChar(60)
+  status       ClaimDisputeStatus   @default(OPEN)
+  reasonCode   ClaimDisputeReason   @map("reason_code")
+  statement    String               @db.Text
+  outcome      ClaimDisputeOutcome?
+  reviewNotes  String?              @map("review_notes") @db.Text
+  filedAt      DateTime             @default(now()) @map("filed_at") @db.Timestamptz(6)
+  reviewedAt   DateTime?            @map("reviewed_at") @db.Timestamptz(6)
+  resolvedAt   DateTime?            @map("resolved_at") @db.Timestamptz(6)
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  claim      Claim @relation(fields: [claimId], references: [claimId], onDelete: Restrict)
+  filedBy    User  @relation("ClaimDisputeFiler", fields: [filedById], references: [userId])
+  assignedTo User? @relation("ClaimDisputeAssignee", fields: [assignedToId], references: [userId])
+  reviewedBy User? @relation("ClaimDisputeReviewer", fields: [reviewedById], references: [userId])
+
+  @@index([claimId, status, filedAt])
+  @@index([status, filedAt])
+  @@index([assignedToId, status])
+  @@map("claim_disputes")
 }
 
 model Transaction {

@@ -15,6 +15,13 @@ export const CLAIM_VERIFY_ROLES = Object.freeze([
   "BARANGAY_FACILITATOR",
 ]);
 
+export const CLAIM_DISPUTE_FILE_ROLES = DISTRIBUTION_READ_ROLES;
+
+export const CLAIM_DISPUTE_REVIEW_ROLES = Object.freeze([
+  "SYSTEM_ADMIN",
+  "DSWD_STAFF",
+]);
+
 export const WALLET_READ_ROLES = Object.freeze([
   "SYSTEM_ADMIN",
   "DSWD_STAFF",
@@ -57,6 +64,22 @@ export function assertClaimVerifyAllowed(staffUser) {
       403,
       "FORBIDDEN",
       "Only System Administrators and assigned Barangay Facilitators may verify QR claims.",
+    );
+  }
+}
+
+export function assertClaimDisputeFileAllowed(staffUser) {
+  if (!staffUser || !CLAIM_DISPUTE_FILE_ROLES.includes(staffUser.role)) {
+    throw new AppError(403, "FORBIDDEN", "You do not have permission to file a claim dispute.");
+  }
+}
+
+export function assertClaimDisputeReviewAllowed(staffUser) {
+  if (!staffUser || !CLAIM_DISPUTE_REVIEW_ROLES.includes(staffUser.role)) {
+    throw new AppError(
+      403,
+      "FORBIDDEN",
+      "Only System Administrators and DSWD Staff may review claim disputes.",
     );
   }
 }

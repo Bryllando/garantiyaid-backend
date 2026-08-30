@@ -161,12 +161,12 @@ test("queue helpers count occupying schedules and never reuse queue numbers", as
 
 test("search helpers support beneficiary names, UUIDs, and queue numbers", () => {
   assert.deepEqual(buildScheduleSearchWhere(), {});
-  assert.equal(buildScheduleSearchWhere("Pedro").OR.length, 3);
-  assert.equal(buildScheduleSearchWhere(scheduleId).OR.length, 6);
-  assert.equal(buildScheduleSearchWhere("12").OR.length, 4);
+  assert.equal(buildScheduleSearchWhere("Pedro").OR.length, 4);
+  assert.equal(buildScheduleSearchWhere(scheduleId).OR.length, 7);
+  assert.equal(buildScheduleSearchWhere("12").OR.length, 5);
   assert.deepEqual(buildSchedulableAllocationSearchWhere(), {});
-  assert.equal(buildSchedulableAllocationSearchWhere("Pedro").OR.length, 3);
-  assert.equal(buildSchedulableAllocationSearchWhere(allocationId).OR.length, 6);
+  assert.equal(buildSchedulableAllocationSearchWhere("Pedro").OR.length, 4);
+  assert.equal(buildSchedulableAllocationSearchWhere(allocationId).OR.length, 7);
 });
 
 test("opening readiness requires every active allocation to have a capacity-safe schedule", async () => {
@@ -180,7 +180,8 @@ test("opening readiness requires every active allocation to have a capacity-safe
         beneficiaryId,
         slotId,
         status: "SCHEDULED",
-        slot: { distributionId, capacity: 1 },
+        beneficiary: { sitioPurok: "Sitio Riverside" },
+        slot: { distributionId, capacity: 1, serviceAreas: ["Sitio Riverside"] },
       }],
     },
   };
@@ -230,4 +231,3 @@ test("schedule responses expose operational fields but omit sensitive beneficiar
   assert.equal(Object.hasOwn(distributionScheduleSelect, "claim"), false);
   assert.equal(schedulableAllocationToResponse({ amount: { toString: () => "5000.00" } }).amount, "5000.00");
 });
-

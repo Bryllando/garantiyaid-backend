@@ -6,24 +6,31 @@ import { clientIpAddress } from "../../utils/clientIp.js";
 import {
   assertActiveBarangay,
   assertStaffLoginIdentifiersAvailable,
+  generateStaffId,
+  generateTemporaryPassword,
   getStaffUserOrThrow,
   resolveStaffUserUpdate,
   staffUserSelect,
 } from "./user.service.js";
 
 export const createStaffUser = asyncHandler(async (req, res) => {
-  const { password, ...staffUserInput } = req.validatedBody;
-
-  await assertStaffLoginIdentifiersAvailable(staffUserInput);
+  const staffUserInput = req.validatedBody;
 
   if (staffUserInput.role === "BARANGAY_FACILITATOR") {
     await assertActiveBarangay(staffUserInput.barangayId);
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  const temporaryPassword = generateTemporaryPassword();
+  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
   const user = await prisma.$transaction(async (tx) => {
+    const employeeId = await generateStaffId(staffUserInput.role, tx);
+    await assertStaffLoginIdentifiersAvailable(
+      { employeeId, username: staffUserInput.username },
+      undefined,
+      tx,
+    );
     const createdUser = await tx.user.create({
-      data: { ...staffUserInput, passwordHash },
+      data: { ...staffUserInput, employeeId, passwordHash },
       select: staffUserSelect,
     });
 
@@ -34,14 +41,17 @@ export const createStaffUser = asyncHandler(async (req, res) => {
         entityAffected: "USER",
         recordId: createdUser.userId,
         ipAddress: clientIpAddress(req),
-        details: { role: createdUser.role },
+        details: { role: createdUser.role, staffId: createdUser.employeeId },
       },
     });
 
     return createdUser;
   });
 
-  res.status(201).json({ success: true, data: { user } });
+  res.set("Cache-Control", "no-store").status(201).json({
+    success: true,
+    data: { user, temporaryPassword },
+  });
 });
 
 export const listStaffUsers = asyncHandler(async (req, res) => {
@@ -156,31 +166,33 @@ export const updateStaffUser = asyncHandler(async (req, res) => {
 
   if (
     existingUser.userId === req.auth.userId &&
-    (Object.hasOwn(req.validatedBody, "role") || Object.hasOwn(req.validatedBody, "isActive"))
+    Object.hasOwn(req.validatedBody, "isActive")
   ) {
-    throw new AppError(403, "SELF_PRIVILEGE_CHANGE_FORBIDDEN", "You cannot change your own role or active status.");
+    throw new AppError(403, "SELF_PRIVILEGE_CHANGE_FORBIDDEN", "You cannot change your own active status.");
   }
 
   const updateData = resolveStaffUserUpdate(existingUser, req.validatedBody);
-  const nextRole = updateData.role ?? existingUser.role;
   const nextIsActive = updateData.isActive ?? existingUser.isActive;
   const nextUsername = Object.hasOwn(updateData, "username")
     ? updateData.username
     : existingUser.username;
+  const nextBarangayId = Object.hasOwn(updateData, "barangayId")
+    ? updateData.barangayId
+    : existingUser.barangayId;
 
   await assertStaffLoginIdentifiersAvailable(
     { employeeId: existingUser.employeeId, username: nextUsername },
     existingUser.userId,
   );
 
-  if (nextRole === "BARANGAY_FACILITATOR") {
-    await assertActiveBarangay(updateData.barangayId);
+  if (existingUser.role === "BARANGAY_FACILITATOR") {
+    await assertActiveBarangay(nextBarangayId);
   }
 
   const removesActiveAdministrator =
     existingUser.role === "SYSTEM_ADMIN" &&
     existingUser.isActive &&
-    (nextRole !== "SYSTEM_ADMIN" || !nextIsActive);
+    !nextIsActive;
 
   if (removesActiveAdministrator) {
     const activeAdminCount = await prisma.user.count({
@@ -211,7 +223,7 @@ export const updateStaffUser = asyncHandler(async (req, res) => {
           ? "STAFF_ACCOUNT_REACTIVATED"
           : "STAFF_ACCOUNT_UPDATED";
 
-    if (changedFields.some((field) => field === "role" || field === "isActive")) {
+    if (changedFields.includes("isActive")) {
       await tx.staffSession.updateMany({
         where: { userId: updatedUser.userId, revokedAt: null },
         data: { revokedAt: new Date() },

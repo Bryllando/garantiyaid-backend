@@ -242,6 +242,7 @@ export const listCreditableClaims = asyncHandler(async (req, res) => {
     distributionId,
     claimStatus: "VERIFIED",
     transactions: { none: { transactionType: "BENEFIT_CREDIT" } },
+    disputes: { none: { status: { in: ["OPEN", "UNDER_REVIEW", "REFERRED"] } } },
   };
   const [claims, total] = await Promise.all([
     prisma.claim.findMany({
@@ -307,6 +308,11 @@ export const creditVerifiedClaim = asyncHandler(async (req, res) => {
         verificationMethod: true,
         qrVerified: true,
         biometricVerified: true,
+        signatureVerified: true,
+        disputes: {
+          where: { status: { in: ["OPEN", "UNDER_REVIEW", "REFERRED"] } },
+          select: { disputeId: true, status: true },
+        },
       },
     });
     if (!claimRecord) {

@@ -48,12 +48,47 @@ async function readGeneratedSlots(distributionId) {
   });
 }
 
+async function assertNoSessionSlotConflict(database, distribution, rows) {
+  const boundsBySession = new Map();
+  for (const row of rows) {
+    const bounds = boundsBySession.get(row.sessionId) ?? {
+      startsAt: row.slotStart,
+      endsAt: row.slotEnd,
+    };
+    if (row.slotStart < bounds.startsAt) bounds.startsAt = row.slotStart;
+    if (row.slotEnd > bounds.endsAt) bounds.endsAt = row.slotEnd;
+    boundsBySession.set(row.sessionId, bounds);
+  }
+  const conflict = await database.distributionSlot.findFirst({
+    where: {
+      distributionId: { not: distribution.distributionId },
+      distribution: {
+        barangayId: distribution.barangayId,
+        status: { not: "CANCELLED" },
+      },
+      OR: [...boundsBySession.values()].map((bounds) => ({
+        slotStart: { lt: bounds.endsAt },
+        slotEnd: { gt: bounds.startsAt },
+      })),
+    },
+    select: { distributionId: true, sessionLabel: true, slotStart: true, slotEnd: true },
+  });
+  if (conflict) {
+    throw new AppError(
+      409,
+      "DISTRIBUTION_SESSION_TIME_CONFLICT",
+      "A service session overlaps another distribution event in this Barangay.",
+      { conflictingDistributionId: conflict.distributionId },
+    );
+  }
+}
+
 export const generateDistributionSlots = asyncHandler(async (req, res) => {
   assertDistributionManageAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
-  const { capacity } = req.validatedBody;
+  const { capacity, sessions } = req.validatedBody;
 
-  const generatedCount = await runSlotTransaction(async (tx) => {
+  const generated = await runSlotTransaction(async (tx) => {
     const distribution = await getDistributionSlotParentOrThrow(
       distributionId,
       req.staffUser,
@@ -72,8 +107,11 @@ export const generateDistributionSlots = asyncHandler(async (req, res) => {
       );
     }
 
-    const rows = buildDistributionSlotRows(distribution, capacity);
+    const rows = buildDistributionSlotRows(distribution, sessions ?? capacity);
+    await assertNoSessionSlotConflict(tx, distribution, rows);
     await tx.distributionSlot.createMany({ data: rows });
+    const sessionCount = new Set(rows.map((row) => row.sessionId)).size;
+    const totalCapacity = rows.reduce((total, row) => total + row.capacity, 0);
     await tx.auditLog.create({
       data: {
         userId: req.auth.userId,
@@ -83,14 +121,17 @@ export const generateDistributionSlots = asyncHandler(async (req, res) => {
         ipAddress: clientIpAddress(req),
         details: {
           slotCount: rows.length,
-          capacityPerSlot: capacity,
-          totalCapacity: rows.length * capacity,
+          sessionCount,
+          totalCapacity,
+          coverageMode: rows.some((row) => row.serviceAreas.length > 0)
+            ? "BY_SERVICE_AREA"
+            : "WHOLE_BARANGAY",
           timeZone: "Asia/Manila",
         },
       },
     });
 
-    return rows.length;
+    return { slotCount: rows.length, sessionCount, totalCapacity };
   });
 
   const slots = await readGeneratedSlots(distributionId);
@@ -99,8 +140,7 @@ export const generateDistributionSlots = asyncHandler(async (req, res) => {
     data: {
       slots: slots.map(distributionSlotToResponse),
       summary: {
-        slotCount: generatedCount,
-        totalCapacity: generatedCount * capacity,
+        ...generated,
         timeZone: "Asia/Manila",
       },
     },
@@ -117,7 +157,7 @@ export const listDistributionSlots = asyncHandler(async (req, res) => {
     distributionId,
     ...(slotStatus ? { slotStatus } : {}),
   };
-  const [slots, total, capacity] = await Promise.all([
+  const [slots, total, capacity, sessionGroups] = await Promise.all([
     prisma.distributionSlot.findMany({
       where,
       select: distributionSlotSelect,
@@ -127,6 +167,7 @@ export const listDistributionSlots = asyncHandler(async (req, res) => {
     }),
     prisma.distributionSlot.count({ where }),
     prisma.distributionSlot.aggregate({ where, _sum: { capacity: true } }),
+    prisma.distributionSlot.groupBy({ by: ["sessionId"], where }),
   ]);
 
   return res.status(200).json({
@@ -136,6 +177,7 @@ export const listDistributionSlots = asyncHandler(async (req, res) => {
       summary: {
         matchingSlotCount: total,
         matchingCapacity: capacity._sum.capacity ?? 0,
+        sessionCount: sessionGroups.length,
         timeZone: "Asia/Manila",
       },
       pagination: {

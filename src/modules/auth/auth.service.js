@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import prisma from "../../lib/prisma.js";
@@ -20,6 +20,7 @@ export const staffUserSelect = {
   email: true,
   role: true,
   contactNumber: true,
+  mustChangePassword: true,
   totpEnabled: true,
   barangayId: true,
   isActive: true,
@@ -40,7 +41,17 @@ export function normalizeRecoveryCode(value) {
 }
 
 export function hashRecoveryCode(value) {
-  return createHash("sha256").update(normalizeRecoveryCode(value)).digest("hex");
+  return bcrypt.hash(normalizeRecoveryCode(value), 12);
+}
+
+export async function verifyRecoveryCode(value, hash) {
+  const normalized = normalizeRecoveryCode(value);
+  if (hash.startsWith("$2")) return bcrypt.compare(normalized, hash);
+
+  // ponytail: accept pre-migration SHA-256 codes until existing recovery sets rotate.
+  const candidate = Buffer.from(createHash("sha256").update(normalized).digest("hex"));
+  const stored = Buffer.from(hash);
+  return candidate.length === stored.length && timingSafeEqual(candidate, stored);
 }
 
 export function generateRecoveryCodes() {
@@ -174,6 +185,16 @@ export function resolveStaffLoginLookup(identifier) {
   };
 }
 
+export function staffLoginMethodAllowed(user, identifier) {
+  const normalizedIdentifier = identifier.trim();
+
+  return user?.employeeId === normalizedIdentifier.toUpperCase()
+    || (
+      USERNAME_LOGIN_ROLES.includes(user?.role)
+      && user.username === normalizedIdentifier.toLowerCase()
+    );
+}
+
 export function accountIsLocked(user, now = new Date()) {
   return Boolean(user.lockedUntil && user.lockedUntil > now);
 }
@@ -274,7 +295,7 @@ function invalidCredentialsError() {
 }
 
 export async function authenticateStaff(
-  { identifier, password, totpCode, recoveryCode },
+  { identifier, password, newPassword, totpCode, recoveryCode },
   context = {},
 ) {
   const matches = await prisma.user.findMany({
@@ -282,10 +303,7 @@ export async function authenticateStaff(
     take: 2,
   });
   const user = matches.length === 1 ? matches[0] : null;
-  const normalizedUsername = identifier.trim().toLowerCase();
-  const usedUsername = user?.username === normalizedUsername;
-  const loginMethodAllowed = !usedUsername || USERNAME_LOGIN_ROLES.includes(user?.role);
-  const eligibleUser = user && loginMethodAllowed ? user : null;
+  const eligibleUser = staffLoginMethodAllowed(user, identifier) ? user : null;
   const passwordMatches = await bcrypt.compare(
     password,
     eligibleUser?.passwordHash ?? DUMMY_PASSWORD_HASH,
@@ -329,6 +347,87 @@ export async function authenticateStaff(
     throw new AppError(403, "ACCOUNT_INACTIVE", "This staff account is not active.");
   }
 
+  if (eligibleUser.mustChangePassword) {
+    if (!newPassword) {
+      return {
+        user: eligibleUser,
+        requiresPasswordChange: true,
+        requiresTotp: false,
+        requiresTotpEnrollment: false,
+      };
+    }
+
+    if (await bcrypt.compare(newPassword, eligibleUser.passwordHash)) {
+      throw new AppError(
+        400,
+        "PASSWORD_REUSE_NOT_ALLOWED",
+        "Choose a new password that is different from the temporary password.",
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const safeUser = await prisma.$transaction(async (tx) => {
+      const changed = await tx.user.updateMany({
+        where: { userId: eligibleUser.userId, mustChangePassword: true },
+        data: {
+          passwordHash,
+          mustChangePassword: false,
+          failedLoginAttempts: 0,
+          lastFailedLoginAt: null,
+          lockedUntil: null,
+        },
+      });
+
+      if (changed.count !== 1) {
+        throw new AppError(
+          409,
+          "INITIAL_PASSWORD_ALREADY_CHANGED",
+          "The temporary password was already changed. Sign in using the new password.",
+        );
+      }
+
+      await tx.auditLog.create({
+        data: {
+          userId: eligibleUser.userId,
+          action: "INITIAL_STAFF_PASSWORD_CHANGED",
+          entityAffected: "USER",
+          recordId: eligibleUser.userId,
+          ipAddress: context.ipAddress,
+        },
+      });
+
+      return tx.user.findUniqueOrThrow({
+        where: { userId: eligibleUser.userId },
+        select: staffUserSelect,
+      });
+    });
+
+    if (!safeUser.totpEnabled) {
+      return {
+        user: safeUser,
+        requiresPasswordChange: false,
+        requiresTotp: false,
+        requiresTotpEnrollment: true,
+        totpSetupToken: signTotpSetupToken(safeUser),
+      };
+    }
+
+    return {
+      user: safeUser,
+      requiresPasswordChange: false,
+      requiresTotp: true,
+      requiresTotpEnrollment: false,
+    };
+  }
+
+  if (newPassword) {
+    throw new AppError(
+      400,
+      "PASSWORD_CHANGE_NOT_REQUIRED",
+      "This account no longer requires an initial password change.",
+    );
+  }
+
   if (!eligibleUser.totpEnabled) {
     return {
       user: eligibleUser,
@@ -343,11 +442,14 @@ export async function authenticateStaff(
   }
 
   if (recoveryCode) {
-    const codeHash = hashRecoveryCode(recoveryCode);
-    const storedCode = await prisma.staffRecoveryCode.findFirst({
-      where: { userId: eligibleUser.userId, codeHash, usedAt: null },
-      select: { recoveryCodeId: true },
+    const storedCodes = await prisma.staffRecoveryCode.findMany({
+      where: { userId: eligibleUser.userId, usedAt: null },
+      select: { recoveryCodeId: true, codeHash: true },
     });
+    const comparisons = await Promise.all(
+      storedCodes.map(({ codeHash }) => verifyRecoveryCode(recoveryCode, codeHash)),
+    );
+    const storedCode = storedCodes[comparisons.findIndex(Boolean)];
     const consumed = storedCode
       ? await prisma.$transaction(async (tx) => {
           const result = await tx.staffRecoveryCode.updateMany({

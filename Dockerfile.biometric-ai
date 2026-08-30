@@ -1,0 +1,4 @@
+FROM serengil/deepface@sha256:58d96a2ff61b37daf8895e2dc2d9377a25bb1b6b780867e19ca959a2ed857aed
+
+RUN python -m pip install --no-cache-dir torch==1.13.1 typing-extensions==4.5.0 --index-url https://download.pytorch.org/whl/cpu \
+    && sed -i '/^if TYPE_CHECKING:/,/^        pass$/c\from torch.nn import Module' /app/deepface/models/spoofing/FasNetBackbone.py

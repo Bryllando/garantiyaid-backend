@@ -17,6 +17,7 @@ export const allocationBeneficiarySelect = {
   middleName: true,
   lastName: true,
   barangayId: true,
+  sitioPurok: true,
   status: true,
   barangay: {
     select: {
@@ -67,6 +68,7 @@ export const distributionAllocationParentSelect = {
   programId: true,
   barangayId: true,
   status: true,
+  slots: { select: { serviceAreas: true } },
   program: {
     select: {
       programId: true,
@@ -78,6 +80,15 @@ export const distributionAllocationParentSelect = {
     },
   },
 };
+
+function normalizedServiceArea(value) {
+  return value?.trim().toLocaleLowerCase("en-PH") ?? "";
+}
+
+export function distributionCoveredServiceAreas(distribution) {
+  const areas = distribution.slots?.flatMap((slot) => slot.serviceAreas) ?? [];
+  return [...new Map(areas.map((area) => [normalizedServiceArea(area), area])).values()];
+}
 
 export const distributionAllocationMutationSelect = {
   allocationId: true,
@@ -140,6 +151,8 @@ export function assertRequestedEnrollmentsEligible(enrollments, enrollmentIds, d
     enrollment.enrollmentId,
     enrollment,
   ]));
+  const coveredAreas = distributionCoveredServiceAreas(distribution);
+  const normalizedCoveredAreas = new Set(coveredAreas.map(normalizedServiceArea));
 
   for (const enrollmentId of enrollmentIds) {
     const enrollment = enrollmentsById.get(enrollmentId);
@@ -180,6 +193,17 @@ export function assertRequestedEnrollmentsEligible(enrollments, enrollmentIds, d
         "BENEFICIARY_NOT_ACTIVE",
         "Only active beneficiaries can receive distribution allocations.",
         { enrollmentId },
+      );
+    }
+    if (
+      normalizedCoveredAreas.size > 0
+      && !normalizedCoveredAreas.has(normalizedServiceArea(enrollment.beneficiary.sitioPurok))
+    ) {
+      throw new AppError(
+        409,
+        "ENROLLMENT_SERVICE_AREA_MISMATCH",
+        "The beneficiary's Sitio or Purok is not covered by this distribution event.",
+        { enrollmentId, sitioPurok: enrollment.beneficiary.sitioPurok ?? null },
       );
     }
   }
@@ -301,6 +325,7 @@ export async function getDistributionAllocationMutationParentOrThrow(
       programId: true,
       barangayId: true,
       status: true,
+      slots: { select: { serviceAreas: true } },
     },
   });
   if (!distribution) {

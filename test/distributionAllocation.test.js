@@ -20,6 +20,7 @@ import {
   buildEligibleEnrollmentSearchWhere,
   distributionAllocationSelect,
   distributionAllocationToResponse,
+  distributionCoveredServiceAreas,
 } from "../src/modules/distributions/distributionAllocation.service.js";
 
 const distributionId = "11111111-1111-4111-8111-111111111111";
@@ -37,6 +38,7 @@ function enrollment(overrides = {}) {
     status: "APPROVED",
     beneficiary: {
       barangayId,
+      sitioPurok: "Sitio Riverside",
       status: "ACTIVE",
     },
     ...overrides,
@@ -129,6 +131,29 @@ test("allocation eligibility requires approved, same-program, same-barangay acti
       distribution,
     ),
     (error) => error.code === "BENEFICIARY_NOT_ACTIVE",
+  );
+  const areaDistribution = {
+    ...distribution,
+    slots: [{ serviceAreas: ["Sitio Riverside", "Sitio Upper Hills"] }],
+  };
+  assert.deepEqual(distributionCoveredServiceAreas(areaDistribution), [
+    "Sitio Riverside",
+    "Sitio Upper Hills",
+  ]);
+  assert.doesNotThrow(() => assertRequestedEnrollmentsEligible(
+    [enrollment()],
+    [firstEnrollmentId],
+    areaDistribution,
+  ));
+  assert.throws(
+    () => assertRequestedEnrollmentsEligible(
+      [enrollment({
+        beneficiary: { barangayId, sitioPurok: "Sitio Coast", status: "ACTIVE" },
+      })],
+      [firstEnrollmentId],
+      areaDistribution,
+    ),
+    (error) => error.code === "ENROLLMENT_SERVICE_AREA_MISMATCH",
   );
 });
 
@@ -236,6 +261,7 @@ test("allocation responses expose only operational identity fields and stringify
     "middleName",
     "lastName",
     "barangayId",
+    "sitioPurok",
     "status",
     "barangay",
   ]);

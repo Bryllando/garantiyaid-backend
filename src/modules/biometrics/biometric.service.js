@@ -11,6 +11,8 @@ const TEMPLATE_FORMAT_VERSION = 1;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const SIMULATED_MODEL = "gya-simulated-v1";
+const DEEPFACE_MODEL = "ArcFace";
+const DEEPFACE_PROCESSOR = "REMOTE_DEEPFACE_ARCFACE";
 
 export const biometricProfilePublicSelect = {
   biometricId: true,
@@ -207,6 +209,31 @@ function validateEmbedding(value) {
   });
 }
 
+export function normalizeBiometricEmbedding(value) {
+  if (!Array.isArray(value) || value.length < 32 || value.length > 4096) {
+    throw new AppError(502, "INVALID_BIOMETRIC_PROCESSOR_RESPONSE", "Biometric embedding dimensions are invalid.");
+  }
+  const numbers = value.map((entry) => Number(entry));
+  if (numbers.some((entry) => !Number.isFinite(entry))) {
+    throw new AppError(502, "INVALID_BIOMETRIC_PROCESSOR_RESPONSE", "Biometric embedding contains an invalid value.");
+  }
+  const magnitude = Math.sqrt(numbers.reduce((sum, entry) => sum + entry ** 2, 0));
+  if (!magnitude) {
+    throw new AppError(502, "INVALID_BIOMETRIC_PROCESSOR_RESPONSE", "Biometric embedding has zero magnitude.");
+  }
+  return validateEmbedding(numbers.map((entry) => entry / magnitude));
+}
+
+export function parseDeepFaceRepresentation(body) {
+  if (!Array.isArray(body?.results)) {
+    throw new AppError(502, "INVALID_BIOMETRIC_PROCESSOR_RESPONSE", "The biometric processor returned an invalid result.");
+  }
+  if (body.results.length !== 1) {
+    throw new AppError(422, "BIOMETRIC_FACE_COUNT_INVALID", "Show exactly one unobstructed face to the camera.");
+  }
+  return normalizeBiometricEmbedding(body.results[0]?.embedding);
+}
+
 function simulatedEmbedding(buffer) {
   const values = [];
   for (let counter = 0; values.length < 128; counter += 1) {
@@ -238,15 +265,20 @@ function cosineSimilarity(left, right) {
   return Math.max(0, Math.min(1, dot / Math.sqrt(leftMagnitude * rightMagnitude)));
 }
 
-async function remoteRequest(path, file, fields = {}) {
+async function remoteRepresentation(file) {
   if (!env.biometricServiceUrl) {
     throw new AppError(503, "BIOMETRIC_SERVICE_UNAVAILABLE", "Remote biometric service URL is not configured.");
   }
   const form = new FormData();
-  form.append("faceCapture", new Blob([file.buffer], { type: file.detectedType }), "capture.bin");
-  for (const [name, value] of Object.entries(fields)) form.append(name, value);
+  form.append("img", new Blob([file.buffer], { type: file.detectedType }), "capture.jpg");
+  form.append("model_name", DEEPFACE_MODEL);
+  form.append("detector_backend", "opencv");
+  form.append("enforce_detection", "true");
+  form.append("align", "true");
+  form.append("anti_spoofing", "true");
+  form.append("max_faces", "2");
   try {
-    const response = await fetch(`${env.biometricServiceUrl.replace(/\/$/, "")}${path}`, {
+    const response = await fetch(`${env.biometricServiceUrl.replace(/\/$/, "")}/represent`, {
       method: "POST",
       headers: env.biometricServiceApiKey
         ? { authorization: `Bearer ${env.biometricServiceApiKey}` }
@@ -255,10 +287,15 @@ async function remoteRequest(path, file, fields = {}) {
       signal: AbortSignal.timeout(env.biometricRequestTimeoutMs),
     });
     const body = await response.json().catch(() => null);
-    if (!response.ok || !body?.success || !body.data) {
+    if (!response.ok) {
+      const processorMessage = String(body?.error ?? body?.detail ?? "");
+      if (/spoof/i.test(processorMessage)) return null;
+      if (response.status >= 400 && response.status < 500) {
+        throw new AppError(422, "BIOMETRIC_CAPTURE_REJECTED", "No clear live face was detected. Center one person in even lighting and try again.");
+      }
       throw new AppError(503, "BIOMETRIC_SERVICE_UNAVAILABLE", "The biometric processor rejected or could not process the capture.");
     }
-    return body.data;
+    return parseDeepFaceRepresentation(body);
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw new AppError(503, "BIOMETRIC_SERVICE_UNAVAILABLE", "The biometric processor is unavailable.");
@@ -278,14 +315,14 @@ export async function processBiometricEnrollment(file) {
       simulated: true,
     };
   }
-  const data = await remoteRequest("/v1/biometrics/enroll", { ...file, detectedType });
-  const livenessScore = validateScore(data.livenessScore, "livenessScore");
+  const embedding = await remoteRepresentation({ ...file, detectedType });
+  const livenessScore = embedding ? 1 : 0;
   return {
-    embedding: validateEmbedding(data.embedding),
+    embedding,
     livenessScore,
-    livenessPassed: data.livenessPassed === true && livenessScore >= env.biometricLivenessThreshold,
-    model: String(data.model ?? "unknown").slice(0, 50),
-    processor: "REMOTE_INSIGHTFACE",
+    livenessPassed: Boolean(embedding) && livenessScore >= env.biometricLivenessThreshold,
+    model: DEEPFACE_MODEL,
+    processor: DEEPFACE_PROCESSOR,
     simulated: false,
   };
 }
@@ -304,19 +341,15 @@ export async function processBiometricVerification(file, referenceEmbedding) {
       simulated: true,
     };
   }
-  const data = await remoteRequest(
-    "/v1/biometrics/verify",
-    { ...file, detectedType },
-    { referenceEmbedding: JSON.stringify(referenceEmbedding) },
-  );
-  const livenessScore = validateScore(data.livenessScore, "livenessScore");
-  const matchScore = validateScore(data.matchScore, "matchScore");
+  const embedding = await remoteRepresentation({ ...file, detectedType });
+  const livenessScore = embedding ? 1 : 0;
+  const matchScore = embedding ? validateScore(cosineSimilarity(embedding, referenceEmbedding), "matchScore") : 0;
   return {
     livenessScore,
-    livenessPassed: data.livenessPassed === true && livenessScore >= env.biometricLivenessThreshold,
+    livenessPassed: Boolean(embedding) && livenessScore >= env.biometricLivenessThreshold,
     matchScore,
-    matchPassed: data.matchPassed === true && matchScore >= env.biometricMatchThreshold,
-    processor: "REMOTE_INSIGHTFACE",
+    matchPassed: Boolean(embedding) && matchScore >= env.biometricMatchThreshold,
+    processor: DEEPFACE_PROCESSOR,
     simulated: false,
   };
 }
@@ -326,4 +359,6 @@ export const biometricProcessingDisclosure = Object.freeze({
   templateReturned: false,
   processorMode: env.biometricProcessorMode,
   simulatedProcessor: env.biometricProcessorMode === "SIMULATED",
+  model: env.biometricProcessorMode === "REMOTE" ? DEEPFACE_MODEL : SIMULATED_MODEL,
+  antiSpoofingEnabled: env.biometricProcessorMode === "REMOTE",
 });

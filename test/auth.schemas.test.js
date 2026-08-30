@@ -58,3 +58,22 @@ test("staff login accepts one recovery code and rejects mixed second factors", (
     recoveryCode: "ABCD-1234-EF56-7890",
   }).success, false);
 });
+
+test("initial password change accepts a new staff password without a second factor", () => {
+  const result = loginSchema.parse({
+    identifier: "staff-001",
+    password: "TemporaryPassword123",
+    newPassword: "A different private password 456",
+  });
+
+  assert.equal(result.newPassword, "A different private password 456");
+  assert.equal(loginSchema.safeParse({
+    ...result,
+    totpCode: "123456",
+  }).success, false);
+  assert.equal(loginSchema.safeParse({
+    identifier: "staff-001",
+    password: "TemporaryPassword123",
+    newPassword: "too-short",
+  }).success, false);
+});

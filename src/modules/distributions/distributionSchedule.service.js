@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import prisma from "../../lib/prisma.js";
 import { AppError } from "../../utils/AppError.js";
 import { distributionAccessWhere } from "./distribution.policy.js";
-import { distributionSlotToResponse } from "./distributionSlot.service.js";
+import {
+  distributionSlotCoversBeneficiary,
+  distributionSlotToResponse,
+} from "./distributionSlot.service.js";
 
 export const OCCUPYING_SCHEDULE_STATUSES = Object.freeze([
   "SCHEDULED",
@@ -16,6 +19,7 @@ export const scheduleBeneficiarySelect = {
   middleName: true,
   lastName: true,
   barangayId: true,
+  sitioPurok: true,
   status: true,
   barangay: {
     select: {
@@ -31,6 +35,10 @@ export const scheduleBeneficiarySelect = {
 export const scheduleSlotSelect = {
   slotId: true,
   distributionId: true,
+  sessionId: true,
+  sessionLabel: true,
+  location: true,
+  serviceAreas: true,
   slotStart: true,
   slotEnd: true,
   capacity: true,
@@ -185,6 +193,7 @@ export function buildScheduleSearchWhere(search) {
       { beneficiary: { firstName: { contains: search, mode: "insensitive" } } },
       { beneficiary: { middleName: { contains: search, mode: "insensitive" } } },
       { beneficiary: { lastName: { contains: search, mode: "insensitive" } } },
+      { beneficiary: { sitioPurok: { contains: search, mode: "insensitive" } } },
     ],
   };
 }
@@ -206,6 +215,7 @@ export function buildSchedulableAllocationSearchWhere(search) {
       { beneficiary: { firstName: { contains: search, mode: "insensitive" } } },
       { beneficiary: { middleName: { contains: search, mode: "insensitive" } } },
       { beneficiary: { lastName: { contains: search, mode: "insensitive" } } },
+      { beneficiary: { sitioPurok: { contains: search, mode: "insensitive" } } },
     ],
   };
 }
@@ -334,7 +344,14 @@ export async function distributionOpeningReadiness(distributionId, database = pr
       beneficiaryId: true,
       slotId: true,
       status: true,
-      slot: { select: { distributionId: true, capacity: true } },
+      beneficiary: { select: { sitioPurok: true } },
+      slot: {
+        select: {
+          distributionId: true,
+          capacity: true,
+          serviceAreas: true,
+        },
+      },
     },
   });
   const activeSchedules = schedules.filter((schedule) => (
@@ -362,6 +379,7 @@ export async function distributionOpeningReadiness(distributionId, database = pr
   const mismatchedSchedules = activeSchedules.filter((schedule) => (
     !allocatedBeneficiaries.has(schedule.beneficiaryId)
     || schedule.slot.distributionId !== distributionId
+    || !distributionSlotCoversBeneficiary(schedule.slot, schedule.beneficiary)
   ));
   if (mismatchedSchedules.length > 0) {
     throw new AppError(
@@ -397,4 +415,3 @@ export async function distributionOpeningReadiness(distributionId, database = pr
     slotCount: countsBySlot.size,
   };
 }
-

@@ -8,38 +8,25 @@ import {
 
 function validStaff(overrides = {}) {
   return {
-    employeeId: "staff-001",
-    username: "staff.user",
     fullName: "Staff User",
     email: "staff@example.com",
-    password: "TemporaryPassword123",
-    role: "SYSTEM_ADMIN",
+    role: "DSWD_STAFF",
     ...overrides,
   };
 }
 
-test("System Administrator receives a normalized username and employee ID", () => {
-  const result = createStaffUserSchema.parse(validStaff({
-    username: " System.Admin ",
-  }));
-
-  assert.equal(result.employeeId, "STAFF-001");
-  assert.equal(result.username, "system.admin");
+test("routine account creation accepts only system-generated staff IDs", () => {
+  assert.equal(createStaffUserSchema.safeParse(validStaff()).success, true);
+  assert.equal(createStaffUserSchema.safeParse(validStaff({ employeeId: "DSWD-9999" })).success, false);
+  assert.equal(createStaffUserSchema.safeParse(validStaff({ password: "barangay1234" })).success, false);
+  assert.equal(createStaffUserSchema.safeParse(validStaff({
+    role: "SYSTEM_ADMIN",
+    username: "system.admin",
+  })).success, false);
 });
 
-test("System Administrator requires a username", () => {
-  const { username: ignored, ...payload } = validStaff();
-  assert.equal(createStaffUserSchema.safeParse(payload).success, false);
-});
-
-test("DSWD Staff uses an official employee ID and cannot have a username", () => {
+test("DSWD Staff uses its generated Staff ID and cannot have a username", () => {
   assert.equal(createStaffUserSchema.safeParse(validStaff({
-    role: "DSWD_STAFF",
-    username: undefined,
-  })).success, true);
-
-  assert.equal(createStaffUserSchema.safeParse(validStaff({
-    role: "DSWD_STAFF",
     username: "dswd.user",
   })).success, false);
 });
@@ -66,6 +53,10 @@ test("staff username updates normalize case and allow an explicit clear", () => 
 
 test("staff contact updates allow an explicit clear", () => {
   assert.equal(updateStaffUserSchema.parse({ contactNumber: "" }).contactNumber, null);
+});
+
+test("staff role is immutable after account creation", () => {
+  assert.equal(updateStaffUserSchema.safeParse({ role: "DSWD_STAFF" }).success, false);
 });
 
 test("TOTP reset requires all three identity-verification attestations", () => {

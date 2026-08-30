@@ -32,6 +32,30 @@ export const verifyBiometricClaimSchema = z.object({
   deviceInfo: optionalDeviceInfo,
 }).strict();
 
+export const claimSignatureParamsSchema = z.object({
+  distributionId: z.uuid(),
+  claimId: z.uuid(),
+}).strict();
+
+export const submitClaimSignatureSchema = z.object({
+  signatureDataUrl: z.string().max(350_000),
+  signatureMethod: z.enum(["DRAWN", "TYPED"]).default("DRAWN"),
+  pointCount: z.coerce.number().int().min(8).max(5_000).optional(),
+  typedName: z.string().trim().min(2).max(200).optional(),
+  attestation: z.literal(true),
+  deviceInfo: optionalDeviceInfo,
+}).strict().superRefine((value, context) => {
+  if (value.signatureMethod === "DRAWN" && value.pointCount === undefined) {
+    context.addIssue({ code: "custom", path: ["pointCount"], message: "A drawn signature requires at least 8 recorded points." });
+  }
+  if (value.signatureMethod === "TYPED" && !value.typedName) {
+    context.addIssue({ code: "custom", path: ["typedName"], message: "Enter the beneficiary's full legal name for a typed signature." });
+  }
+  if (value.signatureMethod === "TYPED" && value.pointCount !== undefined) {
+    context.addIssue({ code: "custom", path: ["pointCount"], message: "A typed signature must not include drawn points." });
+  }
+});
+
 export const biometricConsentListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),

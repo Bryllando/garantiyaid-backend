@@ -11,6 +11,7 @@ export const VERIFICATION_REQUIREMENTS = Object.freeze([
   "QR",
   "BIOMETRIC",
   "QR_AND_BIOMETRIC",
+  "BIOMETRIC_AND_SIGNATURE",
 ]);
 
 export function isValidDateOnly(value) {

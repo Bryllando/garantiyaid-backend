@@ -158,6 +158,28 @@ export async function publishBiometricVerificationResult(
   await Promise.all(events);
 }
 
+export async function publishClaimSignatureResult(distributionId, result) {
+  if (result.replayed) return;
+  const claim = claimFromResult(result);
+  if (!claim) return;
+  await Promise.all([
+    publishRealtimeEvent("claim.updated", {
+      distributionId,
+      data: {
+        claimId: claim.claimId,
+        beneficiaryId: claim.beneficiaryId,
+        claimStatus: claim.claimStatus,
+        biometricVerified: claim.biometricVerified,
+        signatureVerified: claim.signatureVerified,
+      },
+    }),
+    publishRealtimeEvent("dashboard.metrics.updated", {
+      distributionId,
+      data: { reason: "CLAIM_SIGNATURE_COMPLETED" },
+    }),
+  ]);
+}
+
 export async function publishWalletCreditResult(distributionId, result) {
   if (result.replayed || !result.responseBody?.data?.transaction) return;
   const transaction = result.responseBody.data.transaction;

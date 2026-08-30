@@ -10,7 +10,9 @@ import {
   assertDistributionScheduleFieldsUnlocked,
   assertDistributionSlotsManageable,
   assertDistributionSlotTransition,
+  assertDistributionSlotCoverage,
   buildDistributionSlotRows,
+  distributionSlotCoversBeneficiary,
   distributionSlotSelect,
   distributionSlotToResponse,
 } from "../src/modules/distributions/distributionSlot.service.js";
@@ -25,6 +27,7 @@ function distribution(overrides = {}) {
     startTime: new Date("1970-01-01T08:00:00.000Z"),
     endTime: new Date("1970-01-01T10:00:00.000Z"),
     slotDurationMinutes: 30,
+    location: "Barangay Hall",
     status: "DRAFT",
     ...overrides,
   };
@@ -34,6 +37,19 @@ test("slot schemas validate capacity, identifiers, filters, and pagination", () 
   assert.deepEqual(generateDistributionSlotsSchema.parse({ capacity: "30" }), {
     capacity: 30,
   });
+  const planned = generateDistributionSlotsSchema.parse({
+    sessions: [{
+      label: "Sitio Riverside",
+      date: "2099-08-20",
+      startTime: "08:00",
+      endTime: "10:00",
+      location: "Riverside Covered Court",
+      capacity: "25",
+      serviceAreas: ["Sitio Riverside"],
+    }],
+  });
+  assert.equal(planned.sessions[0].capacity, 25);
+  assert.equal(planned.sessions[0].date.toISOString(), "2099-08-20T00:00:00.000Z");
   assert.deepEqual(updateDistributionSlotSchema.parse({ capacity: 40 }), {
     capacity: 40,
   });
@@ -64,6 +80,57 @@ test("slot generation creates exact non-overlapping Philippine-time intervals", 
   assert.equal(rows[3].slotEnd.toISOString(), "2099-08-20T02:00:00.000Z");
   assert.equal(rows.every((row) => row.capacity === 30), true);
   assert.equal(rows.every((row) => row.slotStatus === "AVAILABLE"), true);
+  assert.equal(new Set(rows.map((row) => row.sessionId)).size, 1);
+  assert.equal(rows[0].sessionLabel, "Main session");
+  assert.equal(rows[0].location, "Barangay Hall");
+  assert.deepEqual(rows[0].serviceAreas, []);
+});
+
+test("multi-session generation preserves Sitio coverage and rejects overlap", () => {
+  const sessions = [
+    {
+      label: "Riverside morning",
+      date: new Date("2099-08-20T00:00:00.000Z"),
+      startTime: new Date("1970-01-01T08:00:00.000Z"),
+      endTime: new Date("1970-01-01T10:00:00.000Z"),
+      location: "Riverside Covered Court",
+      capacity: 20,
+      serviceAreas: ["Sitio Riverside"],
+    },
+    {
+      label: "Upper Hills afternoon",
+      date: new Date("2099-08-20T00:00:00.000Z"),
+      startTime: new Date("1970-01-01T13:00:00.000Z"),
+      endTime: new Date("1970-01-01T15:00:00.000Z"),
+      location: "Upper Hills School",
+      capacity: 15,
+      serviceAreas: ["Sitio Upper Hills"],
+    },
+  ];
+  const rows = buildDistributionSlotRows(distribution(), sessions);
+  assert.equal(rows.length, 8);
+  assert.equal(new Set(rows.map((row) => row.sessionId)).size, 2);
+  assert.deepEqual(rows[0].serviceAreas, ["Sitio Riverside"]);
+  assert.throws(
+    () => buildDistributionSlotRows(distribution(), [
+      sessions[0],
+      { ...sessions[1], startTime: new Date("1970-01-01T09:30:00.000Z") },
+    ]),
+    (error) => error.code === "DISTRIBUTION_SESSIONS_OVERLAP",
+  );
+});
+
+test("slot coverage matches Sitio or Purok without case sensitivity", () => {
+  const slot = { slotId, serviceAreas: ["Sitio Riverside"] };
+  assert.equal(distributionSlotCoversBeneficiary(slot, { sitioPurok: "sitio riverside" }), true);
+  assert.equal(distributionSlotCoversBeneficiary(slot, { sitioPurok: "Upper Hills" }), false);
+  assert.doesNotThrow(() => assertDistributionSlotCoverage(slot, {
+    sitioPurok: "Sitio Riverside",
+  }));
+  assert.throws(
+    () => assertDistributionSlotCoverage(slot, { sitioPurok: null }),
+    (error) => error.code === "DISTRIBUTION_SLOT_SERVICE_AREA_MISMATCH",
+  );
 });
 
 test("slot generation rejects an event range that does not divide evenly", () => {
@@ -89,6 +156,10 @@ test("slot responses use explicit Asia/Manila timestamps and exclude related sen
   assert.deepEqual(Object.keys(distributionSlotSelect), [
     "slotId",
     "distributionId",
+    "sessionId",
+    "sessionLabel",
+    "location",
+    "serviceAreas",
     "slotStart",
     "slotEnd",
     "capacity",

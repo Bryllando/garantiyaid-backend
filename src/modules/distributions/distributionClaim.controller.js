@@ -180,10 +180,11 @@ async function createScanAttempt(tx, req, {
   return scanLog.scanLogId;
 }
 
-function qrCandidateWhere(distributionId) {
+function qrCandidateWhere(distributionId, now = new Date()) {
   return {
     distributionId,
     status: "SCHEDULED",
+    slot: { slotEnd: { gt: now } },
     claim: { is: null },
     beneficiary: {
       allocations: {
@@ -249,17 +250,10 @@ export const generateQrTokens = asyncHandler(async (req, res) => {
       );
       assertDistributionOpenForClaims(distribution);
       assertQrVerificationConfigured(distribution);
-      const expiresAt = distributionQrExpiry(distribution);
-      if (expiresAt <= new Date()) {
-        throw new AppError(
-          409,
-          "DISTRIBUTION_QR_EXPIRY_PASSED",
-          "QR tokens cannot be generated after the distribution event end time.",
-        );
-      }
+      const now = new Date();
 
       const where = {
-        ...qrCandidateWhere(distributionId),
+        ...qrCandidateWhere(distributionId, now),
         ...(scheduleIds ? { scheduleId: { in: scheduleIds } } : {}),
       };
       const schedules = await tx.schedule.findMany({
@@ -289,6 +283,7 @@ export const generateQrTokens = asyncHandler(async (req, res) => {
           beneficiaryId: schedule.beneficiaryId,
           distributionId,
           tokenHash: hashQrToken(rawToken),
+          expiresAt: distributionQrExpiry(distribution, schedule.slot.slotEnd),
           rawToken,
         };
       });
@@ -296,7 +291,6 @@ export const generateQrTokens = asyncHandler(async (req, res) => {
         data: rows.map(({ rawToken: ignoredRawToken, ...row }) => ({
           ...row,
           qrStatus: "ACTIVE",
-          expiresAt,
         })),
       });
       await tx.auditLog.createMany({
@@ -309,7 +303,7 @@ export const generateQrTokens = asyncHandler(async (req, res) => {
           details: {
             distributionId,
             beneficiaryId: row.beneficiaryId,
-            expiresAt: expiresAt.toISOString(),
+            expiresAt: row.expiresAt.toISOString(),
           },
         })),
       });
@@ -440,14 +434,6 @@ export const reissueQrToken = asyncHandler(async (req, res) => {
     assertQrVerificationConfigured(distribution);
     const qrToken = await getQrTokenOrThrow(distributionId, qrTokenId, tx);
     assertQrTokenReissuable(qrToken);
-    const expiresAt = distributionQrExpiry(distribution);
-    if (expiresAt <= new Date()) {
-      throw new AppError(
-        409,
-        "DISTRIBUTION_QR_EXPIRY_PASSED",
-        "QR tokens cannot be reissued after the distribution event end time.",
-      );
-    }
     const schedule = await tx.schedule.findUnique({
       where: {
         distributionId_beneficiaryId: {
@@ -455,7 +441,11 @@ export const reissueQrToken = asyncHandler(async (req, res) => {
           beneficiaryId: qrToken.beneficiaryId,
         },
       },
-      select: { scheduleId: true, status: true },
+      select: {
+        scheduleId: true,
+        status: true,
+        slot: { select: { slotEnd: true } },
+      },
     });
     const allocation = await tx.distributionAllocation.findUnique({
       where: {
@@ -484,6 +474,14 @@ export const reissueQrToken = asyncHandler(async (req, res) => {
         409,
         "QR_TOKEN_REISSUE_NOT_ELIGIBLE",
         "The beneficiary must have an active schedule, active allocation, and no claim.",
+      );
+    }
+    const expiresAt = distributionQrExpiry(distribution, schedule.slot.slotEnd);
+    if (expiresAt <= new Date()) {
+      throw new AppError(
+        409,
+        "DISTRIBUTION_QR_EXPIRY_PASSED",
+        "QR tokens cannot be reissued after the beneficiary's service session ends.",
       );
     }
     const rawToken = generateRawQrToken();

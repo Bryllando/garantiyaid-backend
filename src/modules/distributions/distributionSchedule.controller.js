@@ -12,6 +12,10 @@ import {
 import { idempotencyKeySchema } from "./distributionAllocation.schemas.js";
 import { distributionSelect, distributionToResponse } from "./distribution.service.js";
 import {
+  assertDistributionSlotCoverage,
+  distributionSlotCoversBeneficiary,
+} from "./distributionSlot.service.js";
+import {
   OCCUPYING_SCHEDULE_STATUSES,
   activeScheduleCount,
   assertAllocationSchedulable,
@@ -210,6 +214,7 @@ export const createDistributionSchedule = asyncHandler(async (req, res) => {
       await assertBeneficiaryHasNoSchedule(distributionId, allocation.beneficiaryId, tx);
 
       const slot = await getScheduleSlotOrThrow(distributionId, slotId, tx);
+      assertDistributionSlotCoverage(slot, allocation.beneficiary);
       const occupyingCount = await activeScheduleCount(slotId, tx);
       assertSlotAvailable(slot, occupyingCount);
       const queueNumber = await nextSlotQueueNumber(slotId, tx);
@@ -356,6 +361,10 @@ export const generateDistributionSchedules = asyncHandler(async (req, res) => {
         select: {
           slotId: true,
           distributionId: true,
+          sessionId: true,
+          sessionLabel: true,
+          location: true,
+          serviceAreas: true,
           slotStart: true,
           capacity: true,
           slotStatus: true,
@@ -397,12 +406,23 @@ export const generateDistributionSchedules = asyncHandler(async (req, res) => {
 
       const now = new Date();
       const rows = [];
-      let slotIndex = 0;
       for (const allocation of allocations) {
-        while (slotStates[slotIndex].remainingCapacity === 0) {
-          slotIndex += 1;
+        // ponytail: linear scan is bounded by the current batch limit; index by area if it grows.
+        const slot = slotStates.find((candidate) => (
+          candidate.remainingCapacity > 0
+          && distributionSlotCoversBeneficiary(candidate, allocation.beneficiary)
+        ));
+        if (!slot) {
+          throw new AppError(
+            409,
+            "INSUFFICIENT_DISTRIBUTION_SERVICE_AREA_CAPACITY",
+            "Available sessions cannot accommodate every beneficiary in their Sitio or Purok.",
+            {
+              beneficiaryId: allocation.beneficiaryId,
+              sitioPurok: allocation.beneficiary.sitioPurok ?? null,
+            },
+          );
         }
-        const slot = slotStates[slotIndex];
         rows.push({
           scheduleId: randomUUID(),
           distributionId,
@@ -576,6 +596,7 @@ export const rescheduleDistributionSchedule = asyncHandler(async (req, res) => {
     const schedule = await getDistributionScheduleOrThrow(distributionId, scheduleId, tx);
     assertDistributionScheduleReschedulable(schedule, targetSlotId);
     const targetSlot = await getScheduleSlotOrThrow(distributionId, targetSlotId, tx);
+    assertDistributionSlotCoverage(targetSlot, schedule.beneficiary);
     const targetOccupyingCount = await activeScheduleCount(targetSlotId, tx);
     assertSlotAvailable(targetSlot, targetOccupyingCount);
     const queueNumber = await nextSlotQueueNumber(targetSlotId, tx);
@@ -652,6 +673,7 @@ async function transitionDistributionSchedule(req, nextStatus, action) {
       }
       assertAllocationSchedulable(allocation);
       slot = await getScheduleSlotOrThrow(distributionId, schedule.slotId, tx);
+      assertDistributionSlotCoverage(slot, schedule.beneficiary);
       occupyingCount = await activeScheduleCount(schedule.slotId, tx);
       assertSlotAvailable(slot, occupyingCount);
     }
