@@ -24,6 +24,7 @@ import {
   effectiveQrStatus,
   generateRawQrToken,
   hashQrToken,
+  qrClaimPreviewOutcome,
   qrScanLogPublicSelect,
   qrTokenPublicSelect,
   qrTokenToResponse,
@@ -111,6 +112,34 @@ test("effective token status and lifecycle prevent use of expired, used, or acti
   );
 });
 
+test("QR preview blocks unusable credentials and describes the confirmation effect", () => {
+  const base = {
+    distribution: { verificationRequirement: "QR_AND_BIOMETRIC" },
+    qrToken: { qrStatus: "ACTIVE", expiresAt: new Date("2099-08-20T02:00:00.000Z") },
+    schedule: { status: "SCHEDULED" },
+    allocation: { allocationStatus: "ALLOCATED" },
+    existingClaim: null,
+    now: new Date("2099-08-20T01:00:00.000Z"),
+  };
+  assert.deepEqual(qrClaimPreviewOutcome(base), {
+    ok: true,
+    checksInBeneficiary: true,
+    verificationCompleteAfterConfirm: false,
+    nextRequiredVerification: "BIOMETRIC",
+  });
+  assert.equal(qrClaimPreviewOutcome({ ...base, qrToken: { ...base.qrToken, qrStatus: "USED" } }).code, "QR_TOKEN_ALREADY_USED");
+  assert.deepEqual(qrClaimPreviewOutcome({
+    ...base,
+    schedule: { status: "CHECKED_IN" },
+    existingClaim: { claimStatus: "PENDING", biometricVerified: true, qrVerified: false },
+  }), {
+    ok: true,
+    checksInBeneficiary: false,
+    verificationCompleteAfterConfirm: true,
+    nextRequiredVerification: null,
+  });
+});
+
 test("claim verification requires an OPEN event", () => {
   assert.doesNotThrow(() => assertDistributionOpenForClaims({ status: "OPEN" }));
   assert.throws(
@@ -189,4 +218,3 @@ test("public Phase 5 responses exclude raw hashes, contact data, credentials, an
   assert.equal(claimResponse.allocation.amount, "5000.00");
   assert.equal(claimResponse.schedule.slot.slotStart, "2099-08-20T08:00:00+08:00");
 });
-

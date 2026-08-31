@@ -19,6 +19,7 @@ import {
   buildClaimSearchWhere,
   buildQrSearchWhere,
   buildQrStatusWhere,
+  claimBeneficiarySelect,
   claimMutationSelect,
   claimMutationToResponse,
   claimPublicSelect,
@@ -32,6 +33,7 @@ import {
   hashQrToken,
   qrEligibleScheduleSelect,
   qrEligibleScheduleToResponse,
+  qrClaimPreviewOutcome,
   qrScanLogPublicSelect,
   qrTokenPublicSelect,
   qrTokenToResponse,
@@ -510,6 +512,84 @@ export const reissueQrToken = asyncHandler(async (req, res) => {
     data: {
       qrToken: { ...qrTokenToResponse(qrToken), token: result.rawToken },
       rawTokenReturnedOnce: true,
+    },
+  });
+});
+
+export const previewQrClaim = asyncHandler(async (req, res) => {
+  assertClaimVerifyAllowed(req.staffUser);
+  const { distributionId } = req.validatedParams;
+  const { token, deviceInfo } = req.validatedBody;
+  const submittedTokenHash = hashQrToken(token);
+  const distribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
+  assertDistributionOpenForClaims(distribution);
+  assertQrVerificationConfigured(distribution);
+
+  const qrToken = await prisma.qrToken.findFirst({
+    where: { distributionId, tokenHash: submittedTokenHash },
+    select: {
+      qrTokenId: true,
+      beneficiaryId: true,
+      qrStatus: true,
+      expiresAt: true,
+      beneficiary: { select: claimBeneficiarySelect },
+    },
+  });
+  const [schedule, allocation, existingClaim] = qrToken ? await Promise.all([
+    prisma.schedule.findUnique({
+      where: { distributionId_beneficiaryId: { distributionId, beneficiaryId: qrToken.beneficiaryId } },
+      select: {
+        scheduleId: true,
+        queueNumber: true,
+        status: true,
+        slot: { select: { sessionLabel: true, location: true, slotStart: true, slotEnd: true } },
+      },
+    }),
+    prisma.distributionAllocation.findUnique({
+      where: { distributionId_beneficiaryId: { distributionId, beneficiaryId: qrToken.beneficiaryId } },
+      select: { allocationStatus: true },
+    }),
+    prisma.claim.findUnique({
+      where: { beneficiaryId_distributionId: { distributionId, beneficiaryId: qrToken.beneficiaryId } },
+      select: { claimId: true, claimStatus: true, biometricVerified: true, qrVerified: true },
+    }),
+  ]) : [null, null, null];
+  const outcome = qrClaimPreviewOutcome({ distribution, qrToken, schedule, allocation, existingClaim });
+
+  if (!outcome.ok) {
+    const scanLogId = await runQrTransaction((tx) => createScanAttempt(tx, req, {
+      distributionId,
+      submittedTokenHash,
+      qrTokenId: qrToken?.qrTokenId,
+      claimId: existingClaim?.claimId,
+      scanResult: outcome.scanResult,
+      deviceInfo,
+    }));
+    throw new AppError(outcome.statusCode, outcome.code, outcome.message, {
+      scanLogId,
+      ...(existingClaim ? { claimId: existingClaim.claimId } : {}),
+    });
+  }
+
+  await prisma.auditLog.create({
+    data: {
+      userId: req.auth.userId,
+      action: "QR_CLAIM_PREVIEWED",
+      entityAffected: "QR_TOKEN",
+      recordId: qrToken.qrTokenId,
+      ipAddress: clientIpAddress(req),
+      details: { distributionId, beneficiaryId: qrToken.beneficiaryId, scheduleId: schedule.scheduleId },
+    },
+  });
+  return res.status(200).json({
+    success: true,
+    data: {
+      beneficiary: qrToken.beneficiary,
+      schedule,
+      verificationRequirement: distribution.verificationRequirement,
+      checksInBeneficiary: outcome.checksInBeneficiary,
+      verificationCompleteAfterConfirm: outcome.verificationCompleteAfterConfirm,
+      nextRequiredVerification: outcome.nextRequiredVerification,
     },
   });
 });

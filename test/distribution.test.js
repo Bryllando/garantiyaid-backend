@@ -25,6 +25,7 @@ import {
   distributionSelect,
   distributionToResponse,
 } from "../src/modules/distributions/distribution.service.js";
+import { claimMutationSelect } from "../src/modules/distributions/distributionClaim.service.js";
 
 const programId = "11111111-1111-4111-8111-111111111111";
 const barangayId = "22222222-2222-4222-8222-222222222222";
@@ -44,6 +45,12 @@ function validDistribution(overrides = {}) {
     ...overrides,
   };
 }
+
+test("claim mutation responses include identity context for field verification", () => {
+  assert.ok(claimMutationSelect.beneficiary.select.firstName);
+  assert.ok(claimMutationSelect.beneficiary.select.lastName);
+  assert.ok(claimMutationSelect.schedule.select.queueNumber);
+});
 
 test("System Administrator manages events while all staff roles have scoped read access", () => {
   assert.deepEqual(DISTRIBUTION_MANAGE_ROLES, ["SYSTEM_ADMIN"]);
@@ -332,6 +339,7 @@ test("Phase 6 route surface adds simulated credit, transaction monitoring, and r
     { path: "/:distributionId/qr-tokens/:qrTokenId", methods: ["get"] },
     { path: "/:distributionId/qr-tokens/:qrTokenId/revoke", methods: ["post"] },
     { path: "/:distributionId/qr-tokens/:qrTokenId/reissue", methods: ["post"] },
+      { path: "/:distributionId/claims/preview-qr", methods: ["post"] },
       { path: "/:distributionId/claims/verify-qr", methods: ["post"] },
       { path: "/:distributionId/claims/verify-biometric", methods: ["post"] },
       { path: "/:distributionId/claims/:claimId/signature", methods: ["post"] },

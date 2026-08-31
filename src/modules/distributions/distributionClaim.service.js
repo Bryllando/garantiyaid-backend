@@ -159,6 +159,14 @@ export const claimMutationSelect = {
   claimedAt: true,
   createdAt: true,
   updatedAt: true,
+  beneficiary: { select: claimBeneficiarySelect },
+  schedule: {
+    select: {
+      scheduleId: true,
+      queueNumber: true,
+      status: true,
+    },
+  },
 };
 
 export const qrScanLogPublicSelect = {
@@ -237,6 +245,30 @@ export function effectiveQrStatus(qrToken, now = new Date()) {
     return "EXPIRED";
   }
   return qrToken.qrStatus;
+}
+
+export function qrClaimPreviewOutcome({ distribution, qrToken, schedule, allocation, existingClaim, now = new Date() }) {
+  if (!qrToken) return { ok: false, statusCode: 404, code: "INVALID_QR_TOKEN", message: "The QR credential is invalid for this distribution event.", scanResult: "INVALID_TOKEN" };
+  const status = effectiveQrStatus(qrToken, now);
+  if (status === "USED") return { ok: false, statusCode: 409, code: "QR_TOKEN_ALREADY_USED", message: "This QR credential has already been used.", scanResult: "DUPLICATE" };
+  if (status === "REVOKED") return { ok: false, statusCode: 409, code: "QR_TOKEN_REVOKED", message: "This QR credential has been revoked.", scanResult: "REVOKED" };
+  if (status === "EXPIRED") return { ok: false, statusCode: 410, code: "QR_TOKEN_EXPIRED", message: "This QR credential has expired.", scanResult: "EXPIRED" };
+
+  const completesCombinedVerification = distribution.verificationRequirement === "QR_AND_BIOMETRIC"
+    && existingClaim?.claimStatus === "PENDING"
+    && existingClaim.biometricVerified
+    && !existingClaim.qrVerified;
+  if (existingClaim && !completesCombinedVerification) return { ok: false, statusCode: 409, code: "DUPLICATE_CLAIM", message: "A claim already exists for this beneficiary and distribution event.", scanResult: "DUPLICATE" };
+  if (!existingClaim && schedule?.status !== "SCHEDULED") return { ok: false, statusCode: 409, code: "SCHEDULE_NOT_CLAIMABLE", message: "The beneficiary does not have an active claimable schedule.", scanResult: "INVALID_SCHEDULE" };
+  if (!existingClaim && allocation?.allocationStatus !== "ALLOCATED") return { ok: false, statusCode: 409, code: "ALLOCATION_NOT_CLAIMABLE", message: "The beneficiary does not have an active claimable allocation.", scanResult: "INVALID_ALLOCATION" };
+
+  const verificationCompleteAfterConfirm = distribution.verificationRequirement === "QR" || completesCombinedVerification;
+  return {
+    ok: true,
+    checksInBeneficiary: schedule?.status === "SCHEDULED",
+    verificationCompleteAfterConfirm,
+    nextRequiredVerification: verificationCompleteAfterConfirm ? null : "BIOMETRIC",
+  };
 }
 
 export function qrTokenToResponse(qrToken, now = new Date()) {

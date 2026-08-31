@@ -81,6 +81,7 @@ import {
   listQrEligibleSchedules,
   listQrScanLogs,
   listQrTokens,
+  previewQrClaim,
   reissueQrToken,
   revokeQrToken,
   verifyQrClaim,
@@ -324,6 +325,13 @@ distributionRoutes.post(
   authorizeRoles(...QR_TOKEN_MANAGE_ROLES),
   validateParams(qrTokenParamsSchema),
   reissueQrToken,
+);
+distributionRoutes.post(
+  "/:distributionId/claims/preview-qr",
+  authorizeRoles(...CLAIM_VERIFY_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(verifyQrClaimSchema),
+  previewQrClaim,
 );
 distributionRoutes.post(
   "/:distributionId/claims/verify-qr",
