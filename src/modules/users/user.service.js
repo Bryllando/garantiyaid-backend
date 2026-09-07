@@ -11,7 +11,7 @@ export function generateTemporaryPassword() {
 
 export async function getStaffUserOrThrow(userId) {
   const user = await prisma.user.findUnique({
-    where: { userId },
+    where: { userId, archivedAt: null },
     select: staffUserSelect,
   });
 
@@ -164,4 +164,62 @@ export function resolveStaffUserUpdate(existingUser, input) {
         ? { username: null }
         : {}),
   };
+}
+
+export const operationalStaffActivityCountSelect = Object.freeze({
+  submittedEnrollments: true,
+  reviewedEnrollments: true,
+  createdPrograms: true,
+  uploadedDocuments: true,
+  reviewedDocuments: true,
+  enrolledBiometricData: true,
+  recordedConsents: true,
+  biometricAttempts: true,
+  capturedClaimSignatures: true,
+  issuedClaimReceipts: true,
+  filedClaimDisputes: true,
+  assignedClaimDisputes: true,
+  reviewedClaimDisputes: true,
+  createdDistributions: true,
+  allocatedDistributions: true,
+  verifiedClaims: true,
+  qrScanLogs: true,
+  initiatedTransactions: true,
+  initiatedNotifications: true,
+  assignedChatbotSessions: true,
+  resolvedChatbotSessions: true,
+  chatbotMessages: true,
+});
+
+export function getStaffRemovalMode(operationalActivityCounts) {
+  return Object.values(operationalActivityCounts).some((count) => count > 0)
+    ? "ARCHIVE"
+    : "DELETE";
+}
+
+export function assertStaffAccountCanBeRemoved({
+  actorUserId,
+  confirmation,
+  removalMode,
+  targetUser,
+}) {
+  if (targetUser.userId === actorUserId) {
+    throw new AppError(403, "SELF_ACCOUNT_REMOVAL_FORBIDDEN", "You cannot remove your own staff account.");
+  }
+
+  if (targetUser.isActive) {
+    throw new AppError(
+      409,
+      "STAFF_ACCOUNT_MUST_BE_INACTIVE",
+      "Deactivate this staff account before removing it.",
+    );
+  }
+
+  if (confirmation !== `${removalMode} ${targetUser.employeeId}`) {
+    throw new AppError(
+      400,
+      "STAFF_REMOVAL_CONFIRMATION_MISMATCH",
+      `Type ${removalMode} ${targetUser.employeeId} exactly to confirm.`,
+    );
+  }
 }

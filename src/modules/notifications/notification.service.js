@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import prisma from "../../lib/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../utils/AppError.js";
-import { renderNotificationTemplate } from "./notification.templates.js";
+import { renderNotificationTemplate, renderReminderTemplate } from "./notification.templates.js";
+import { normalizePhilippineMobileNumber } from "./simulatedSms.provider.js";
 
 const PHILIPPINE_TIME_ZONE = "Asia/Manila";
 const PHILIPPINE_OFFSET = "+08:00";
@@ -84,6 +85,10 @@ export const notificationScheduleContextSelect = {
       beneficiaryId: true,
       barangayId: true,
       contactNumber: true,
+      firstName: true,
+      middleName: true,
+      lastName: true,
+      sitioPurok: true,
       status: true,
     },
   },
@@ -219,7 +224,7 @@ export function assertNotificationLifecycle(schedule, notificationType) {
 
 export function notificationRowFromSchedule(
   schedule,
-  { notificationType, sendAt, initiatedById, now = new Date() },
+  { notificationType, sendAt, initiatedById, messageTemplate, now = new Date() },
 ) {
   assertNotificationLifecycle(schedule, notificationType);
   const scheduledFor = notificationScheduledFor(
@@ -228,12 +233,18 @@ export function notificationRowFromSchedule(
     schedule.slot.slotStart,
     now,
   );
-  const message = renderNotificationTemplate(notificationType, {
+  const templateContext = {
     distributionTitle: schedule.distribution.title,
     location: schedule.slot.location ?? schedule.distribution.location,
     slotStart: schedule.slot.slotStart,
     queueNumber: schedule.queueNumber,
-  });
+    beneficiaryFirstName: schedule.beneficiary.firstName,
+    beneficiaryMiddleName: schedule.beneficiary.middleName,
+    beneficiaryLastName: schedule.beneficiary.lastName,
+  };
+  const message = messageTemplate
+    ? renderReminderTemplate(messageTemplate, templateContext)
+    : renderNotificationTemplate(notificationType, templateContext);
   return {
     beneficiaryId: schedule.beneficiaryId,
     scheduleId: schedule.scheduleId,
@@ -252,6 +263,61 @@ export function notificationRowFromSchedule(
       message,
       scheduledFor: notificationType === "DISTRIBUTION_REMINDER" ? scheduledFor : null,
     }),
+  };
+}
+
+function notificationBeneficiaryName(beneficiary) {
+  return [beneficiary.firstName, beneficiary.middleName, beneficiary.lastName]
+    .filter(Boolean)
+    .join(" ");
+}
+
+export function assistantReminderPreviewFromSchedules(
+  schedules,
+  { messageTemplate, sendAt, initiatedById, now = new Date() },
+) {
+  const deliverable = [];
+  let invalidContactCount = 0;
+  let completedClaimCount = 0;
+
+  for (const schedule of schedules) {
+    if (schedule.claim?.claimStatus === "CLAIMED") {
+      completedClaimCount += 1;
+    } else if (!normalizePhilippineMobileNumber(schedule.beneficiary.contactNumber)) {
+      invalidContactCount += 1;
+    } else {
+      deliverable.push(schedule);
+    }
+  }
+
+  const rows = deliverable.map((schedule) => notificationRowFromSchedule(schedule, {
+    notificationType: "DISTRIBUTION_REMINDER",
+    messageTemplate,
+    sendAt,
+    initiatedById,
+    now,
+  }));
+
+  return {
+    schedules: deliverable,
+    previewHash: createHash("sha256").update(JSON.stringify(rows.map((row) => ({
+      scheduleId: row.scheduleId,
+      message: row.message,
+    })))).digest("hex"),
+    recipientCount: deliverable.length,
+    excludedCount: invalidContactCount + completedClaimCount,
+    excluded: { invalidContactCount, completedClaimCount },
+    recipients: deliverable.map((schedule, index) => ({
+      scheduleId: schedule.scheduleId,
+      beneficiaryName: notificationBeneficiaryName(schedule.beneficiary),
+      serviceArea: schedule.beneficiary.sitioPurok ?? null,
+      recipientMasked: maskRecipient(schedule.beneficiary.contactNumber),
+      queueNumber: schedule.queueNumber,
+      sessionLabel: schedule.slot.sessionLabel,
+      slotStart: philippineTimestamp(schedule.slot.slotStart),
+      slotEnd: philippineTimestamp(schedule.slot.slotEnd),
+      message: rows[index].message,
+    })),
   };
 }
 

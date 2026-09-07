@@ -20,6 +20,8 @@ import {
   chatbotResolveSchema,
   chatbotSessionParamsSchema,
   createChatbotSessionSchema,
+  staffAssistantFeedbackSchema,
+  staffAssistantMessageSchema,
 } from "../src/modules/chatbot/chatbot.schemas.js";
 import {
   assertChatbotReplyOwnership,
@@ -167,6 +169,35 @@ test("chatbot schemas validate UUIDs, pagination, languages, strict fields, and 
   assert.equal(chatbotEscalateSchema.parse({}).reason, "HUMAN_REQUESTED");
   assert.equal(chatbotResolveSchema.parse({ resolutionCode: "answered" }).resolutionCode, "ANSWERED");
   assert.equal(chatbotResolveSchema.safeParse({ resolutionCode: "DELETE_HISTORY" }).success, false);
+  assert.deepEqual(staffAssistantFeedbackSchema.parse({
+    rating: "HELPFUL",
+    context: "DISTRIBUTION_DRAFT",
+    intent: "CREATE_DISTRIBUTION_DRAFT",
+  }), {
+    rating: "HELPFUL",
+    context: "DISTRIBUTION_DRAFT",
+    intent: "CREATE_DISTRIBUTION_DRAFT",
+  });
+  assert.equal(staffAssistantFeedbackSchema.safeParse({
+    rating: "HELPFUL",
+    context: "GUIDANCE",
+    messageText: "Do not store conversation content in feedback.",
+  }).success, false);
+  assert.deepEqual(staffAssistantMessageSchema.parse({
+    intent: "SCHEDULE",
+    language: " CEB ",
+    messageText: "Asa makita ang schedule?",
+  }), {
+    intent: "SCHEDULE",
+    language: "ceb",
+    messageText: "Asa makita ang schedule?",
+    history: [],
+  });
+  assert.equal(staffAssistantMessageSchema.safeParse({
+    intent: "DELETE_ACCOUNT",
+    language: "en",
+    messageText: "Delete this account",
+  }).success, false);
 });
 
 test("chatbot message validation enforces length, rejects executable HTML, and rejects unknown fields", () => {
@@ -275,7 +306,7 @@ test("multi-turn processing stores deterministic order, controlled bot answers, 
     token: created.sessionToken,
     messageText: "Hello",
     ipAddress: "127.0.0.1",
-  }, database, new Date("2099-01-01T00:02:00.000Z"));
+  }, database, new Date("2099-01-01T00:02:00.000Z"), async () => null);
   assert.equal(second.classification.intent, "GREETING");
   assert.equal(second.escalatedNow, false);
   assert.deepEqual(database.state.messages.map((message) => message.sequence), [1, 2, 3, 4]);
@@ -287,6 +318,32 @@ test("multi-turn processing stores deterministic order, controlled bot answers, 
   }, database);
   assert.deepEqual(history.messages.map((message) => message.sequence), [1, 2, 3, 4]);
   assert.deepEqual(history.pagination, { page: 1, pageSize: 20, total: 4, totalPages: 1 });
+});
+
+test("safe intents may use external AI wording without forwarding the raw user message", async () => {
+  const database = inMemoryChatbotDatabase();
+  const created = await createGenericChatbotSession(
+    { language: "ceb" },
+    database,
+    new Date("2099-01-01T00:00:00.000Z"),
+  );
+  let externalInput;
+  const result = await processGenericChatbotTurn({
+    sessionId,
+    token: created.sessionToken,
+    messageText: "Unsaon pag claim? My number is 09171234567",
+    ipAddress: "127.0.0.1",
+  }, database, new Date("2099-01-01T00:01:00.000Z"), async (input) => {
+    externalInput = input;
+    return { messageText: "Sunda ang opisyal nga claim process.", model: "safe-test-model" };
+  });
+
+  assert.equal(result.externalAiUsed, true);
+  assert.equal(result.externalAiModel, "safe-test-model");
+  assert.equal(result.botMessage.messageText, "Sunda ang opisyal nga claim process.");
+  assert.equal(Object.hasOwn(externalInput, "messageText"), false);
+  assert.equal(JSON.stringify(externalInput).includes("09171234567"), false);
+  assert.deepEqual(Object.keys(externalInput).sort(), ["approvedAnswer", "intent", "language"]);
 });
 
 test("terminal session enforcement blocks all later user and staff messages", async () => {
@@ -430,6 +487,8 @@ test("Phase 10 route surface is bounded, rate-limited, and exposes no edit, dele
       handlers: layer.route.stack.map((handler) => handler.name),
     }));
   const expected = [
+    ["/staff-assistant/messages", "post"],
+    ["/staff-feedback", "post"],
     ["/sessions", "post"],
     ["/sessions/:sessionId", "get"],
     ["/sessions/:sessionId/messages", "get"],
@@ -458,6 +517,18 @@ test("staff endpoints require authentication and anonymous session creation reje
   try {
     const staffResponse = await fetch(`${baseUrl}/api/v1/chatbot/escalations`);
     assert.equal(staffResponse.status, 401);
+    const feedbackResponse = await fetch(`${baseUrl}/api/v1/chatbot/staff-feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rating: "HELPFUL", context: "GUIDANCE" }),
+    });
+    assert.equal(feedbackResponse.status, 401);
+    const staffAssistantResponse = await fetch(`${baseUrl}/api/v1/chatbot/staff-assistant/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ intent: "HELP", language: "en" }),
+    });
+    assert.equal(staffAssistantResponse.status, 401);
     const privateCreate = await fetch(`${baseUrl}/api/v1/chatbot/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

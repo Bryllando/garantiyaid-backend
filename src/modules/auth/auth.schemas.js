@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalPhilippineMobileSchema } from "../../lib/philippine-mobile.js";
 import { loginPasswordSchema, newStaffPasswordSchema } from "./password.schemas.js";
 
 const identifier = z.string().trim().min(1).max(30).regex(
@@ -37,3 +38,28 @@ export const loginSchema = z.object({
 export const confirmTotpSchema = z.object({
   code: totpCode,
 });
+
+const accountReauthentication = {
+  currentPassword: loginPasswordSchema,
+  totpCode,
+};
+
+export const updateOwnProfileSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(150).optional(),
+  contactNumber: optionalPhilippineMobileSchema(),
+}).strict().refine(
+  (value) => Object.keys(value).length > 0,
+  "At least one profile field must be supplied.",
+);
+
+export const changeOwnPasswordSchema = z.object({
+  ...accountReauthentication,
+  newPassword: newStaffPasswordSchema,
+}).strict();
+
+export const reauthenticateAccountSchema = z.object(accountReauthentication).strict();
+
+export const confirmTotpReplacementSchema = z.object({
+  replacementToken: z.string().min(1).max(4096),
+  code: totpCode,
+}).strict();

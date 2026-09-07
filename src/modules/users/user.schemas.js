@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalPhilippineMobileSchema } from "../../lib/philippine-mobile.js";
 
 const staffRoles = ["SYSTEM_ADMIN", "DSWD_STAFF", "BARANGAY_FACILITATOR"];
 const creatableStaffRoles = ["DSWD_STAFF", "BARANGAY_FACILITATOR"];
@@ -10,11 +11,6 @@ const username = z.string().trim().toLowerCase().min(4).max(30).regex(
 const optionalText = (maxLength) => z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
   z.string().trim().max(maxLength).optional(),
-);
-
-const optionalNullableText = (maxLength) => z.preprocess(
-  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
-  z.union([z.string().trim().min(1).max(maxLength), z.null()]).optional(),
 );
 
 const optionalBarangayId = z.preprocess(
@@ -37,12 +33,16 @@ export const resetStaffTotpSchema = z.object({
   supervisorConfirmed: z.boolean().refine(Boolean, "Obtain supervisor confirmation before resetting TOTP."),
 }).strict();
 
+export const deleteStaffUserSchema = z.object({
+  confirmation: z.string().trim().min(1).max(80),
+}).strict();
+
 export const createStaffUserSchema = z.object({
   username: optionalUsername,
   fullName: z.string().trim().min(1).max(150),
   email: z.string().trim().toLowerCase().email().max(150),
   role: z.enum(creatableStaffRoles),
-  contactNumber: optionalText(20),
+  contactNumber: optionalPhilippineMobileSchema(undefined),
   barangayId: optionalBarangayId,
 }).strict().superRefine((value, context) => {
   if (usernameRoles.includes(value.role) && !value.username) {
@@ -85,7 +85,7 @@ export const updateStaffUserSchema = z.object({
   ),
   fullName: z.string().trim().min(1).max(150).optional(),
   email: z.string().trim().toLowerCase().email().max(150).optional(),
-  contactNumber: optionalNullableText(20),
+  contactNumber: optionalPhilippineMobileSchema(),
   barangayId: z.union([z.uuid(), z.null()]).optional(),
   isActive: z.boolean().optional(),
 }).strict().refine(
@@ -98,5 +98,6 @@ export const staffUserListQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   role: z.enum(staffRoles).optional(),
   isActive: z.enum(["true", "false"]).optional(),
+  archived: z.enum(["true", "false"]).default("false"),
   search: optionalText(100),
 });

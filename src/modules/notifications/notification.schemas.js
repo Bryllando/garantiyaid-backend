@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { env } from "../../config/env.js";
-import { NOTIFICATION_TYPES } from "./notification.templates.js";
+import {
+  MAX_SMS_MESSAGE_LENGTH,
+  NOTIFICATION_TYPES,
+  REMINDER_TEMPLATE_PLACEHOLDERS,
+} from "./notification.templates.js";
 
 export const NOTIFICATION_CHANNELS = Object.freeze(["IN_APP", "SMS", "EMAIL"]);
 export const NOTIFICATION_STATUSES = Object.freeze(["PENDING", "SENT", "FAILED", "READ"]);
@@ -83,6 +87,33 @@ export const scheduleNotificationParamsSchema = z.object({
 }).strict();
 
 const sendAt = z.iso.datetime({ offset: true }).transform((value) => new Date(value)).optional();
+
+const optionalServiceArea = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().trim().min(1).max(120).optional(),
+);
+
+const reminderMessageTemplate = z.string().trim().min(10).max(MAX_SMS_MESSAGE_LENGTH)
+  .refine((value) => !/<\/?[a-z][\s\S]*>/i.test(value), "HTML markup is not allowed in reminder messages.")
+  .refine((value) => {
+    const placeholders = [...value.matchAll(/\{([^{}]+)\}/g)].map((match) => match[1].toLowerCase());
+    return placeholders.every((placeholder) => REMINDER_TEMPLATE_PLACEHOLDERS.includes(placeholder));
+  }, `Use only these placeholders: ${REMINDER_TEMPLATE_PLACEHOLDERS.map((value) => `{${value}}`).join(", ")}.`);
+
+const assistantReminderFields = {
+  serviceArea: optionalServiceArea,
+  messageTemplate: reminderMessageTemplate,
+  sendAt,
+};
+
+export const assistantReminderPreviewSchema = z.object(assistantReminderFields).strict();
+
+export const assistantReminderEnqueueSchema = z.object({
+  ...assistantReminderFields,
+  confirmed: z.literal(true),
+  expectedRecipientCount: z.coerce.number().int().min(1).max(env.notificationBatchMaxSize),
+  expectedPreviewHash: z.string().regex(/^[a-f0-9]{64}$/, "expectedPreviewHash must be a SHA-256 digest."),
+}).strict();
 
 function delayedReminderOnly(schema) {
   return schema.superRefine((value, context) => {

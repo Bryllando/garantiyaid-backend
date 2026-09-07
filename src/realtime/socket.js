@@ -18,6 +18,7 @@ export const REALTIME_EVENT_NAMES = Object.freeze([
   "notification.sent",
   "notification.failed",
   "notification.metrics.updated",
+  "staff.notification.created",
   "chatbot.session.escalated",
   "chatbot.staff_reply.created",
   "chatbot.session.resolved",
@@ -137,13 +138,14 @@ export async function authenticateSocketConnection(socket, database = prisma) {
 }
 
 export function realtimeRoomsForStaff(staffUser) {
+  const rooms = staffUser.userId ? [`user:${staffUser.userId}`] : [];
   if (GLOBAL_REALTIME_ROLES.includes(staffUser.role)) {
-    return [`role:${staffUser.role}`];
+    rooms.push(`role:${staffUser.role}`);
   }
   if (staffUser.role === "BARANGAY_FACILITATOR" && staffUser.barangayId) {
-    return [`barangay:${staffUser.barangayId}`];
+    rooms.push(`barangay:${staffUser.barangayId}`);
   }
-  return [];
+  return rooms;
 }
 
 export function configureRealtimePublisher(io) {
@@ -166,7 +168,7 @@ async function resolveBarangayId(distributionId, barangayId, database) {
 
 export async function publishRealtimeEvent(
   eventName,
-  { distributionId = null, barangayId = null, data = {} } = {},
+  { distributionId = null, barangayId = null, userId = null, data = {} } = {},
   database = prisma,
 ) {
   if (!activeIo) return false;
@@ -174,7 +176,9 @@ export async function publishRealtimeEvent(
     throw new TypeError(`Unsupported realtime event: ${eventName}`);
   }
   try {
-    const resolvedBarangayId = await resolveBarangayId(distributionId, barangayId, database);
+    const resolvedBarangayId = userId
+      ? null
+      : await resolveBarangayId(distributionId, barangayId, database);
     const envelope = {
       eventId: randomUUID(),
       event: eventName,
@@ -183,8 +187,10 @@ export async function publishRealtimeEvent(
       ...(resolvedBarangayId ? { barangayId: resolvedBarangayId } : {}),
       data: sanitizeRealtimePayload(data),
     };
-    let target = activeIo.to("role:SYSTEM_ADMIN").to("role:DSWD_STAFF");
-    if (resolvedBarangayId && !GLOBAL_ONLY_EVENTS.has(eventName)) {
+    let target = userId
+      ? activeIo.to(`user:${userId}`)
+      : activeIo.to("role:SYSTEM_ADMIN").to("role:DSWD_STAFF");
+    if (!userId && resolvedBarangayId && !GLOBAL_ONLY_EVENTS.has(eventName)) {
       target = target.to(`barangay:${resolvedBarangayId}`);
     }
     target.emit(eventName, envelope);

@@ -17,6 +17,7 @@ import notificationRoutes, {
   scheduleNotificationRoutes,
 } from "../modules/notifications/notification.routes.js";
 import chatbotRoutes from "../modules/chatbot/chatbot.routes.js";
+import staffNotificationRoutes from "../modules/staffNotifications/staffNotification.routes.js";
 
 const apiRoutes = Router();
 
@@ -31,6 +32,7 @@ apiRoutes.use("/enrollments", enrollmentRoutes);
 apiRoutes.use("/users", userRoutes);
 apiRoutes.use("/audit-logs", auditLogRoutes);
 apiRoutes.use("/notifications", notificationRoutes);
+apiRoutes.use("/staff-notifications", staffNotificationRoutes);
 apiRoutes.use("/chatbot", chatbotRoutes);
 apiRoutes.use("/distributions", distributionNotificationRoutes);
 apiRoutes.use("/schedules", scheduleNotificationRoutes);

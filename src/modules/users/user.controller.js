@@ -4,11 +4,14 @@ import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
 import {
+  assertStaffAccountCanBeRemoved,
   assertActiveBarangay,
   assertStaffLoginIdentifiersAvailable,
   generateStaffId,
   generateTemporaryPassword,
+  getStaffRemovalMode,
   getStaffUserOrThrow,
+  operationalStaffActivityCountSelect,
   resolveStaffUserUpdate,
   staffUserSelect,
 } from "./user.service.js";
@@ -55,8 +58,9 @@ export const createStaffUser = asyncHandler(async (req, res) => {
 });
 
 export const listStaffUsers = asyncHandler(async (req, res) => {
-  const { page, pageSize, role, isActive, search } = req.validatedQuery;
+  const { page, pageSize, role, isActive, archived, search } = req.validatedQuery;
   const where = {
+    archivedAt: archived === "true" ? { not: null } : null,
     ...(role ? { role } : {}),
     ...(isActive ? { isActive: isActive === "true" } : {}),
     ...(search ? {
@@ -72,7 +76,10 @@ export const listStaffUsers = asyncHandler(async (req, res) => {
   const [users, total] = await Promise.all([
     prisma.user.findMany({
       where,
-      select: staffUserSelect,
+      select: {
+        ...staffUserSelect,
+        _count: { select: operationalStaffActivityCountSelect },
+      },
       orderBy: [{ role: "asc" }, { fullName: "asc" }],
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -83,7 +90,10 @@ export const listStaffUsers = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     data: {
-      users,
+      users: users.map(({ _count, ...user }) => ({
+        ...user,
+        removalMode: getStaffRemovalMode(_count),
+      })),
       pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
     },
   });
@@ -245,4 +255,145 @@ export const updateStaffUser = asyncHandler(async (req, res) => {
   });
 
   res.status(200).json({ success: true, data: { user } });
+});
+
+export const restoreStaffUser = asyncHandler(async (req, res) => {
+  const targetUser = await prisma.user.findUnique({
+    where: { userId: req.validatedParams.userId, archivedAt: { not: null } },
+    select: staffUserSelect,
+  });
+
+  if (!targetUser) {
+    throw new AppError(404, "ARCHIVED_STAFF_USER_NOT_FOUND", "Archived staff user was not found.");
+  }
+
+  const user = await prisma.$transaction(async (tx) => {
+    const restoredUser = await tx.user.update({
+      where: { userId: targetUser.userId },
+      data: { archivedAt: null, isActive: false },
+      select: staffUserSelect,
+    });
+
+    await tx.auditLog.create({
+      data: {
+        userId: req.auth.userId,
+        action: "STAFF_ACCOUNT_RESTORED",
+        entityAffected: "USER",
+        recordId: restoredUser.userId,
+        ipAddress: clientIpAddress(req),
+        details: { targetEmployeeId: restoredUser.employeeId, restoredAs: "INACTIVE" },
+      },
+    });
+
+    return restoredUser;
+  });
+
+  res.status(200).json({ success: true, data: { user } });
+});
+
+export const deleteStaffUser = asyncHandler(async (req, res) => {
+  const targetUser = await getStaffUserOrThrow(req.validatedParams.userId);
+  const activity = await prisma.user.findUnique({
+    where: { userId: targetUser.userId },
+    select: { _count: { select: operationalStaffActivityCountSelect } },
+  });
+  const removalMode = getStaffRemovalMode(activity._count);
+
+  assertStaffAccountCanBeRemoved({
+    actorUserId: req.auth.userId,
+    confirmation: req.validatedBody.confirmation,
+    removalMode,
+    targetUser,
+  });
+
+  let removedUser;
+  try {
+    removedUser = await prisma.$transaction(async (tx) => {
+      if (removalMode === "ARCHIVE") {
+        const archived = await tx.user.update({
+          where: { userId: targetUser.userId },
+          data: { archivedAt: new Date(), isActive: false },
+          select: { userId: true, employeeId: true, fullName: true },
+        });
+        await tx.staffSession.updateMany({
+          where: { userId: targetUser.userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        await tx.auditLog.create({
+          data: {
+            userId: req.auth.userId,
+            action: "STAFF_ACCOUNT_ARCHIVED",
+            entityAffected: "USER",
+            recordId: archived.userId,
+            ipAddress: clientIpAddress(req),
+            details: { targetEmployeeId: archived.employeeId, targetRole: targetUser.role },
+          },
+        });
+        return archived;
+      }
+
+      const actorLogs = await tx.auditLog.findMany({
+        where: { userId: targetUser.userId },
+        select: { auditId: true, details: true },
+      });
+      for (const log of actorLogs) {
+        const details = log.details && typeof log.details === "object" && !Array.isArray(log.details)
+          ? log.details
+          : {};
+        await tx.auditLog.update({
+          where: { auditId: log.auditId },
+          data: {
+            userId: null,
+            actorType: "DELETED_STAFF",
+            details: {
+              ...details,
+              deletedStaffActor: {
+                userId: targetUser.userId,
+                employeeId: targetUser.employeeId,
+                role: targetUser.role,
+              },
+            },
+          },
+        });
+      }
+
+      const deleted = await tx.user.delete({
+        where: { userId: targetUser.userId },
+        select: { userId: true, employeeId: true, fullName: true },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: req.auth.userId,
+          action: "STAFF_ACCOUNT_DELETED",
+          entityAffected: "USER",
+          recordId: deleted.userId,
+          ipAddress: clientIpAddress(req),
+          details: { targetEmployeeId: deleted.employeeId, targetRole: targetUser.role },
+        },
+      });
+
+      return deleted;
+    });
+  } catch (error) {
+    if (error?.code === "P2003") {
+      throw new AppError(
+        409,
+        "STAFF_ACCOUNT_HAS_OFFICIAL_ACTIVITY",
+        "This account is linked to official records and cannot be deleted. Keep it deactivated to preserve the audit trail.",
+      );
+    }
+    throw error;
+  }
+
+  res.status(200).json({
+    success: true,
+    data: {
+      user: removedUser,
+      removalMode,
+      message: removalMode === "ARCHIVE"
+        ? "The staff account was archived and its official history was preserved."
+        : "The unused staff account was permanently deleted and its audit entries were retained.",
+    },
+  });
 });

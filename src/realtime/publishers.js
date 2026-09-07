@@ -1,4 +1,15 @@
 import { publishRealtimeEvent } from "./socket.js";
+import { notifyStaffScope } from "../modules/staffNotifications/staffNotification.service.js";
+
+async function publishInboxNotification(notification) {
+  try {
+    await notifyStaffScope(notification);
+  } catch (error) {
+    if (process.env.NODE_ENV !== "test") {
+      console.warn({ event: "STAFF_NOTIFICATION_CREATE_FAILED", errorName: error.name });
+    }
+  }
+}
 
 function claimFromResult(result) {
   return result.responseBody?.data?.claim ?? null;
@@ -9,6 +20,7 @@ function resultError(result) {
 }
 
 export async function publishDistributionUpdated(distribution, change) {
+  const statusLabel = String(change).toLowerCase().replaceAll("_", " ");
   await Promise.all([
     publishRealtimeEvent("distribution.updated", {
       distributionId: distribution.distributionId,
@@ -23,6 +35,18 @@ export async function publishDistributionUpdated(distribution, change) {
       distributionId: distribution.distributionId,
       barangayId: distribution.barangayId,
       data: { reason: `DISTRIBUTION_${change}` },
+    }),
+    publishInboxNotification({
+      barangayId: distribution.barangayId,
+      notificationType: `DISTRIBUTION_${change}`,
+      title: "Distribution update",
+      message: `A distribution was ${statusLabel}. Open the workspace to review the latest details.`,
+      targetPaths: {
+        SYSTEM_ADMIN: "/distributions/manage",
+        DSWD_STAFF: "/dswd/live-dashboard",
+        BARANGAY_FACILITATOR: "/facilitator/queue",
+      },
+      deduplicationKey: `DISTRIBUTION_${change}:${distribution.distributionId}:${new Date(distribution.updatedAt).toISOString()}`,
     }),
   ]);
 }
@@ -259,7 +283,7 @@ export async function publishWalletReversalResult(result) {
 
 export async function publishNotificationLifecycle(eventName, notification, data = {}) {
   const barangayId = notification.beneficiary?.barangayId ?? null;
-  await Promise.all([
+  const events = [
     publishRealtimeEvent(eventName, {
       distributionId: notification.distributionId,
       barangayId,
@@ -279,7 +303,22 @@ export async function publishNotificationLifecycle(eventName, notification, data
         reason: eventName.toUpperCase().replaceAll(".", "_"),
       },
     }),
-  ]);
+  ];
+  if (eventName === "notification.failed") {
+    events.push(publishInboxNotification({
+      barangayId,
+      notificationType: "SMS_DELIVERY_FAILED",
+      title: "SMS delivery needs attention",
+      message: "A simulated beneficiary SMS could not be processed. Review the delivery console for details.",
+      targetPaths: {
+        SYSTEM_ADMIN: "/notifications",
+        DSWD_STAFF: "/notifications",
+        BARANGAY_FACILITATOR: "/notifications",
+      },
+      deduplicationKey: `SMS_DELIVERY_FAILED:${notification.notificationId}:${notification.attemptCount}`,
+    }));
+  }
+  await Promise.all(events);
 }
 
 async function publishChatbotLifecycle(eventName, session, data = {}) {

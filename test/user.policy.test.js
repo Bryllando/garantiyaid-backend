@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
+  assertStaffAccountCanBeRemoved,
   formatGeneratedStaffId,
   generateStaffId,
   generateTemporaryPassword,
+  getStaffRemovalMode,
   resolveStaffUserUpdate,
 } from "../src/modules/users/user.service.js";
 
@@ -51,4 +54,63 @@ test("DSWD Staff cannot be assigned a username", () => {
     }),
     (error) => error.code === "USERNAME_NOT_ALLOWED",
   );
+});
+
+test("inactive staff accounts are deleted or archived according to operational history", () => {
+  const targetUser = { userId: "staff-user", employeeId: "DSWD-0002", isActive: false };
+  assert.equal(getStaffRemovalMode({ verifiedClaims: 1 }), "ARCHIVE");
+  assert.equal(getStaffRemovalMode({ verifiedClaims: 0 }), "DELETE");
+  assert.doesNotThrow(() => assertStaffAccountCanBeRemoved({
+    actorUserId: "admin-user",
+    confirmation: "DELETE DSWD-0002",
+    removalMode: "DELETE",
+    targetUser,
+  }));
+  assert.doesNotThrow(() => assertStaffAccountCanBeRemoved({
+    actorUserId: "admin-user",
+    confirmation: "ARCHIVE DSWD-0002",
+    removalMode: "ARCHIVE",
+    targetUser,
+  }));
+  assert.throws(
+    () => assertStaffAccountCanBeRemoved({
+      actorUserId: "admin-user",
+      confirmation: "DELETE DSWD-0002",
+      removalMode: "DELETE",
+      targetUser: { ...targetUser, isActive: true },
+    }),
+    (error) => error.code === "STAFF_ACCOUNT_MUST_BE_INACTIVE",
+  );
+  assert.throws(
+    () => assertStaffAccountCanBeRemoved({
+      actorUserId: "staff-user",
+      confirmation: "DELETE DSWD-0002",
+      removalMode: "DELETE",
+      targetUser,
+    }),
+    (error) => error.code === "SELF_ACCOUNT_REMOVAL_FORBIDDEN",
+  );
+  assert.throws(
+    () => assertStaffAccountCanBeRemoved({
+      actorUserId: "admin-user",
+      confirmation: "DELETE DSWD-0002",
+      removalMode: "ARCHIVE",
+      targetUser,
+    }),
+    (error) => error.code === "STAFF_REMOVAL_CONFIRMATION_MISMATCH",
+  );
+});
+
+test("deleted staff audit entries retain a valid explicit actor type", () => {
+  const controller = readFileSync(new URL("../src/modules/users/user.controller.js", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../prisma/migrations/20260901161000_allow_deleted_staff_audit_actor/migration.sql", import.meta.url), "utf8");
+  assert.match(controller, /actorType: "DELETED_STAFF"/);
+  assert.match(migration, /'DELETED_STAFF'/);
+  assert.match(migration, /"user_id" IS NULL/);
+});
+
+test("archived staff accounts have an audited inactive restore path", () => {
+  const controller = readFileSync(new URL("../src/modules/users/user.controller.js", import.meta.url), "utf8");
+  assert.match(controller, /action: "STAFF_ACCOUNT_RESTORED"/);
+  assert.match(controller, /data: \{ archivedAt: null, isActive: false \}/);
 });

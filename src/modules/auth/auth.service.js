@@ -24,6 +24,7 @@ export const staffUserSelect = {
   totpEnabled: true,
   barangayId: true,
   isActive: true,
+  archivedAt: true,
   createdAt: true,
   updatedAt: true,
   barangay: {
@@ -106,6 +107,24 @@ export function signTotpSetupToken(user) {
   );
 }
 
+export function signTotpReplacementToken(user, {
+  currentSecret,
+  pendingSecret,
+  sessionId,
+}) {
+  return jwt.sign(
+    {
+      sub: user.userId,
+      type: "staff_totp_replacement",
+      currentSecret,
+      pendingSecret,
+      sessionId,
+    },
+    requireJwtSecret(),
+    jwtOptions({ expiresIn: "10m", jwtid: randomUUID() }),
+  );
+}
+
 function verifyStaffToken(token, expectedType, errorCode, message) {
   try {
     const payload = jwt.verify(token, requireJwtSecret(), {
@@ -151,6 +170,86 @@ export function verifyTotpSetupToken(token) {
     "INVALID_SETUP_TOKEN",
     "The TOTP setup token is invalid or expired.",
   );
+}
+
+export function verifyTotpReplacementToken(token) {
+  const payload = verifyStaffToken(
+    token,
+    "staff_totp_replacement",
+    "INVALID_TOTP_REPLACEMENT_TOKEN",
+    "The authenticator replacement session is invalid or expired.",
+  );
+
+  if (
+    typeof payload.currentSecret !== "string"
+    || typeof payload.pendingSecret !== "string"
+    || typeof payload.sessionId !== "string"
+    || !UUID_PATTERN.test(payload.sessionId)
+  ) {
+    throw new AppError(
+      401,
+      "INVALID_TOTP_REPLACEMENT_TOKEN",
+      "The authenticator replacement session is invalid or expired.",
+    );
+  }
+
+  return payload;
+}
+
+export async function verifyStaffReauthentication(userId, { currentPassword, totpCode }) {
+  const user = await prisma.user.findUnique({
+    where: { userId },
+    select: {
+      userId: true,
+      passwordHash: true,
+      totpSecret: true,
+      totpEnabled: true,
+      lastTotpCounter: true,
+      isActive: true,
+    },
+  });
+
+  if (!user?.isActive || !await bcrypt.compare(currentPassword, user.passwordHash)) {
+    throw new AppError(
+      401,
+      "ACCOUNT_REAUTHENTICATION_FAILED",
+      "The current password or authentication code is incorrect.",
+    );
+  }
+
+  const matchedCounter = user.totpEnabled && user.totpSecret
+    ? findValidTotpCounter(decryptTotpSecret(user.totpSecret), totpCode)
+    : null;
+  if (matchedCounter === null) {
+    throw new AppError(
+      401,
+      "ACCOUNT_REAUTHENTICATION_FAILED",
+      "The current password or authentication code is incorrect.",
+    );
+  }
+
+  const consumed = await prisma.user.updateMany({
+    where: {
+      userId,
+      totpEnabled: true,
+      totpSecret: user.totpSecret,
+      OR: [
+        { lastTotpCounter: null },
+        { lastTotpCounter: { lt: matchedCounter } },
+      ],
+    },
+    data: { lastTotpCounter: matchedCounter },
+  });
+
+  if (consumed.count !== 1) {
+    throw new AppError(
+      401,
+      "ACCOUNT_REAUTHENTICATION_FAILED",
+      "The current password or authentication code is incorrect.",
+    );
+  }
+
+  return user;
 }
 
 export async function issueAccessToken(user, { ipAddress = null, database = prisma } = {}) {

@@ -74,6 +74,22 @@ export const chatbotResolveSchema = z.object({
   ),
 }).strict();
 
+export const staffAssistantFeedbackSchema = z.object({
+  rating: z.enum(["HELPFUL", "NEEDS_IMPROVEMENT"]),
+  context: z.enum(["GUIDANCE", "DISTRIBUTION_DRAFT", "REMINDER_PREVIEW", "REMINDER_QUEUED"]),
+  intent: z.string().trim().min(1).max(50).regex(/^[A-Z_]+$/).optional(),
+}).strict();
+
+export const staffAssistantMessageSchema = z.object({
+  language: language.default("en"),
+  intent: z.enum(["GREETING", "SCHEDULE", "DELIVERY", "BENEFICIARY", "HELP"]),
+  messageText: messageText.refine((value) => value.length <= 300, "messageText must not exceed 300 characters."),
+  history: z.array(z.object({
+    role: z.enum(["user", "assistant"]),
+    content: messageText,
+  }).strict()).max(6).default([]),
+}).strict();
+
 export const CHATBOT_LIMITS = Object.freeze({
   maximumMessageLength: 1_000,
   maximumMessagesPerSession: env.chatbotMaxMessagesPerSession,

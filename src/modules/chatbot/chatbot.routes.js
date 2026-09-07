@@ -11,8 +11,10 @@ import {
   getChatbotSession,
   listChatbotEscalations,
   listChatbotMessages,
+  recordStaffAssistantFeedback,
   replyToChatbotEscalation,
   resolveChatbotEscalation,
+  submitStaffAssistantMessage,
   submitChatbotMessage,
 } from "./chatbot.controller.js";
 import { CHATBOT_STAFF_ROLES } from "./chatbot.constants.js";
@@ -26,9 +28,29 @@ import {
   chatbotStaffReplySchema,
   createChatbotSessionSchema,
   endChatbotSessionSchema,
+  staffAssistantFeedbackSchema,
+  staffAssistantMessageSchema,
 } from "./chatbot.schemas.js";
 
 const chatbotRoutes = Router();
+
+chatbotRoutes.post(
+  "/staff-assistant/messages",
+  authenticateStaff,
+  authorizeRoles(...CHATBOT_STAFF_ROLES),
+  chatbotRateLimiter,
+  validateBody(staffAssistantMessageSchema),
+  submitStaffAssistantMessage,
+);
+
+chatbotRoutes.post(
+  "/staff-feedback",
+  authenticateStaff,
+  authorizeRoles(...CHATBOT_STAFF_ROLES),
+  chatbotRateLimiter,
+  validateBody(staffAssistantFeedbackSchema),
+  recordStaffAssistantFeedback,
+);
 
 chatbotRoutes.post(
   "/sessions",

@@ -11,6 +11,14 @@ export const NOTIFICATION_TYPES = Object.freeze([
 ]);
 
 export const MAX_SMS_MESSAGE_LENGTH = 320;
+export const REMINDER_TEMPLATE_PLACEHOLDERS = Object.freeze([
+  "beneficiary",
+  "distribution",
+  "date",
+  "time",
+  "location",
+  "queue",
+]);
 
 function compactText(value, maximumLength) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
@@ -31,6 +39,24 @@ function scheduleTime(value) {
     minute: "2-digit",
     hour12: true,
   }).format(value);
+}
+
+function schedulePart(value, options) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    throw new AppError(409, "NOTIFICATION_TEMPLATE_CONTEXT_INVALID", "The schedule time is unavailable.");
+  }
+  return new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila",
+    ...options,
+  }).format(value);
+}
+
+function beneficiaryName(context) {
+  return compactText([
+    context.beneficiaryFirstName,
+    context.beneficiaryMiddleName,
+    context.beneficiaryLastName,
+  ].filter(Boolean).join(" ") || "beneficiary", 100);
 }
 
 function templateContext(context) {
@@ -60,6 +86,28 @@ export function renderNotificationTemplate(notificationType, context) {
   const message = renderer(templateContext(context));
   if (message.length > MAX_SMS_MESSAGE_LENGTH) {
     throw new AppError(409, "NOTIFICATION_MESSAGE_TOO_LONG", "The controlled SMS template exceeds the safe length limit.");
+  }
+  return message;
+}
+
+export function renderReminderTemplate(messageTemplate, context) {
+  const values = {
+    beneficiary: beneficiaryName(context),
+    distribution: compactText(context.distributionTitle, 70),
+    date: schedulePart(context.slotStart, { year: "numeric", month: "short", day: "2-digit" }),
+    time: schedulePart(context.slotStart, { hour: "numeric", minute: "2-digit", hour12: true }),
+    location: compactText(context.location, 70),
+    queue: String(Number(context.queueNumber)),
+  };
+  const message = String(messageTemplate ?? "").replace(/\{([a-z]+)\}/gi, (match, token) => (
+    Object.hasOwn(values, token.toLowerCase()) ? values[token.toLowerCase()] : match
+  )).trim();
+  if (!message || message.length > MAX_SMS_MESSAGE_LENGTH) {
+    throw new AppError(
+      409,
+      "NOTIFICATION_MESSAGE_TOO_LONG",
+      `Each rendered reminder must contain 1-${MAX_SMS_MESSAGE_LENGTH} characters.`,
+    );
   }
   return message;
 }

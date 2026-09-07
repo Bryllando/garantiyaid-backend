@@ -312,6 +312,7 @@ test("Phase 6 route surface adds simulated credit, transaction monitoring, and r
   assert.deepEqual(routes, [
     { path: "/", methods: ["get"] },
     { path: "/", methods: ["post"] },
+    { path: "/assistant-preview", methods: ["post"] },
     { path: "/:distributionId/slots", methods: ["get"] },
     { path: "/:distributionId/slots/generate", methods: ["post"] },
     { path: "/:distributionId/slots/:slotId", methods: ["get"] },

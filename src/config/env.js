@@ -2,6 +2,10 @@ import "dotenv/config";
 import { z } from "zod";
 
 const duration = z.string().regex(/^\d+(?:s|m|h|d)$/, "Use a duration such as 15m or 1h.");
+const optionalOpenRouterKey = z.preprocess(
+  (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().regex(/^sk-or-v1-[A-Za-z0-9_-]{32,}$/, "Use a valid OpenRouter API key.").optional(),
+);
 
 function durationInMilliseconds(value) {
   const amount = Number.parseInt(value, 10);
@@ -34,6 +38,7 @@ const environmentSchema = z.object({
   CHATBOT_MAX_MESSAGES_PER_SESSION: z.coerce.number().int().min(10).max(500).default(100),
   CHATBOT_SESSION_MAX_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   CHATBOT_RETENTION_DAYS: z.coerce.number().int().min(30).max(365).default(90),
+  OPENROUTER_API_KEY: optionalOpenRouterKey,
   IDEMPOTENCY_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   BIOMETRIC_PROCESSOR_MODE: z.enum(["SIMULATED", "REMOTE"]).default("SIMULATED"),
   BIOMETRIC_SERVICE_URL: z.url().optional(),
@@ -173,6 +178,7 @@ export const env = {
   chatbotMaxMessagesPerSession: parsedEnvironment.data.CHATBOT_MAX_MESSAGES_PER_SESSION,
   chatbotSessionMaxHours: parsedEnvironment.data.CHATBOT_SESSION_MAX_HOURS,
   chatbotRetentionDays: parsedEnvironment.data.CHATBOT_RETENTION_DAYS,
+  openRouterApiKey: parsedEnvironment.data.OPENROUTER_API_KEY,
   idempotencyTtlHours: parsedEnvironment.data.IDEMPOTENCY_TTL_HOURS,
   biometricProcessorMode: parsedEnvironment.data.BIOMETRIC_PROCESSOR_MODE,
   biometricServiceUrl: parsedEnvironment.data.BIOMETRIC_SERVICE_URL,

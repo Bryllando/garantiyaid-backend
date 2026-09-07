@@ -92,6 +92,26 @@ export const createDistribution = asyncHandler(async (req, res) => {
   });
 });
 
+export const previewAssistantDistribution = asyncHandler(async (req, res) => {
+  assertDistributionManageAllowed(req.staffUser);
+  assertDistributionConfigurationValid(req.validatedBody);
+  await Promise.all([
+    assertActiveDistributionProgram(req.validatedBody.programId),
+    assertActiveDistributionBarangay(req.validatedBody.barangayId),
+    assertNoDistributionOverlap(req.validatedBody),
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      conflictFree: true,
+      draftOnly: true,
+      checkedAt: new Date().toISOString(),
+      message: "The event configuration is valid and has no current Barangay time conflict. Confirmation creates a draft only.",
+    },
+  });
+});
+
 export const listDistributions = asyncHandler(async (req, res) => {
   assertDistributionReadAllowed(req.staffUser);
   const {

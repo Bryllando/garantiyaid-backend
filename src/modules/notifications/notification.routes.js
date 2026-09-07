@@ -5,11 +5,13 @@ import { notificationRateLimiter } from "../../middleware/rateLimit.js";
 import { validateBody, validateParams, validateQuery } from "../../middleware/validate.js";
 import {
   enqueueDistributionNotifications,
+  enqueueAssistantDistributionReminder,
   enqueueScheduleNotification,
   getNotification,
   getNotificationQueueHealth,
   listDistributionNotifications,
   listNotifications,
+  previewAssistantDistributionReminder,
   retryNotification,
   summarizeNotifications,
 } from "./notification.controller.js";
@@ -20,6 +22,8 @@ import {
 } from "./notification.policy.js";
 import {
   distributionNotificationEnqueueSchema,
+  assistantReminderEnqueueSchema,
+  assistantReminderPreviewSchema,
   distributionNotificationListQuerySchema,
   emptyNotificationBodySchema,
   notificationIdSchema,
@@ -66,6 +70,22 @@ notificationRoutes.post(
 
 export const distributionNotificationRoutes = Router();
 distributionNotificationRoutes.use(authenticateStaff);
+distributionNotificationRoutes.post(
+  "/:distributionId/notifications/assistant-preview",
+  authorizeRoles(...NOTIFICATION_ENQUEUE_ROLES),
+  notificationRateLimiter,
+  validateParams(distributionIdSchema),
+  validateBody(assistantReminderPreviewSchema),
+  previewAssistantDistributionReminder,
+);
+distributionNotificationRoutes.post(
+  "/:distributionId/notifications/assistant-enqueue",
+  authorizeRoles(...NOTIFICATION_ENQUEUE_ROLES),
+  notificationRateLimiter,
+  validateParams(distributionIdSchema),
+  validateBody(assistantReminderEnqueueSchema),
+  enqueueAssistantDistributionReminder,
+);
 distributionNotificationRoutes.get(
   "/:distributionId/notifications",
   authorizeRoles(...NOTIFICATION_READ_ROLES),

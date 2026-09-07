@@ -8,6 +8,8 @@ import {
 } from "../src/modules/notifications/notification.routes.js";
 import notificationRoutes from "../src/modules/notifications/notification.routes.js";
 import {
+  assistantReminderEnqueueSchema,
+  assistantReminderPreviewSchema,
   distributionNotificationEnqueueSchema,
   notificationListQuerySchema,
   scheduleNotificationEnqueueSchema,
@@ -19,6 +21,7 @@ import {
   resolveNotificationBarangay,
 } from "../src/modules/notifications/notification.policy.js";
 import {
+  assistantReminderPreviewFromSchedules,
   buildNotificationWhere,
   assertNotificationRetryable,
   createNotificationRows,
@@ -33,6 +36,7 @@ import {
   MAX_SMS_MESSAGE_LENGTH,
   NOTIFICATION_TYPES,
   renderNotificationTemplate,
+  renderReminderTemplate,
 } from "../src/modules/notifications/notification.templates.js";
 import {
   createSimulatedSmsProvider,
@@ -89,6 +93,10 @@ function schedule(overrides = {}) {
       beneficiaryId,
       barangayId: barangayA,
       contactNumber: "09171234567",
+      firstName: "Maria",
+      middleName: null,
+      lastName: "Santos",
+      sitioPurok: "Sitio Riverside",
       status: "ACTIVE",
     },
     slot: {
@@ -141,6 +149,51 @@ test("Phase 9 schemas validate UUIDs, filters, dates, types, batches, and delaye
     notificationType: "SCHEDULE_CREATED",
     sendAt: "2099-08-19T10:00:00+08:00",
   }).success, false);
+});
+
+test("assistant reminders validate controlled templates and preview only eligible recipients", () => {
+  const messageTemplate = "Hello {beneficiary}. {distribution} is on {date} at {time}, {location}. Queue {queue}.";
+  const parsed = assistantReminderPreviewSchema.parse({
+    serviceArea: " Sitio Riverside ",
+    messageTemplate,
+    sendAt: "2099-08-19T10:00:00+08:00",
+  });
+  assert.equal(parsed.serviceArea, "Sitio Riverside");
+  assert.equal(assistantReminderPreviewSchema.safeParse({ messageTemplate: "<b>Unsafe</b> reminder" }).success, false);
+  assert.equal(assistantReminderPreviewSchema.safeParse({ messageTemplate: "Unknown {secret} placeholder" }).success, false);
+  assert.equal(assistantReminderEnqueueSchema.safeParse({
+    messageTemplate,
+    expectedRecipientCount: 1,
+    expectedPreviewHash: "a".repeat(64),
+    confirmed: false,
+  }).success, false);
+
+  const invalidContact = schedule({
+    scheduleId: "88888888-8888-4888-8888-888888888888",
+    beneficiary: { ...schedule().beneficiary, beneficiaryId: "99999999-9999-4999-8999-999999999999", contactNumber: "123" },
+  });
+  const completedClaim = schedule({
+    scheduleId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    beneficiary: { ...schedule().beneficiary, beneficiaryId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+    claim: { claimStatus: "CLAIMED" },
+  });
+  const preview = assistantReminderPreviewFromSchedules(
+    [schedule(), invalidContact, completedClaim],
+    { messageTemplate, sendAt: parsed.sendAt, initiatedById: userId, now: new Date("2099-08-01T00:00:00.000Z") },
+  );
+  assert.equal(preview.recipientCount, 1);
+  assert.match(preview.previewHash, /^[a-f0-9]{64}$/);
+  assert.deepEqual(preview.excluded, { invalidContactCount: 1, completedClaimCount: 1 });
+  assert.equal(preview.recipients[0].beneficiaryName, "Maria Santos");
+  assert.match(preview.recipients[0].message, /Maria Santos/);
+  assert.equal(renderReminderTemplate(messageTemplate, {
+    distributionTitle: "Emergency Cash Assistance",
+    location: "Barangay Hall",
+    slotStart,
+    queueNumber: 12,
+    beneficiaryFirstName: "Maria",
+    beneficiaryLastName: "Santos",
+  }).includes("{beneficiary}"), false);
 });
 
 test("idempotency keys replay matching requests and reject payload conflicts", () => {
@@ -704,7 +757,7 @@ function routeSurface(router) {
     .flatMap((layer) => Object.keys(layer.route.methods).map((method) => `${method.toUpperCase()} ${layer.route.path}`));
 }
 
-test("Phase 9 route surface exposes history, summary, health, enqueue, and retry only", () => {
+test("notification route surface exposes history, summary, controlled assistant reminders, enqueue, and retry", () => {
   assert.deepEqual(routeSurface(notificationRoutes).sort(), [
     "GET /",
     "GET /:notificationId",
@@ -714,6 +767,8 @@ test("Phase 9 route surface exposes history, summary, health, enqueue, and retry
   ].sort());
   assert.deepEqual(routeSurface(distributionNotificationRoutes).sort(), [
     "GET /:distributionId/notifications",
+    "POST /:distributionId/notifications/assistant-enqueue",
+    "POST /:distributionId/notifications/assistant-preview",
     "POST /:distributionId/notifications/enqueue",
   ].sort());
   assert.deepEqual(routeSurface(scheduleNotificationRoutes), [
@@ -736,6 +791,12 @@ test("all notification HTTP endpoints reject unauthenticated requests", async ()
       fetch(`${base}/distributions/${distributionId}/notifications/enqueue`, {
         method: "POST", headers: { "content-type": "application/json" }, body: "{}",
       }),
+      fetch(`${base}/distributions/${distributionId}/notifications/assistant-preview`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      }),
+      fetch(`${base}/distributions/${distributionId}/notifications/assistant-enqueue`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      }),
       fetch(`${base}/schedules/${scheduleId}/notifications/enqueue`, {
         method: "POST", headers: { "content-type": "application/json" }, body: "{}",
       }),
@@ -744,7 +805,7 @@ test("all notification HTTP endpoints reject unauthenticated requests", async ()
       }),
     ];
     const responses = await Promise.all(requests);
-    assert.deepEqual(responses.map((response) => response.status), Array(8).fill(401));
+    assert.deepEqual(responses.map((response) => response.status), Array(10).fill(401));
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

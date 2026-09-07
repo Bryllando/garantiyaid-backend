@@ -361,7 +361,7 @@ test("Socket authentication validates the existing JWT session and derives stric
     staffSession: { findFirst: async () => ({ sessionId }) },
   };
   const user = await authenticateSocketConnection({ handshake: { auth: { accessToken: token }, headers: {} } }, database);
-  assert.deepEqual(realtimeRoomsForStaff(user), [`barangay:${barangayA}`]);
+  assert.deepEqual(realtimeRoomsForStaff(user), [`user:${userId}`, `barangay:${barangayA}`]);
   assert.deepEqual(realtimeRoomsForStaff({ role: "SYSTEM_ADMIN" }), ["role:SYSTEM_ADMIN"]);
   await assert.rejects(
     () => authenticateSocketConnection({ handshake: { auth: {}, headers: {} } }, database),
@@ -511,6 +511,17 @@ test("Socket rooms isolate Barangays, sanitize payloads, and reject client-publi
     });
     assert.equal((await adminWalletEvent).data.amount, "100.00");
     assert.equal(await facilitatorWalletEvent, null);
+
+    const adminPersonalEvent = eventWithin(admin, "staff.notification.created");
+    const facilitatorAPersonalEvent = eventWithin(facilitatorA, "staff.notification.created");
+    const facilitatorBPersonalEvent = eventWithin(facilitatorB, "staff.notification.created");
+    await publishRealtimeEvent("staff.notification.created", {
+      userId: users.a.userId,
+      data: { notificationId: programId },
+    });
+    assert.equal(await adminPersonalEvent, null);
+    assert.equal((await facilitatorAPersonalEvent).data.notificationId, programId);
+    assert.equal(await facilitatorBPersonalEvent, null);
 
     const clientError = eventWithin(facilitatorA, "realtime.error");
     const illicitBroadcast = eventWithin(admin, "wallet.transaction.completed", 200);

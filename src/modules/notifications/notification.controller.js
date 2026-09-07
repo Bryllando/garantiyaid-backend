@@ -28,6 +28,7 @@ import {
   notificationRowFromSchedule,
   notificationScheduleContextSelect,
   notificationToResponse,
+  assistantReminderPreviewFromSchedules,
 } from "./notification.service.js";
 
 async function assertFilterScope(staffUser, filters) {
@@ -154,8 +155,9 @@ async function sendIdempotentResponse(res, result, replayed) {
   return res.status(result.responseStatus).json(result.responseBody);
 }
 
-async function enqueueRows(req, operation, schedules) {
-  assertNotificationTypeAllowed(req.staffUser, req.validatedBody.notificationType);
+async function enqueueRows(req, operation, schedules, options = {}) {
+  const notificationType = options.notificationType ?? req.validatedBody.notificationType;
+  assertNotificationTypeAllowed(req.staffUser, notificationType);
   const idempotencyKey = requireIdempotencyKey(req, "notification enqueueing");
   const identity = { userId: req.auth.userId, operation, idempotencyKey };
   const requestHash = idempotencyRequestHash({
@@ -167,9 +169,10 @@ async function enqueueRows(req, operation, schedules) {
 
   const now = new Date();
   const rows = schedules.map((schedule) => notificationRowFromSchedule(schedule, {
-    notificationType: req.validatedBody.notificationType,
+    notificationType,
     sendAt: req.validatedBody.sendAt,
     initiatedById: req.auth.userId,
+    messageTemplate: options.messageTemplate,
     now,
   }));
   const { notifications, newlyCreated } = await createNotificationRows(rows);
@@ -212,9 +215,13 @@ async function enqueueRows(req, operation, schedules) {
           : schedules[0].scheduleId,
         ipAddress: clientIpAddress(req),
         details: {
-          notificationType: req.validatedBody.notificationType,
+          notificationType,
           requestedCount: schedules.length,
           queuedCount: pending.length,
+          ...(options.assistant ? {
+            assistant: true,
+            serviceArea: req.validatedBody.serviceArea ?? null,
+          } : {}),
           simulated: true,
           realSmsSent: false,
         },
@@ -229,6 +236,103 @@ async function enqueueRows(req, operation, schedules) {
   )));
   return { responseStatus, responseBody };
 }
+
+async function assistantReminderContext(req) {
+  const { distributionId } = req.validatedParams;
+  const distribution = await prisma.distribution.findUnique({
+    where: { distributionId },
+    select: {
+      distributionId: true,
+      title: true,
+      distributionDate: true,
+      location: true,
+      status: true,
+      barangayId: true,
+      barangay: { select: { barangayName: true } },
+    },
+  });
+  if (!distribution) throw new AppError(404, "DISTRIBUTION_NOT_FOUND", "Distribution event was not found.");
+  assertNotificationBarangayAccess(req.staffUser, distribution.barangayId);
+
+  const schedules = await prisma.schedule.findMany({
+    where: {
+      distributionId,
+      status: "SCHEDULED",
+      beneficiary: {
+        is: {
+          status: "ACTIVE",
+          ...(req.validatedBody.serviceArea ? {
+            sitioPurok: { equals: req.validatedBody.serviceArea, mode: "insensitive" },
+          } : {}),
+        },
+      },
+    },
+    select: notificationScheduleContextSelect,
+    orderBy: [{ slot: { slotStart: "asc" } }, { queueNumber: "asc" }],
+    take: env.notificationBatchMaxSize + 1,
+  });
+  if (schedules.length > env.notificationBatchMaxSize) {
+    throw new AppError(
+      413,
+      "NOTIFICATION_BATCH_TOO_LARGE",
+      `An assistant reminder may contain at most ${env.notificationBatchMaxSize} scheduled beneficiaries.`,
+    );
+  }
+
+  const preview = assistantReminderPreviewFromSchedules(schedules, {
+    messageTemplate: req.validatedBody.messageTemplate,
+    sendAt: req.validatedBody.sendAt,
+    initiatedById: req.auth.userId,
+  });
+  return { distribution, ...preview };
+}
+
+export const previewAssistantDistributionReminder = asyncHandler(async (req, res) => {
+  const { schedules, ...preview } = await assistantReminderContext(req);
+  res.status(200).json({
+    success: true,
+    data: {
+      ...preview,
+      simulatedSmsOnly: true,
+      claimAuthorizationDisclosure: "An SMS notice is not proof of eligibility. Claim authorization still requires the official schedule and identity verification.",
+    },
+  });
+});
+
+export const enqueueAssistantDistributionReminder = asyncHandler(async (req, res) => {
+  const preview = await assistantReminderContext(req);
+  if (preview.recipientCount === 0) {
+    throw new AppError(409, "NOTIFICATION_BATCH_EMPTY", "No scheduled beneficiaries with valid mobile numbers match this reminder.");
+  }
+  if (preview.recipientCount !== req.validatedBody.expectedRecipientCount) {
+    throw new AppError(
+      409,
+      "NOTIFICATION_PREVIEW_CHANGED",
+      "The recipient list changed after preview. Review the updated recipients before confirming again.",
+      { expectedRecipientCount: req.validatedBody.expectedRecipientCount, actualRecipientCount: preview.recipientCount },
+    );
+  }
+  if (preview.previewHash !== req.validatedBody.expectedPreviewHash) {
+    throw new AppError(
+      409,
+      "NOTIFICATION_PREVIEW_CHANGED",
+      "The recipient details changed after preview. Review the updated recipients before confirming again.",
+    );
+  }
+
+  const result = await enqueueRows(
+    req,
+    `NOTIFICATION_ENQUEUE_DISTRIBUTION:${req.validatedParams.distributionId}:ASSISTANT`,
+    preview.schedules,
+    {
+      notificationType: "DISTRIBUTION_REMINDER",
+      messageTemplate: req.validatedBody.messageTemplate,
+      assistant: true,
+    },
+  );
+  if (result.replay) return sendIdempotentResponse(res, result.replay, true);
+  return sendIdempotentResponse(res, result, false);
+});
 
 export const enqueueScheduleNotification = asyncHandler(async (req, res) => {
   const schedule = await prisma.schedule.findUnique({

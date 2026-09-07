@@ -8,6 +8,7 @@ import {
   createDistribution,
   getDistribution,
   listDistributions,
+  previewAssistantDistribution,
   updateDistribution,
 } from "./distribution.controller.js";
 import {
@@ -149,6 +150,12 @@ distributionRoutes.post(
   authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
   validateBody(createDistributionSchema),
   createDistribution,
+);
+distributionRoutes.post(
+  "/assistant-preview",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateBody(createDistributionSchema),
+  previewAssistantDistribution,
 );
 distributionRoutes.get(
   "/:distributionId/slots",

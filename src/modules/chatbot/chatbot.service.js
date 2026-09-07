@@ -6,6 +6,7 @@ import {
 import { env } from "../../config/env.js";
 import prisma from "../../lib/prisma.js";
 import { AppError } from "../../utils/AppError.js";
+import { generateExternalChatbotAnswer } from "./chatbot.ai.js";
 import { classifyChatbotIntent } from "./chatbot.intent.js";
 import {
   controlledChatbotAnswer,
@@ -349,13 +350,23 @@ export async function processGenericChatbotTurn(
   { sessionId, token, messageText, ipAddress },
   database = prisma,
   now = new Date(),
+  externalAnswerGenerator = generateExternalChatbotAnswer,
 ) {
   const safeUserMessage = redactChatbotText(messageText);
   const classification = classifyChatbotIntent(safeUserMessage.messageText);
+  const answerSession = await getOwnedSessionOrThrow(sessionId, token, database);
+  const localizedAnswer = controlledChatbotAnswer(classification.intent, answerSession.language ?? "en");
+  const externalAnswer = !chatbotSessionExpired(answerSession, now)
+    && !["RESOLVED", "ENDED"].includes(answerSession.status)
+    ? await externalAnswerGenerator({
+      intent: classification.intent,
+      language: localizedAnswer.language,
+      approvedAnswer: localizedAnswer.messageText,
+    })
+    : null;
 
   const result = await serializable(async (transaction) => {
     const session = await getOwnedSessionOrThrow(sessionId, token, transaction);
-    const localizedAnswer = controlledChatbotAnswer(classification.intent, session.language ?? "en");
     if (await expireSessionInTransaction(session, transaction, now)) return { expired: true };
     assertChatbotSessionAcceptsMessages(session, now);
     const sequence = await nextMessageSequence(transaction, sessionId, 2);
@@ -380,7 +391,7 @@ export async function processGenericChatbotTurn(
         sessionId,
         sequence: sequence + 1,
         senderType: "BOT",
-        messageText: localizedAnswer.messageText,
+        messageText: externalAnswer?.messageText ?? localizedAnswer.messageText,
         intentDetected: classification.intent,
         confidenceScore: classification.confidence,
       },
@@ -431,6 +442,7 @@ export async function processGenericChatbotTurn(
       botMessage,
       escalatedNow,
       answer: localizedAnswer,
+      externalAnswer,
     };
   }, database);
 
@@ -453,8 +465,11 @@ export async function processGenericChatbotTurn(
     escalatedNow: result.escalatedNow,
     inputRedacted: safeUserMessage.inputRedacted,
     personalDataAccessed: false,
-    externalAiUsed: false,
-    prototypeDisclosure: result.answer.prototypeDisclosure,
+    externalAiUsed: Boolean(result.externalAnswer),
+    externalAiModel: result.externalAnswer?.model ?? null,
+    prototypeDisclosure: result.externalAnswer
+      ? "AI-assisted wording from an approved general-guidance answer; no personal records or raw user message were sent to the external model."
+      : result.answer.prototypeDisclosure,
   };
 }
 

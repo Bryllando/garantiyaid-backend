@@ -9,8 +9,10 @@ import {
   hashRecoveryCode,
   nextLoginFailureState,
   signAccessToken,
+  signTotpReplacementToken,
   verifyAccessToken,
   verifyRecoveryCode,
+  verifyTotpReplacementToken,
 } from "../src/modules/auth/auth.service.js";
 import {
   findValidTotpCounter,
@@ -153,4 +155,24 @@ test("staff recovery codes are unique, normalized, and safe to store as salted h
   assert.notEqual(await hashRecoveryCode(codes[0]), hash);
   const legacyHash = createHash("sha256").update(codes[0].replaceAll("-", "")).digest("hex");
   assert.equal(await verifyRecoveryCode(codes[0], legacyHash), true);
+});
+
+test("authenticator replacement tokens are short-lived and bound to one staff session", () => {
+  const sessionId = "22222222-2222-4222-8222-222222222222";
+  const token = signTotpReplacementToken(user, {
+    currentSecret: "encrypted-current-secret",
+    pendingSecret: "encrypted-pending-secret",
+    sessionId,
+  });
+  const payload = verifyTotpReplacementToken(token);
+
+  assert.equal(payload.sub, user.userId);
+  assert.equal(payload.sessionId, sessionId);
+  assert.equal(payload.currentSecret, "encrypted-current-secret");
+  assert.equal(payload.pendingSecret, "encrypted-pending-secret");
+  assert.ok(payload.exp - payload.iat <= 10 * 60);
+  assert.throws(
+    () => verifyTotpReplacementToken(`${token.slice(0, -1)}x`),
+    { code: "INVALID_TOTP_REPLACEMENT_TOKEN" },
+  );
 });

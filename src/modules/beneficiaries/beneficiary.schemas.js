@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalPhilippineMobileSchema } from "../../lib/philippine-mobile.js";
 
 const optionalNullableText = (maxLength) => z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? null : value),
@@ -8,25 +9,6 @@ const optionalNullableText = (maxLength) => z.preprocess(
 const optionalEmail = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? null : value),
   z.string().trim().toLowerCase().email().max(150).nullable().optional(),
-);
-
-const optionalContactNumber = z.preprocess(
-  (value) => {
-    if (typeof value !== "string") {
-      return value;
-    }
-
-    const compact = value.trim().replace(/[\s()-]/g, "");
-    if (!compact) {
-      return null;
-    }
-
-    return /^09\d{9}$/.test(compact) ? `+63${compact.slice(1)}` : compact;
-  },
-  z.string().regex(
-    /^\+639\d{9}$/,
-    "Contact number must be a Philippine mobile number such as 09171234567 or +639171234567.",
-  ).nullable().optional(),
 );
 
 const sex = z.preprocess(
@@ -65,7 +47,7 @@ const beneficiaryFields = {
   address: z.string().trim().min(1).max(2000),
   sitioPurok: optionalNullableText(120),
   barangayId: z.uuid().optional(),
-  contactNumber: optionalContactNumber,
+  contactNumber: optionalPhilippineMobileSchema(),
   email: optionalEmail,
   philsysNumber: optionalNullableText(50),
 };
