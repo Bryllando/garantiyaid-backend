@@ -110,6 +110,7 @@ export const assistantReminderPreviewSchema = z.object(assistantReminderFields).
 
 export const assistantReminderEnqueueSchema = z.object({
   ...assistantReminderFields,
+  approvalId: z.uuid(),
   confirmed: z.literal(true),
   expectedRecipientCount: z.coerce.number().int().min(1).max(env.notificationBatchMaxSize),
   expectedPreviewHash: z.string().regex(/^[a-f0-9]{64}$/, "expectedPreviewHash must be a SHA-256 digest."),

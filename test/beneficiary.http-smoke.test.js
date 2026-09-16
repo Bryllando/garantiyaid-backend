@@ -106,6 +106,12 @@ test("distribution, QR, claim, and simulated-wallet endpoints require staff auth
       body: JSON.stringify({}),
     }),
     fetch(`${baseUrl}/api/v1/distributions/${distributionId}`),
+    fetch(`${baseUrl}/api/v1/distributions/assistant-preview`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    }),
+    fetch(`${baseUrl}/api/v1/distributions/assistant-confirm`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    }),
     fetch(`${baseUrl}/api/v1/distributions/${distributionId}/slots`),
     fetch(`${baseUrl}/api/v1/distributions/${distributionId}/eligible-enrollments`),
     fetch(`${baseUrl}/api/v1/distributions/${distributionId}/allocations`),

@@ -6,6 +6,7 @@ import { biometricRateLimiter } from "../../middleware/rateLimit.js";
 import {
   cancelDistribution,
   createDistribution,
+  confirmAssistantDistribution,
   getDistribution,
   listDistributions,
   previewAssistantDistribution,
@@ -23,6 +24,7 @@ import {
 } from "./distribution.policy.js";
 import {
   createDistributionSchema,
+  confirmAssistantDistributionSchema,
   distributionIdSchema,
   distributionListQuerySchema,
   updateDistributionSchema,
@@ -156,6 +158,12 @@ distributionRoutes.post(
   authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
   validateBody(createDistributionSchema),
   previewAssistantDistribution,
+);
+distributionRoutes.post(
+  "/assistant-confirm",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateBody(confirmAssistantDistributionSchema),
+  confirmAssistantDistribution,
 );
 distributionRoutes.get(
   "/:distributionId/slots",

@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import app from "../src/app.js";
+import prisma from "../src/lib/prisma.js";
+import { signAccessToken } from "../src/modules/auth/auth.service.js";
 import {
   createStaffNotification,
   notifyStaffScope,
@@ -102,9 +104,39 @@ test("staff inbox list and read actions require an authenticated staff session",
     fetch(`${baseUrl}/api/v1/staff-notifications`),
     fetch(`${baseUrl}/api/v1/staff-notifications/${notificationId}/read`, { method: "PATCH" }),
     fetch(`${baseUrl}/api/v1/staff-notifications/read-all`, { method: "POST" }),
+    fetch(`${baseUrl}/api/v1/users/${notificationId}/email-deliveries`),
   ]);
   for (const response of responses) {
     assert.equal(response.status, 401);
     assert.equal((await response.json()).error.code, "AUTHENTICATION_REQUIRED");
   }
+});
+
+test("email delivery history is admin-only, bounded, and excludes raw recipients and provider details", async (t) => {
+  const userId = "11111111-1111-4111-8111-111111111111";
+  const targetId = "22222222-2222-4222-8222-222222222222";
+  let role = "DSWD_STAFF";
+  let reads = 0;
+  const originals = [prisma.user.findUnique, prisma.staffSession.findFirst, prisma.staffNotification.findMany];
+  t.after(() => { [prisma.user.findUnique, prisma.staffSession.findFirst, prisma.staffNotification.findMany] = originals; });
+  prisma.user.findUnique = async ({ where }) => ({ userId: where.userId, role, isActive: true });
+  prisma.staffSession.findFirst = async () => ({ sessionId: "33333333-3333-4333-8333-333333333333" });
+  prisma.staffNotification.findMany = async (query) => {
+    reads++;
+    assert.equal(query.where.userId, targetId);
+    assert.equal(query.take, 20);
+    assert.equal(query.where.notificationType.startsWith, "SECURITY_");
+    return [{ notificationId: targetId, title: "Account created", notificationType: "SECURITY_ACCOUNT_CREATED", createdAt, readAt: null, emailRecipient: "maria@example.test", emailProviderMode: "GMAIL_API", emailStatus: "SENT", emailSentAt: createdAt, emailFailedAt: null, emailProviderReference: "private-provider-reference", emailLastErrorCode: "private-error", emailProcessingToken: "private-lock" }];
+  };
+  const request = (id = targetId) => fetch(`${baseUrl}/api/v1/users/${id}/email-deliveries`, { headers: { Authorization: `Bearer ${signAccessToken({ userId, role })}` } });
+  assert.equal((await request()).status, 403);
+  assert.equal(reads, 0);
+  role = "SYSTEM_ADMIN";
+  assert.equal((await request("invalid-id")).status, 400);
+  const response = await request();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const body = await response.json();
+  assert.deepEqual(body.data.notifications[0].emailDelivery, { configured: true, provider: "GMAIL_API", status: "SENT", recipientMasked: "m****@example.test", sentAt: createdAt.toISOString(), failedAt: null });
+  assert.doesNotMatch(JSON.stringify(body), /maria@example|private-provider|private-error|private-lock/);
 });

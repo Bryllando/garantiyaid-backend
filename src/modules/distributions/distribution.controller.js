@@ -21,6 +21,7 @@ import {
 import { assertDistributionScheduleFieldsUnlocked } from "./distributionSlot.service.js";
 import { assertDistributionAllocationFieldsUnlocked } from "./distributionAllocation.service.js";
 import { publishDistributionUpdated } from "../../realtime/publishers.js";
+import { prepareAssistantApproval, executeAssistantApproval } from "../../utils/assistantApproval.js";
 
 async function runDistributionTransaction(operation) {
   try {
@@ -38,11 +39,7 @@ async function runDistributionTransaction(operation) {
   }
 }
 
-export const createDistribution = asyncHandler(async (req, res) => {
-  assertDistributionManageAllowed(req.staffUser);
-  assertDistributionConfigurationValid(req.validatedBody);
-
-  const distributionId = await runDistributionTransaction(async (tx) => {
+async function insertDistribution(req, tx) {
     await assertActiveDistributionProgram(req.validatedBody.programId, tx);
     await assertActiveDistributionBarangay(req.validatedBody.barangayId, tx);
     await assertNoDistributionOverlap(req.validatedBody, tx);
@@ -74,12 +71,18 @@ export const createDistribution = asyncHandler(async (req, res) => {
           barangayId: createdDistribution.barangayId,
           distributionDate: createdDistribution.distributionDate.toISOString().slice(0, 10),
           status: createdDistribution.status,
+          ...(req.assistantApprovalId ? { assistantApprovalId: req.assistantApprovalId } : {}),
         },
       },
     });
 
     return createdDistribution.distributionId;
-  });
+}
+
+export const createDistribution = asyncHandler(async (req, res) => {
+  assertDistributionManageAllowed(req.staffUser);
+  assertDistributionConfigurationValid(req.validatedBody);
+  const distributionId = await runDistributionTransaction((tx) => insertDistribution(req, tx));
   const distribution = await prisma.distribution.findUniqueOrThrow({
     where: { distributionId },
     select: distributionSelect,
@@ -92,6 +95,20 @@ export const createDistribution = asyncHandler(async (req, res) => {
   });
 });
 
+export const confirmAssistantDistribution = asyncHandler(async (req, res) => {
+  assertDistributionManageAllowed(req.staffUser);
+  const { approvalId, confirmed, ...payload } = req.validatedBody;
+  const result = await executeAssistantApproval(req, "ASSISTANT_DISTRIBUTION_DRAFT", payload, async (tx) => {
+    assertDistributionConfigurationValid(payload);
+    const distributionId = await insertDistribution({ ...req, validatedBody: payload, assistantApprovalId: approvalId }, tx);
+    const distribution = await tx.distribution.findUniqueOrThrow({ where: { distributionId }, select: distributionSelect });
+    return { responseStatus: 201, responseBody: { success: true, data: { distribution: distributionToResponse(distribution) } } };
+  });
+  if (!result.replayed) await publishDistributionUpdated(result.responseBody.data.distribution, "CREATED");
+  res.set("Idempotency-Replayed", String(result.replayed));
+  return res.status(result.responseStatus).json(result.responseBody);
+});
+
 export const previewAssistantDistribution = asyncHandler(async (req, res) => {
   assertDistributionManageAllowed(req.staffUser);
   assertDistributionConfigurationValid(req.validatedBody);
@@ -100,6 +117,7 @@ export const previewAssistantDistribution = asyncHandler(async (req, res) => {
     assertActiveDistributionBarangay(req.validatedBody.barangayId),
     assertNoDistributionOverlap(req.validatedBody),
   ]);
+  const approval = await prepareAssistantApproval(req.auth.userId, "ASSISTANT_DISTRIBUTION_DRAFT", req.validatedBody);
 
   res.status(200).json({
     success: true,
@@ -107,6 +125,7 @@ export const previewAssistantDistribution = asyncHandler(async (req, res) => {
       conflictFree: true,
       draftOnly: true,
       checkedAt: new Date().toISOString(),
+      ...approval,
       message: "The event configuration is valid and has no current Barangay time conflict. Confirmation creates a draft only.",
     },
   });

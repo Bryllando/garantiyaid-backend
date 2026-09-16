@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
 import app from "../src/app.js";
+import prisma from "../src/lib/prisma.js";
+import { enqueueAssistantDistributionReminder } from "../src/modules/notifications/notification.controller.js";
 import {
   distributionNotificationRoutes,
   scheduleNotificationRoutes,
@@ -196,6 +198,78 @@ test("assistant reminders validate controlled templates and preview only eligibl
   }).includes("{beneficiary}"), false);
 });
 
+test("assistant queue-now preview uses the server clock and exposes verified queue time", () => {
+  const now = new Date("2099-08-01T00:00:00.000Z");
+  const preview = assistantReminderPreviewFromSchedules([schedule()], {
+    messageTemplate: "Please bring your QR credential.", initiatedById: userId, now,
+  });
+  assert.equal(preview.checkedAt, now.toISOString());
+  assert.equal(new Date(preview.recipients[0].scheduledFor).toISOString(), now.toISOString());
+  const scheduled = assistantReminderPreviewFromSchedules([schedule()], {
+    messageTemplate: "Please bring your QR credential.", initiatedById: userId, now,
+    sendAt: new Date("2099-08-19T01:00:00.000Z"),
+  });
+  assert.equal(new Date(scheduled.recipients[0].scheduledFor).toISOString(), "2099-08-19T01:00:00.000Z");
+  for (const status of ["CANCELLED", "CLOSED"]) assert.throws(() => assistantReminderPreviewFromSchedules([
+    schedule({ distribution: { ...schedule().distribution, status } }),
+  ], { messageTemplate: "Please bring your QR credential.", initiatedById: userId, now }), { code: "NOTIFICATION_LIFECYCLE_INVALID" });
+});
+
+test("reminder approval hash detects recipient and schedule changes even with a fixed message", () => {
+  const options = { messageTemplate: "Please bring your QR credential.", initiatedById: userId };
+  const hash = (row) => assistantReminderPreviewFromSchedules([row], options).previewHash;
+  const original = schedule();
+  for (const changed of [
+    { ...original, beneficiary: { ...original.beneficiary, contactNumber: "09187654321" } },
+    { ...original, beneficiary: { ...original.beneficiary, firstName: "Changed" } },
+    { ...original, beneficiary: { ...original.beneficiary, sitioPurok: "Other area" } },
+    { ...original, queueNumber: 13 },
+    { ...original, slot: { ...original.slot, slotStart: new Date("2099-08-20T02:00:00Z") } },
+  ]) assert.notEqual(hash(original), hash(changed));
+  assert.equal(hash(original), hash(original));
+});
+
+test("assistant confirmation revalidates live recipients and facilitator scope before writing", async (t) => {
+  function stub(target, name, implementation) {
+    const original = target[name];
+    const replacement = t.mock.fn(implementation);
+    target[name] = replacement;
+    t.after(() => { target[name] = original; });
+    return replacement;
+  }
+  const original = schedule();
+  let current = [original];
+  const body = { messageTemplate: "Please bring your QR credential." };
+  const approved = assistantReminderPreviewFromSchedules(current, { ...body, initiatedById: userId });
+  const payload = { ...body, expectedRecipientCount: approved.recipientCount, expectedPreviewHash: approved.previewHash };
+  const req = {
+    auth: { userId }, staffUser: { role: "BARANGAY_FACILITATOR", barangayId: barangayA },
+    validatedParams: { distributionId }, validatedBody: { ...payload, approvalId: notificationId, confirmed: true },
+    get: () => notificationId,
+  };
+  stub(prisma.distribution, 'findUnique', async () => ({ ...original.distribution, barangayId: barangayA }));
+  stub(prisma.schedule, 'findMany', async () => current);
+  stub(prisma.idempotencyRecord, 'findUnique', async () => ({
+    requestHash: idempotencyRequestHash(payload), responseStatus: 200,
+    expiresAt: new Date(Date.now() + 3600_000),
+    responseBody: { approvalExpiresAt: new Date(Date.now() + 900_000).toISOString(), preview: approved },
+  }));
+  const transaction = stub(prisma, '$transaction', async (callback) => callback(prisma));
+  const writes = stub(prisma.notification, 'createMany', async () => { throw new Error('Unexpected write'); });
+  const invoke = () => new Promise((resolve, reject) => enqueueAssistantDistributionReminder(req, { status() { return this }, json: resolve, set() {} }, reject));
+  current = [];
+  await assert.rejects(invoke(), { code: 'NOTIFICATION_BATCH_EMPTY' });
+  current = [original, { ...original, scheduleId: barangayB }];
+  await assert.rejects(invoke(), { code: 'NOTIFICATION_PREVIEW_CHANGED' });
+  current = [{ ...original, beneficiary: { ...original.beneficiary, contactNumber: '09187654321' } }];
+  await assert.rejects(invoke(), { code: 'NOTIFICATION_PREVIEW_CHANGED' });
+  const previousTransactions = transaction.mock.callCount();
+  req.staffUser.barangayId = barangayB;
+  await assert.rejects(invoke(), { code: 'FORBIDDEN' });
+  assert.equal(transaction.mock.callCount(), previousTransactions);
+  assert.equal(writes.mock.callCount(), 0);
+});
+
 test("idempotency keys replay matching requests and reject payload conflicts", () => {
   const key = requireIdempotencyKey({ get: () => notificationId }, "notification enqueueing");
   assert.equal(key, notificationId);
@@ -301,7 +375,9 @@ test("notification persistence reuses one row for the same deduplication key", a
   const database = {
     notification: {
       findUnique: async () => stored,
-      create: async ({ data }) => {
+      findUniqueOrThrow: async () => stored,
+      createMany: async ({ data: [data], skipDuplicates }) => {
+        assert.equal(skipDuplicates, true);
         stored = {
           notificationId,
           ...data,
@@ -316,7 +392,7 @@ test("notification persistence reuses one row for the same deduplication key", a
           schedule: null,
           distribution: null,
         };
-        return stored;
+        return { count: 1 };
       },
     },
   };

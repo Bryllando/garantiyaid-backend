@@ -3,6 +3,12 @@ import prisma from "../../lib/prisma.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
+import { listStaffEmailDeliveries } from "../staffNotifications/staffNotification.service.js";
+import {
+  createStaffSecurityNotification,
+  dispatchStaffSecurityNotification,
+} from "../staffNotifications/staffSecurityEmail.service.js";
+
 import {
   assertStaffAccountCanBeRemoved,
   assertActiveBarangay,
@@ -16,6 +22,14 @@ import {
   staffUserSelect,
 } from "./user.service.js";
 
+export const getStaffEmailDeliveries = asyncHandler(async (req, res) => {
+  const userId = req.validatedParams.userId;
+  const user = await prisma.user.findUnique({ where: { userId }, select: { userId: true } });
+  if (!user) throw new AppError(404, "STAFF_USER_NOT_FOUND", "Staff account was not found.");
+  const notifications = await listStaffEmailDeliveries(userId);
+  res.set("Cache-Control", "no-store").json({ success: true, data: { notifications } });
+});
+
 export const createStaffUser = asyncHandler(async (req, res) => {
   const staffUserInput = req.validatedBody;
 
@@ -25,7 +39,7 @@ export const createStaffUser = asyncHandler(async (req, res) => {
 
   const temporaryPassword = generateTemporaryPassword();
   const passwordHash = await bcrypt.hash(temporaryPassword, 12);
-  const user = await prisma.$transaction(async (tx) => {
+  const { user, securityNotification } = await prisma.$transaction(async (tx) => {
     const employeeId = await generateStaffId(staffUserInput.role, tx);
     await assertStaffLoginIdentifiersAvailable(
       { employeeId, username: staffUserInput.username },
@@ -48,12 +62,19 @@ export const createStaffUser = asyncHandler(async (req, res) => {
       },
     });
 
-    return createdUser;
+    const notification = await createStaffSecurityNotification({
+      event: "ACCOUNT_CREATED",
+      eventKey: createdUser.userId,
+      user: createdUser,
+    }, tx);
+
+    return { user: createdUser, securityNotification: notification };
   });
+  const emailDelivery = await dispatchStaffSecurityNotification(securityNotification);
 
   res.set("Cache-Control", "no-store").status(201).json({
     success: true,
-    data: { user, temporaryPassword },
+    data: { user, temporaryPassword, emailDelivery },
   });
 });
 
@@ -120,7 +141,7 @@ export const resetStaffTotp = asyncHandler(async (req, res) => {
   }
 
   const resetAt = new Date();
-  const { user, revokedSessionCount } = await prisma.$transaction(async (tx) => {
+  const { user, revokedSessionCount, securityNotification } = await prisma.$transaction(async (tx) => {
     const revokedSessions = await tx.staffSession.updateMany({
       where: { userId: targetUser.userId, revokedAt: null },
       data: { revokedAt: resetAt },
@@ -158,14 +179,26 @@ export const resetStaffTotp = asyncHandler(async (req, res) => {
       },
     });
 
-    return { user: resetUser, revokedSessionCount: revokedSessions.count };
+    const notification = await createStaffSecurityNotification({
+      event: "AUTHENTICATOR_RESET",
+      eventKey: req.requestId,
+      user: resetUser,
+    }, tx);
+
+    return {
+      user: resetUser,
+      revokedSessionCount: revokedSessions.count,
+      securityNotification: notification,
+    };
   });
+  const emailDelivery = await dispatchStaffSecurityNotification(securityNotification);
 
   res.status(200).json({
     success: true,
     data: {
       user,
       revokedSessionCount,
+      emailDelivery,
       message: "Authenticator reset. The staff member must sign in and enroll a new authenticator.",
     },
   });
@@ -219,7 +252,7 @@ export const updateStaffUser = asyncHandler(async (req, res) => {
   }
 
   const changedFields = Object.keys(updateData);
-  const user = await prisma.$transaction(async (tx) => {
+  const { user, securityNotification } = await prisma.$transaction(async (tx) => {
     const updatedUser = await tx.user.update({
       where: { userId: existingUser.userId },
       data: updateData,
@@ -251,10 +284,26 @@ export const updateStaffUser = asyncHandler(async (req, res) => {
       },
     });
 
-    return updatedUser;
-  });
+    const securityEvent = action === "STAFF_ACCOUNT_DEACTIVATED"
+      ? "ACCOUNT_DEACTIVATED"
+      : action === "STAFF_ACCOUNT_REACTIVATED"
+        ? "ACCOUNT_REACTIVATED"
+        : null;
+    const notification = securityEvent
+      ? await createStaffSecurityNotification({
+          event: securityEvent,
+          eventKey: req.requestId,
+          user: updatedUser,
+        }, tx)
+      : null;
 
-  res.status(200).json({ success: true, data: { user } });
+    return { user: updatedUser, securityNotification: notification };
+  });
+  const emailDelivery = securityNotification
+    ? await dispatchStaffSecurityNotification(securityNotification)
+    : null;
+
+  res.status(200).json({ success: true, data: { user, emailDelivery } });
 });
 
 export const restoreStaffUser = asyncHandler(async (req, res) => {

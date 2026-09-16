@@ -5,6 +5,7 @@ import { publishNotificationLifecycle } from "../../realtime/publishers.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
+import { prepareAssistantApproval, executeAssistantApproval } from "../../utils/assistantApproval.js";
 import {
   assertIdempotencyRequestMatches,
   findIdempotencyRecord,
@@ -170,7 +171,7 @@ async function enqueueRows(req, operation, schedules, options = {}) {
   const now = new Date();
   const rows = schedules.map((schedule) => notificationRowFromSchedule(schedule, {
     notificationType,
-    sendAt: req.validatedBody.sendAt,
+    sendAt: req.validatedBody.sendAt ?? (options.assistant ? now : undefined),
     initiatedById: req.auth.userId,
     messageTemplate: options.messageTemplate,
     now,
@@ -237,9 +238,9 @@ async function enqueueRows(req, operation, schedules, options = {}) {
   return { responseStatus, responseBody };
 }
 
-async function assistantReminderContext(req) {
+async function assistantReminderContext(req, database = prisma) {
   const { distributionId } = req.validatedParams;
-  const distribution = await prisma.distribution.findUnique({
+  const distribution = await database.distribution.findUnique({
     where: { distributionId },
     select: {
       distributionId: true,
@@ -254,7 +255,7 @@ async function assistantReminderContext(req) {
   if (!distribution) throw new AppError(404, "DISTRIBUTION_NOT_FOUND", "Distribution event was not found.");
   assertNotificationBarangayAccess(req.staffUser, distribution.barangayId);
 
-  const schedules = await prisma.schedule.findMany({
+  const schedules = await database.schedule.findMany({
     where: {
       distributionId,
       status: "SCHEDULED",
@@ -289,10 +290,16 @@ async function assistantReminderContext(req) {
 
 export const previewAssistantDistributionReminder = asyncHandler(async (req, res) => {
   const { schedules, ...preview } = await assistantReminderContext(req);
+  const approval = await prepareAssistantApproval(req.auth.userId, `ASSISTANT_REMINDER:${req.validatedParams.distributionId}`, {
+    ...req.validatedBody, expectedRecipientCount: preview.recipientCount, expectedPreviewHash: preview.previewHash,
+  }, {
+    recipientCount: preview.recipientCount, previewHash: preview.previewHash,
+  });
   res.status(200).json({
     success: true,
     data: {
       ...preview,
+      ...approval,
       simulatedSmsOnly: true,
       claimAuthorizationDisclosure: "An SMS notice is not proof of eligibility. Claim authorization still requires the official schedule and identity verification.",
     },
@@ -300,38 +307,62 @@ export const previewAssistantDistributionReminder = asyncHandler(async (req, res
 });
 
 export const enqueueAssistantDistributionReminder = asyncHandler(async (req, res) => {
-  const preview = await assistantReminderContext(req);
-  if (preview.recipientCount === 0) {
-    throw new AppError(409, "NOTIFICATION_BATCH_EMPTY", "No scheduled beneficiaries with valid mobile numbers match this reminder.");
-  }
-  if (preview.recipientCount !== req.validatedBody.expectedRecipientCount) {
-    throw new AppError(
-      409,
-      "NOTIFICATION_PREVIEW_CHANGED",
-      "The recipient list changed after preview. Review the updated recipients before confirming again.",
-      { expectedRecipientCount: req.validatedBody.expectedRecipientCount, actualRecipientCount: preview.recipientCount },
-    );
-  }
-  if (preview.previewHash !== req.validatedBody.expectedPreviewHash) {
-    throw new AppError(
-      409,
-      "NOTIFICATION_PREVIEW_CHANGED",
-      "The recipient details changed after preview. Review the updated recipients before confirming again.",
-    );
-  }
+  assertNotificationTypeAllowed(req.staffUser, "DISTRIBUTION_REMINDER");
+  const { approvalId, confirmed, expectedRecipientCount, expectedPreviewHash, ...payload } = req.validatedBody;
+  // Recheck the event scope before replay as well as inside the write transaction.
+  const event = await prisma.distribution.findUnique({ where: { distributionId: req.validatedParams.distributionId }, select: { barangayId: true } });
+  if (!event) throw new AppError(404, "DISTRIBUTION_NOT_FOUND", "Distribution event was not found.");
+  assertNotificationBarangayAccess(req.staffUser, event.barangayId);
+  const result = await executeAssistantApproval(req, `ASSISTANT_REMINDER:${req.validatedParams.distributionId}`, { ...payload, expectedRecipientCount, expectedPreviewHash }, async (tx, approved) => {
+    const preview = await assistantReminderContext(req, tx);
+    if (preview.recipientCount === 0) {
+      throw new AppError(409, "NOTIFICATION_BATCH_EMPTY", "No scheduled beneficiaries with valid mobile numbers match this reminder.");
+    }
+    if (preview.recipientCount !== expectedRecipientCount || preview.recipientCount !== approved.recipientCount) {
+      throw new AppError(
+        409,
+        "NOTIFICATION_PREVIEW_CHANGED",
+        "The recipient list changed after preview. Review the updated recipients before confirming again.",
+        { expectedRecipientCount: req.validatedBody.expectedRecipientCount, actualRecipientCount: preview.recipientCount },
+      );
+    }
+    if (preview.previewHash !== expectedPreviewHash || preview.previewHash !== approved.previewHash) {
+      throw new AppError(
+        409,
+        "NOTIFICATION_PREVIEW_CHANGED",
+        "The recipient details changed after preview. Review the updated recipients before confirming again.",
+      );
+    }
 
-  const result = await enqueueRows(
-    req,
-    `NOTIFICATION_ENQUEUE_DISTRIBUTION:${req.validatedParams.distributionId}:ASSISTANT`,
-    preview.schedules,
-    {
-      notificationType: "DISTRIBUTION_REMINDER",
-      messageTemplate: req.validatedBody.messageTemplate,
-      assistant: true,
-    },
-  );
-  if (result.replay) return sendIdempotentResponse(res, result.replay, true);
-  return sendIdempotentResponse(res, result, false);
+    const now = new Date();
+    if (payload.sendAt && payload.sendAt <= now) throw new AppError(409, "ASSISTANT_SCHEDULE_PASSED", "The queue time has passed. Choose a new time and review again.");
+    const rows = preview.schedules.map((schedule) => notificationRowFromSchedule(schedule, {
+      notificationType: "DISTRIBUTION_REMINDER", messageTemplate: payload.messageTemplate,
+      sendAt: payload.sendAt ?? now, initiatedById: req.auth.userId, now,
+    }));
+    const { notifications, newlyCreated } = await createNotificationRows(rows, tx);
+    await tx.auditLog.create({ data: {
+      userId: req.auth.userId, action: "NOTIFICATION_BATCH_ENQUEUED", entityAffected: "DISTRIBUTION",
+      recordId: req.validatedParams.distributionId, ipAddress: clientIpAddress(req),
+      details: { assistant: true, approvalId, requestedCount: rows.length, simulated: true, realSmsSent: false },
+    } });
+    return { responseStatus: 202, responseBody: { success: true, data: {
+      notifications: notifications.map(notificationToResponse), queuedCount: notifications.filter((row) => row.status === "PENDING").length,
+      deduplicatedCount: notifications.length - newlyCreated.length,
+      simulated: true, realSmsSent: false,
+    } } };
+  });
+  const pending = await prisma.notification.findMany({ where: {
+    notificationId: { in: result.responseBody.data.notifications.map((row) => row.notificationId) }, status: "PENDING",
+  }, select: notificationPublicSelect });
+  try {
+    if (pending.length) await enqueueNotificationJobs(pending);
+  } catch {
+    throw new AppError(503, "NOTIFICATION_QUEUE_UNAVAILABLE", "The reminders were recorded. Retry this same approval to finish queueing without creating duplicates.");
+  }
+  if (!result.replayed) await Promise.all(pending.map((notification) => publishNotificationLifecycle("notification.queued", notification, { status: "PENDING", simulated: true, realSmsSent: false })));
+  res.set("Idempotency-Replayed", String(result.replayed));
+  return res.status(result.responseStatus).json(result.responseBody);
 });
 
 export const enqueueScheduleNotification = asyncHandler(async (req, res) => {

@@ -5,6 +5,11 @@ import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
 import {
+  createStaffSecurityNotification,
+  dispatchStaffSecurityNotification,
+  emailDeliveryConfiguration,
+} from "../staffNotifications/staffSecurityEmail.service.js";
+import {
   authenticateStaff as authenticateStaffCredentials,
   generateRecoveryCodes,
   hashRecoveryCode,
@@ -118,6 +123,7 @@ export const getOwnAccount = asyncHandler(async (req, res) => {
         recoveryCodesRemaining,
         activeSessionCount,
         currentSession,
+        securityEmail: emailDeliveryConfiguration(),
       },
     },
   });
@@ -165,7 +171,7 @@ export const changeOwnPassword = asyncHandler(async (req, res) => {
 
   const passwordHash = await bcrypt.hash(req.validatedBody.newPassword, 12);
   const changedAt = new Date();
-  const revokedSessions = await prisma.$transaction(async (tx) => {
+  const { revokedSessions, securityNotification } = await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { userId: req.auth.userId },
       data: { passwordHash, mustChangePassword: false },
@@ -188,14 +194,21 @@ export const changeOwnPassword = asyncHandler(async (req, res) => {
         details: { revokedSessionCount: revoked.count },
       },
     });
-    return revoked;
+    const notification = await createStaffSecurityNotification({
+      event: "PASSWORD_CHANGED",
+      eventKey: req.requestId,
+      user: req.staffUser,
+    }, tx);
+    return { revokedSessions: revoked, securityNotification: notification };
   });
+  const emailDelivery = await dispatchStaffSecurityNotification(securityNotification);
 
   res.status(200).json({
     success: true,
     data: {
       message: "Password changed successfully.",
       revokedSessionCount: revokedSessions.count,
+      emailDelivery,
     },
   });
 });
@@ -294,7 +307,7 @@ export const confirmOwnTotpReplacement = asyncHandler(async (req, res) => {
   const recoveryCodes = generateRecoveryCodes();
   const recoveryCodeHashes = await Promise.all(recoveryCodes.map(hashRecoveryCode));
   const replacedAt = new Date();
-  const { user, revokedSessionCount } = await prisma.$transaction(async (tx) => {
+  const { user, revokedSessionCount, securityNotification } = await prisma.$transaction(async (tx) => {
     const updated = await tx.user.updateMany({
       where: {
         userId: req.auth.userId,
@@ -346,12 +359,22 @@ export const confirmOwnTotpReplacement = asyncHandler(async (req, res) => {
       where: { userId: req.auth.userId },
       select: staffUserSelect,
     });
-    return { user, revokedSessionCount: revoked.count };
+    const notification = await createStaffSecurityNotification({
+      event: "AUTHENTICATOR_REPLACED",
+      eventKey: req.requestId,
+      user,
+    }, tx);
+    return {
+      user,
+      revokedSessionCount: revoked.count,
+      securityNotification: notification,
+    };
   });
+  const emailDelivery = await dispatchStaffSecurityNotification(securityNotification);
 
   res.set("Cache-Control", "no-store").status(200).json({
     success: true,
-    data: { user, recoveryCodes, revokedSessionCount },
+    data: { user, recoveryCodes, revokedSessionCount, emailDelivery },
   });
 });
 
@@ -449,7 +472,7 @@ export const confirmTotp = [
     const recoveryCodes = generateRecoveryCodes();
     const recoveryCodeHashes = await Promise.all(recoveryCodes.map(hashRecoveryCode));
 
-    const { confirmedUser, accessToken } = await prisma.$transaction(async (tx) => {
+    const { confirmedUser, accessToken, securityNotification } = await prisma.$transaction(async (tx) => {
       const updated = await tx.user.updateMany({
         where: {
           userId: user.userId,
@@ -495,13 +518,19 @@ export const confirmTotp = [
         where: { userId: user.userId },
         select: staffUserSelect,
       });
+      const notification = await createStaffSecurityNotification({
+        event: "AUTHENTICATOR_ENABLED",
+        eventKey: req.requestId,
+        user: confirmedUser,
+      }, tx);
       const { accessToken } = await issueAccessToken(confirmedUser, {
         ipAddress: clientIpAddress(req),
         database: tx,
       });
 
-      return { confirmedUser, accessToken };
+      return { confirmedUser, accessToken, securityNotification: notification };
     });
+    const emailDelivery = await dispatchStaffSecurityNotification(securityNotification);
 
     return res.status(200).json({
       success: true,
@@ -509,6 +538,7 @@ export const confirmTotp = [
         accessToken,
         user: confirmedUser,
         recoveryCodes,
+        emailDelivery,
       },
     });
   }),

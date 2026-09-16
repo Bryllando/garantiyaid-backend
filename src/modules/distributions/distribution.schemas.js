@@ -56,6 +56,11 @@ const distributionFields = {
 };
 
 export const createDistributionSchema = z.object(distributionFields).strict();
+export const confirmAssistantDistributionSchema = z.object({
+  ...distributionFields,
+  approvalId: z.uuid(),
+  confirmed: z.literal(true),
+}).strict();
 
 export const updateDistributionSchema = z.object(distributionFields).partial().strict().refine(
   (value) => Object.keys(value).length > 0,

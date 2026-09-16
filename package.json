@@ -25,6 +25,7 @@
     "verify:biometric": "node --throw-deprecation scripts/verify-biometric-phase7.js",
     "verify:notifications": "node --throw-deprecation scripts/verify-notifications-phase9.js",
     "verify:chatbot": "node --throw-deprecation --test test/chatbot.test.js",
+    "verify:assistant": "node scripts/verify-assistant-phase6.js",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "prisma:migrate": "prisma migrate dev",

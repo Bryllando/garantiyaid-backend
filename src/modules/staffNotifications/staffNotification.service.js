@@ -1,4 +1,5 @@
 import prisma from "../../lib/prisma.js";
+import { env } from "../../config/env.js";
 import { publishRealtimeEvent } from "../../realtime/socket.js";
 
 export const staffNotificationSelect = {
@@ -9,14 +10,72 @@ export const staffNotificationSelect = {
   targetPath: true,
   readAt: true,
   createdAt: true,
+  emailProviderMode: true,
+  emailRecipient: true,
+  emailStatus: true,
+  emailSentAt: true,
+  emailFailedAt: true,
 };
 
-export function staffNotificationToResponse(notification) {
+export const staffNotificationDeliverySelect = {
+  ...staffNotificationSelect,
+  userId: true,
+  emailProviderReference: true,
+  emailAttemptCount: true,
+  emailLastErrorCode: true,
+  emailProcessingToken: true,
+  emailProcessingStartedAt: true,
+};
+
+export function maskEmailAddress(email) {
+  if (typeof email !== "string" || !email.includes("@")) return null;
+  const [local, domain] = email.split("@");
+  return `${local.slice(0, 1)}${"*".repeat(Math.min(5, Math.max(2, local.length - 1)))}@${domain}`;
+}
+
+export function emailDeliveryToResponse(notification) {
+  const configured = notification?.emailProviderMode === "GMAIL_API";
   return {
-    ...notification,
+    configured,
+    provider: notification?.emailProviderMode ?? env.emailProviderMode,
+    status: configured ? (notification?.emailStatus ?? "PENDING") : "DISABLED",
+    recipientMasked: maskEmailAddress(notification?.emailRecipient),
+    sentAt: notification?.emailSentAt?.toISOString() ?? null,
+    failedAt: notification?.emailFailedAt?.toISOString() ?? null,
+  };
+}
+
+export function staffNotificationToResponse(notification) {
+  const {
+    userId,
+    emailProviderMode,
+    emailRecipient,
+    emailStatus,
+    emailProviderReference,
+    emailAttemptCount,
+    emailLastErrorCode,
+    emailProcessingToken,
+    emailProcessingStartedAt,
+    emailSentAt,
+    emailFailedAt,
+    ...publicFields
+  } = notification;
+  return {
+    ...publicFields,
     readAt: notification.readAt?.toISOString() ?? null,
     createdAt: notification.createdAt.toISOString(),
+    ...(emailRecipient ? { emailDelivery: emailDeliveryToResponse(notification) } : {}),
   };
+}
+
+export async function listStaffEmailDeliveries(userId, database = prisma) {
+  const notifications = await database.staffNotification.findMany({
+    where: { userId, notificationType: { startsWith: "SECURITY_" }, emailRecipient: { not: null } },
+    select: staffNotificationSelect,
+    orderBy: [{ createdAt: "desc" }, { notificationId: "desc" }],
+    take: 20,
+  });
+  return notifications.map(staffNotificationToResponse);
 }
 
 function safeTargetPath(targetPath) {
@@ -28,6 +87,7 @@ function safeTargetPath(targetPath) {
 }
 
 export async function createStaffNotification(notification, database = prisma) {
+  const emailRecipient = notification.emailRecipient?.trim().toLowerCase() ?? null;
   const data = {
     userId: notification.userId,
     notificationType: notification.notificationType,
@@ -35,9 +95,14 @@ export async function createStaffNotification(notification, database = prisma) {
     message: notification.message,
     targetPath: safeTargetPath(notification.targetPath),
     deduplicationKey: notification.deduplicationKey ?? null,
+    ...(emailRecipient ? {
+      emailProviderMode: env.emailProviderMode,
+      emailRecipient,
+      emailStatus: env.emailProviderMode === "GMAIL_API" ? "PENDING" : "NOT_REQUESTED",
+    } : {}),
   };
   if (!data.deduplicationKey) {
-    return database.staffNotification.create({ data, select: staffNotificationSelect });
+    return database.staffNotification.create({ data, select: staffNotificationDeliverySelect });
   }
   return database.staffNotification.upsert({
     where: {
@@ -48,7 +113,7 @@ export async function createStaffNotification(notification, database = prisma) {
     },
     create: data,
     update: {},
-    select: staffNotificationSelect,
+    select: staffNotificationDeliverySelect,
   });
 }
 

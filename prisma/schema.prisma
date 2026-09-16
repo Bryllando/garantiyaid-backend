@@ -799,20 +799,31 @@ model Notification {
 }
 
 model StaffNotification {
-  notificationId   String    @id @default(uuid()) @map("notification_id") @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
-  notificationType String    @map("notification_type") @db.VarChar(60)
-  title            String    @db.VarChar(120)
-  message          String    @db.Text
-  targetPath       String?   @map("target_path") @db.VarChar(255)
-  deduplicationKey String?   @map("deduplication_key") @db.VarChar(160)
-  readAt           DateTime? @map("read_at") @db.Timestamptz(6)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  notificationId         String    @id @default(uuid()) @map("notification_id") @db.Uuid
+  userId                 String    @map("user_id") @db.Uuid
+  notificationType       String    @map("notification_type") @db.VarChar(60)
+  title                  String    @db.VarChar(120)
+  message                String    @db.Text
+  targetPath             String?   @map("target_path") @db.VarChar(255)
+  deduplicationKey       String?   @map("deduplication_key") @db.VarChar(160)
+  emailProviderMode      String    @default("DISABLED") @map("email_provider_mode") @db.VarChar(20)
+  emailRecipient         String?   @map("email_recipient") @db.VarChar(150)
+  emailStatus            String    @default("NOT_REQUESTED") @map("email_status") @db.VarChar(20)
+  emailProviderReference String?   @map("email_provider_reference") @db.VarChar(120)
+  emailAttemptCount      Int       @default(0) @map("email_attempt_count")
+  emailLastErrorCode     String?   @map("email_last_error_code") @db.VarChar(60)
+  emailProcessingToken   String?   @map("email_processing_token") @db.Uuid
+  emailProcessingStartedAt DateTime? @map("email_processing_started_at") @db.Timestamptz(6)
+  emailSentAt            DateTime? @map("email_sent_at") @db.Timestamptz(6)
+  emailFailedAt          DateTime? @map("email_failed_at") @db.Timestamptz(6)
+  readAt                 DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
 
   @@unique([userId, deduplicationKey])
   @@index([userId, readAt, createdAt])
+  @@index([emailStatus, createdAt])
   @@map("staff_notifications")
 }
 

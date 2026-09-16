@@ -6,6 +6,10 @@ import { env } from "../../config/env.js";
 import { AppError } from "../../utils/AppError.js";
 import { STAFF_ROLES, USERNAME_LOGIN_ROLES } from "./auth.constants.js";
 import { decryptTotpSecret, findValidTotpCounter } from "./totp.service.js";
+import {
+  createStaffSecurityNotification,
+  dispatchStaffSecurityNotification,
+} from "../staffNotifications/staffSecurityEmail.service.js";
 
 const JWT_ALGORITHM = "HS256";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -465,7 +469,7 @@ export async function authenticateStaff(
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    const safeUser = await prisma.$transaction(async (tx) => {
+    const { safeUser, securityNotification } = await prisma.$transaction(async (tx) => {
       const changed = await tx.user.updateMany({
         where: { userId: eligibleUser.userId, mustChangePassword: true },
         data: {
@@ -495,11 +499,18 @@ export async function authenticateStaff(
         },
       });
 
-      return tx.user.findUniqueOrThrow({
+      const updatedUser = await tx.user.findUniqueOrThrow({
         where: { userId: eligibleUser.userId },
         select: staffUserSelect,
       });
+      const notification = await createStaffSecurityNotification({
+        event: "PASSWORD_CHANGED",
+        eventKey: context.requestId,
+        user: updatedUser,
+      }, tx);
+      return { safeUser: updatedUser, securityNotification: notification };
     });
+    await dispatchStaffSecurityNotification(securityNotification);
 
     if (!safeUser.totpEnabled) {
       return {

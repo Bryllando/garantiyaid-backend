@@ -196,6 +196,9 @@ export function notificationScheduledFor(notificationType, requestedSendAt, slot
 }
 
 export function assertNotificationLifecycle(schedule, notificationType) {
+  if (notificationType === "DISTRIBUTION_REMINDER" && !["DRAFT", "OPEN"].includes(schedule.distribution.status)) {
+    throw new AppError(409, "NOTIFICATION_LIFECYCLE_INVALID", "Reminders require a draft or open distribution event.");
+  }
   if (schedule.beneficiary.status !== "ACTIVE") {
     throw new AppError(409, "NOTIFICATION_BENEFICIARY_INACTIVE", "Notifications require an active beneficiary.");
   }
@@ -274,7 +277,7 @@ function notificationBeneficiaryName(beneficiary) {
 
 export function assistantReminderPreviewFromSchedules(
   schedules,
-  { messageTemplate, sendAt, initiatedById, now = new Date() },
+  { messageTemplate, initiatedById, now = new Date(), sendAt = now },
 ) {
   const deliverable = [];
   let invalidContactCount = 0;
@@ -300,8 +303,17 @@ export function assistantReminderPreviewFromSchedules(
 
   return {
     schedules: deliverable,
-    previewHash: createHash("sha256").update(JSON.stringify(rows.map((row) => ({
+    checkedAt: now.toISOString(),
+    previewHash: createHash("sha256").update(JSON.stringify(rows.map((row, index) => ({
       scheduleId: row.scheduleId,
+      beneficiaryId: row.beneficiaryId,
+      recipient: normalizePhilippineMobileNumber(deliverable[index].beneficiary.contactNumber),
+      beneficiaryName: notificationBeneficiaryName(deliverable[index].beneficiary),
+      serviceArea: deliverable[index].beneficiary.sitioPurok,
+      queueNumber: deliverable[index].queueNumber,
+      slotStart: deliverable[index].slot.slotStart,
+      slotEnd: deliverable[index].slot.slotEnd,
+      sessionLabel: deliverable[index].slot.sessionLabel,
       message: row.message,
     })))).digest("hex"),
     recipientCount: deliverable.length,
@@ -317,6 +329,7 @@ export function assistantReminderPreviewFromSchedules(
       slotStart: philippineTimestamp(schedule.slot.slotStart),
       slotEnd: philippineTimestamp(schedule.slot.slotEnd),
       message: rows[index].message,
+      scheduledFor: philippineTimestamp(rows[index].scheduledFor),
     })),
   };
 }
@@ -330,19 +343,12 @@ export async function createNotificationRows(rows, database = prisma) {
       select: notificationPublicSelect,
     });
     if (!notification) {
-      try {
-        notification = await database.notification.create({
-          data: row,
-          select: notificationPublicSelect,
-        });
-        newlyCreated.push(notification);
-      } catch (error) {
-        if (error.code !== "P2002") throw error;
-        notification = await database.notification.findUnique({
-          where: { deduplicationKey: row.deduplicationKey },
-          select: notificationPublicSelect,
-        });
-      }
+      // ON CONFLICT keeps an interactive PostgreSQL transaction usable.
+      const created = await database.notification.createMany({ data: [row], skipDuplicates: true });
+      notification = await database.notification.findUniqueOrThrow({
+        where: { deduplicationKey: row.deduplicationKey }, select: notificationPublicSelect,
+      });
+      if (created.count) newlyCreated.push(notification);
     }
     notifications.push(notification);
   }

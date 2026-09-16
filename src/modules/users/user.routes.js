@@ -6,6 +6,7 @@ import {
   createStaffUser,
   deleteStaffUser,
   getStaffUser,
+  getStaffEmailDeliveries,
   listStaffUsers,
   resetStaffTotp,
   restoreStaffUser,
@@ -25,6 +26,7 @@ const userRoutes = Router();
 userRoutes.use(authenticateStaff, authorizeRoles("SYSTEM_ADMIN"));
 userRoutes.get("/", validateQuery(staffUserListQuerySchema), listStaffUsers);
 userRoutes.post("/", validateBody(createStaffUserSchema), createStaffUser);
+userRoutes.get("/:userId/email-deliveries", validateParams(userIdSchema), getStaffEmailDeliveries);
 userRoutes.post("/:userId/totp/reset", validateParams(userIdSchema), validateBody(resetStaffTotpSchema), resetStaffTotp);
 userRoutes.post("/:userId/restore", validateParams(userIdSchema), restoreStaffUser);
 userRoutes.get("/:userId", validateParams(userIdSchema), getStaffUser);

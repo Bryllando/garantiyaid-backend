@@ -6,6 +6,10 @@ const optionalOpenRouterKey = z.preprocess(
   (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
   z.string().trim().regex(/^sk-or-v1-[A-Za-z0-9_-]{32,}$/, "Use a valid OpenRouter API key.").optional(),
 );
+const optionalTrimmedString = z.preprocess(
+  (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().optional(),
+);
 
 function durationInMilliseconds(value) {
   const amount = Number.parseInt(value, 10);
@@ -58,6 +62,17 @@ const environmentSchema = z.object({
   NOTIFICATION_MAX_DELAY_DAYS: z.coerce.number().int().min(1).max(90).default(30),
   SMS_PROVIDER_MODE: z.enum(["SIMULATED"]).default("SIMULATED"),
   SMS_SIMULATED_FAILURE_MODE: z.enum(["NONE", "ALWAYS_FAIL"]).default("NONE"),
+  EMAIL_PROVIDER_MODE: z.enum(["DISABLED", "GMAIL_API"]).default("DISABLED"),
+  GMAIL_CLIENT_ID: optionalTrimmedString,
+  GMAIL_CLIENT_SECRET: optionalTrimmedString,
+  GMAIL_REFRESH_TOKEN: optionalTrimmedString,
+  GMAIL_SENDER_EMAIL: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.email().optional(),
+  ),
+  GMAIL_SENDER_NAME: z.string().trim().min(1).max(80).default("GarantiyAid Security"),
+  PUBLIC_APP_URL: z.url().default("http://localhost:5173"),
+  EMAIL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
   DISTRIBUTION_REMINDER_LEAD_MINUTES: z.coerce.number().int().min(1).max(10_080).default(1_440),
 }).superRefine((value, context) => {
   const origins = value.CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
@@ -68,6 +83,18 @@ const environmentSchema = z.object({
       path: ["CORS_ORIGIN"],
       message: "List explicit trusted origins; wildcard origins are not allowed.",
     });
+  }
+
+  if (value.EMAIL_PROVIDER_MODE === "GMAIL_API") {
+    for (const name of ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GMAIL_SENDER_EMAIL"]) {
+      if (!value[name]) {
+        context.addIssue({
+          code: "custom",
+          path: [name],
+          message: `${name} is required when EMAIL_PROVIDER_MODE is GMAIL_API.`,
+        });
+      }
+    }
   }
 
   if (value.NODE_ENV !== "production") {
@@ -140,6 +167,14 @@ const environmentSchema = z.object({
       message: "Every production CORS origin must use HTTPS.",
     });
   }
+
+  if (value.EMAIL_PROVIDER_MODE === "GMAIL_API" && !value.PUBLIC_APP_URL.startsWith("https://")) {
+    context.addIssue({
+      code: "custom",
+      path: ["PUBLIC_APP_URL"],
+      message: "The production public application URL must use HTTPS.",
+    });
+  }
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);
@@ -195,5 +230,13 @@ export const env = {
   notificationMaxDelayDays: parsedEnvironment.data.NOTIFICATION_MAX_DELAY_DAYS,
   smsProviderMode: parsedEnvironment.data.SMS_PROVIDER_MODE,
   smsSimulatedFailureMode: parsedEnvironment.data.SMS_SIMULATED_FAILURE_MODE,
+  emailProviderMode: parsedEnvironment.data.EMAIL_PROVIDER_MODE,
+  gmailClientId: parsedEnvironment.data.GMAIL_CLIENT_ID,
+  gmailClientSecret: parsedEnvironment.data.GMAIL_CLIENT_SECRET,
+  gmailRefreshToken: parsedEnvironment.data.GMAIL_REFRESH_TOKEN,
+  gmailSenderEmail: parsedEnvironment.data.GMAIL_SENDER_EMAIL,
+  gmailSenderName: parsedEnvironment.data.GMAIL_SENDER_NAME,
+  publicAppUrl: parsedEnvironment.data.PUBLIC_APP_URL.replace(/\/$/, ""),
+  emailRequestTimeoutMs: parsedEnvironment.data.EMAIL_REQUEST_TIMEOUT_MS,
   distributionReminderLeadMinutes: parsedEnvironment.data.DISTRIBUTION_REMINDER_LEAD_MINUTES,
 };
