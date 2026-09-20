@@ -132,7 +132,7 @@ try {
 
   const primaryInput = {
     programId: program.programId,
-    title: "Temporary Phase 1 Verification",
+    title: "Temporary Distribution Verification",
     distributionDate,
     startTime: "08:00",
     endTime: "10:00",
@@ -288,7 +288,7 @@ try {
     method: "PATCH",
     token: adminToken,
     body: {
-      title: "Updated Temporary Phase 1 Verification",
+      title: "Updated Temporary Distribution Verification",
       location: "Updated Temporary Verification Hall",
     },
   });
@@ -368,10 +368,10 @@ try {
     allocations: await prisma.distributionAllocation.count(),
   };
   if (JSON.stringify(relatedCountsAfter) !== JSON.stringify(relatedCountsBefore)) {
-    throw new Error("Phase 1 changed distribution slot or allocation records.");
+    throw new Error("Distribution verification changed slot or allocation records.");
   }
 
-  console.log("Distribution Event Management Phase 1 HTTP workflow verification passed.");
+  console.log("Distribution event management HTTP workflow verification passed.");
 } finally {
   if (server) {
     await new Promise((resolve, reject) => {

@@ -3,6 +3,7 @@ import { authenticateStaff } from "../../middleware/authenticate.js";
 import { validateBody } from "../../middleware/validate.js";
 import {
   authenticationRateLimiter,
+  passwordResetRateLimiter,
   totpRateLimiter,
 } from "../../middleware/rateLimit.js";
 import {
@@ -13,6 +14,8 @@ import {
   getCurrentStaff,
   login,
   logout,
+  requestPasswordReset,
+  completePasswordReset,
   regenerateOwnRecoveryCodes,
   revokeOwnOtherSessions,
   setupTotp,
@@ -24,6 +27,8 @@ import {
   confirmTotpReplacementSchema,
   confirmTotpSchema,
   loginSchema,
+  requestPasswordResetSchema,
+  completePasswordResetSchema,
   reauthenticateAccountSchema,
   updateOwnProfileSchema,
 } from "./auth.schemas.js";
@@ -31,6 +36,8 @@ import {
 const authRoutes = Router();
 
 authRoutes.post("/login", authenticationRateLimiter, validateBody(loginSchema), login);
+authRoutes.post("/password-reset/request", passwordResetRateLimiter, validateBody(requestPasswordResetSchema), requestPasswordReset);
+authRoutes.post("/password-reset/complete", passwordResetRateLimiter, validateBody(completePasswordResetSchema), completePasswordReset);
 authRoutes.get("/me", authenticateStaff, getCurrentStaff);
 authRoutes.post("/logout", authenticateStaff, logout);
 authRoutes.get("/account", authenticateStaff, getOwnAccount);

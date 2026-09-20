@@ -75,7 +75,7 @@ async function unusedDistributionDate(barangayId) {
       return date;
     }
   }
-  throw new Error("Could not find an unused future date for Phase 4 verification.");
+  throw new Error("Could not find an unused future date for schedule verification.");
 }
 
 async function cleanup() {
@@ -151,8 +151,13 @@ try {
     }),
   ]);
   if (!administrator || !dswd || !facilitator) {
+    const missing = [
+      !administrator && "SYSTEM_ADMIN",
+      !dswd && "DSWD_STAFF",
+      !facilitator && "BARANGAY_FACILITATOR with an active barangay assignment",
+    ].filter(Boolean).join(", ");
     throw new Error(
-      "Active SYSTEM_ADMIN, DSWD_STAFF, and assigned BARANGAY_FACILITATOR are required.",
+      `Verification requires active staff for every role. Missing: ${missing}.`,
     );
   }
 
@@ -171,7 +176,7 @@ try {
       programName: `Temporary Scheduling Program ${suffix}`,
       programCode: `SCH-${suffix}`,
       programType: "CASH_ASSISTANCE",
-      description: "Temporary record for Phase 4 verification.",
+      description: "Temporary scheduling verification record.",
       grantAmount: 1000,
       budgetAmount: 10000,
       status: "ACTIVE",
@@ -185,7 +190,7 @@ try {
     const beneficiary = await prisma.beneficiary.create({
       data: {
         firstName,
-        lastName: `PhaseFour${suffix}`,
+        lastName: `ScheduleVerify${suffix}`,
         birthDate: new Date(`199${index}-01-01T00:00:00.000Z`),
         sex: index % 2 === 0 ? "FEMALE" : "MALE",
         address: "Temporary verification address",
@@ -220,7 +225,7 @@ try {
     token: adminToken,
     body: {
       programId: program.programId,
-      title: `Temporary Phase 4 Event ${suffix}`,
+      title: `Temporary Scheduling Event ${suffix}`,
       distributionDate: eventDate,
       startTime: "08:00",
       endTime: "09:00",
@@ -241,7 +246,7 @@ try {
   requireStatus(generatedSlots, 201, "slot generation");
   const [firstSlot, secondSlot] = generatedSlots.payload.data.slots;
   if (!firstSlot || !secondSlot) {
-    throw new Error("Phase 4 verification requires exactly two generated slots.");
+    throw new Error("Schedule verification requires exactly two generated slots.");
   }
 
   const createdAllocations = await request(`/distributions/${distributionId}/allocations`, {
@@ -273,14 +278,14 @@ try {
 
   const manual = await request(`/distributions/${distributionId}/schedules`, {
     method: "POST",
-    token: adminToken,
+    token: facilitatorToken,
     body: { allocationId: allocations[0].allocationId, slotId: firstSlot.slotId },
   });
   requireStatus(manual, 201, "manual schedule assignment");
   const manualSchedule = manual.payload.data.schedule;
   temporaryScheduleIds.push(manualSchedule.scheduleId);
-  if (manualSchedule.queueNumber !== 1 || manualSchedule.assignedByAi !== false) {
-    throw new Error("Manual schedule did not receive queue 1 with assignedByAi=false.");
+  if (manualSchedule.queueNumber !== 1 || manualSchedule.assignmentMethod !== "STAFF_ASSIGNED") {
+    throw new Error("Facilitator schedule did not receive queue 1 with staff assignment metadata.");
   }
 
   const generationKey = randomUUID();
@@ -289,7 +294,7 @@ try {
   };
   const generated = await request(`/distributions/${distributionId}/schedules/generate`, {
     method: "POST",
-    token: adminToken,
+    token: facilitatorToken,
     idempotencyKey: generationKey,
     body: generationBody,
   });
@@ -301,7 +306,7 @@ try {
 
   const replay = await request(`/distributions/${distributionId}/schedules/generate`, {
     method: "POST",
-    token: adminToken,
+    token: facilitatorToken,
     idempotencyKey: generationKey,
     body: generationBody,
   });
@@ -321,7 +326,7 @@ try {
 
   const reusedKey = await request(`/distributions/${distributionId}/schedules/generate`, {
     method: "POST",
-    token: adminToken,
+    token: facilitatorToken,
     idempotencyKey: generationKey,
     body: { allocationIds: [allocations[1].allocationId] },
   });
@@ -345,7 +350,7 @@ try {
     `/distributions/${distributionId}/schedules/${manualSchedule.scheduleId}/reschedule`,
     {
       method: "POST",
-      token: adminToken,
+      token: facilitatorToken,
       body: { slotId: secondSlot.slotId },
     },
   );
@@ -356,7 +361,7 @@ try {
 
   const cancelled = await request(
     `/distributions/${distributionId}/schedules/${manualSchedule.scheduleId}/cancel`,
-    { method: "POST", token: adminToken },
+    { method: "POST", token: facilitatorToken },
   );
   requireStatus(cancelled, 200, "schedule cancellation");
   if (cancelled.payload.data.schedule.status !== "CANCELLED") {
@@ -376,7 +381,7 @@ try {
 
   const reactivated = await request(
     `/distributions/${distributionId}/schedules/${manualSchedule.scheduleId}/reactivate`,
-    { method: "POST", token: adminToken },
+    { method: "POST", token: facilitatorToken },
   );
   requireStatus(reactivated, 200, "schedule reactivation");
 
@@ -454,9 +459,9 @@ try {
     }
   }
 
-  console.log("Phase 4 distribution scheduling verification passed.");
+  console.log("Distribution scheduling verification passed.");
   console.log("Verified manual and automatic assignment, safe queue numbers, capacity limits,");
-  console.log("idempotent replay, reschedule/cancel/reactivate, scoped reads, privacy, audits,");
+  console.log("idempotent replay, facilitator schedule management, scoped reads, privacy, audits,");
   console.log("readiness validation, DRAFT -> OPEN, and post-open mutation freezing.");
 } finally {
   if (server) {

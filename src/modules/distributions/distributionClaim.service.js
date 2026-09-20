@@ -75,10 +75,25 @@ export const claimPublicSelect = {
   qrVerified: true,
   signatureVerified: true,
   isDuplicateFlag: true,
+  releaseMethod: true,
+  releasedById: true,
+  releasedAt: true,
+  releaseEvidenceType: true,
+  releaseEvidenceReference: true,
+  releaseNotes: true,
   claimedAt: true,
   createdAt: true,
   updatedAt: true,
   beneficiary: { select: claimBeneficiarySelect },
+  distribution: {
+    select: {
+      distributionId: true,
+      title: true,
+      status: true,
+      deliveryMode: true,
+      verificationRequirement: true,
+    },
+  },
   schedule: {
     select: {
       scheduleId: true,
@@ -111,6 +126,15 @@ export const claimPublicSelect = {
     },
   },
   verifiedBy: {
+    select: {
+      userId: true,
+      employeeId: true,
+      username: true,
+      fullName: true,
+      role: true,
+    },
+  },
+  releasedBy: {
     select: {
       userId: true,
       employeeId: true,
@@ -156,6 +180,12 @@ export const claimMutationSelect = {
   qrVerified: true,
   signatureVerified: true,
   isDuplicateFlag: true,
+  releaseMethod: true,
+  releasedById: true,
+  releasedAt: true,
+  releaseEvidenceType: true,
+  releaseEvidenceReference: true,
+  releaseNotes: true,
   claimedAt: true,
   createdAt: true,
   updatedAt: true,
@@ -211,6 +241,7 @@ export const distributionClaimParentSelect = {
   endTime: true,
   barangayId: true,
   status: true,
+  deliveryMode: true,
   verificationRequirement: true,
 };
 
@@ -313,6 +344,77 @@ export function assertDistributionOpenForClaims(distribution) {
       409,
       "DISTRIBUTION_NOT_OPEN_FOR_CLAIMS",
       "QR tokens and claim verification require an open distribution event.",
+    );
+  }
+}
+
+export function claimIdentityRequirementSatisfied(claim) {
+  const verificationMethod = claim.verificationMethod
+    ?? (claim.qrVerified ? "QR" : "BIOMETRIC");
+  return {
+    QR: claim.qrVerified,
+    BIOMETRIC: claim.biometricVerified,
+    QR_AND_BIOMETRIC: claim.qrVerified && claim.biometricVerified,
+    BIOMETRIC_AND_SIGNATURE: claim.biometricVerified && claim.signatureVerified,
+    MANUAL: false,
+  }[verificationMethod] ?? false;
+}
+
+export function assertPhysicalClaimReleasable(claim, distribution) {
+  if (distribution.deliveryMode !== "PHYSICAL_GOODS") {
+    throw new AppError(
+      409,
+      "DISTRIBUTION_NOT_PHYSICAL_GOODS",
+      "Only a PHYSICAL_GOODS distribution can use the physical release workflow.",
+    );
+  }
+  if (distribution.status !== "OPEN") {
+    throw new AppError(
+      409,
+      "DISTRIBUTION_NOT_OPEN_FOR_RELEASE",
+      "Physical assistance can only be released while the distribution event is OPEN.",
+    );
+  }
+  if (claim.claimStatus !== "VERIFIED" || claim.releasedAt || claim.releaseMethod) {
+    throw new AppError(
+      409,
+      "CLAIM_NOT_RELEASABLE",
+      "Only an unreleased VERIFIED claim can be marked as physically released.",
+    );
+  }
+  if (claim.disputes?.some((dispute) => ["OPEN", "UNDER_REVIEW", "REFERRED"].includes(dispute.status))) {
+    throw new AppError(
+      409,
+      "ACTIVE_CLAIM_DISPUTE",
+      "Resolve the active claim dispute before releasing physical assistance.",
+    );
+  }
+  if (!claimIdentityRequirementSatisfied(claim)) {
+    throw new AppError(
+      409,
+      "CLAIM_IDENTITY_NOT_VERIFIED",
+      "The configured QR, biometric, or signature verification is not complete.",
+    );
+  }
+  if (claim.allocation?.allocationStatus !== "ALLOCATED") {
+    throw new AppError(
+      409,
+      "ALLOCATION_NOT_RELEASABLE",
+      "The claim allocation must be ALLOCATED before physical assistance release.",
+    );
+  }
+  if (claim.schedule?.status !== "CHECKED_IN") {
+    throw new AppError(
+      409,
+      "SCHEDULE_NOT_CHECKED_IN",
+      "The beneficiary schedule must be CHECKED_IN before physical assistance release.",
+    );
+  }
+  if (claim.beneficiary?.status !== "ACTIVE") {
+    throw new AppError(
+      409,
+      "BENEFICIARY_NOT_ACTIVE",
+      "Physical assistance can only be released to an active beneficiary.",
     );
   }
 }

@@ -91,7 +91,8 @@ export function createGmailApiProvider({
         const appUrl = new URL(publicAppUrl);
         const requestedUrl = new URL(safeTargetPath, `${publicAppUrl}/`);
         const actionUrl = (requestedUrl.origin === appUrl.origin ? requestedUrl : new URL('/login', appUrl)).toString();
-        const actionLabel = safeTargetPath === "/account?section=password" ? "Review password settings"
+        const actionLabel = safeTargetPath.startsWith("/reset-password?token=") ? "Reset staff password"
+          : safeTargetPath === "/account?section=password" ? "Review password settings"
           : safeTargetPath === "/account?section=authenticator" ? "Review authenticator settings"
             : "Sign in to GarantiyAid";
         const eventTime = occurredAt ? `${new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Manila" }).format(new Date(occurredAt))} PHT` : null;

@@ -4,8 +4,10 @@ import distributionRoutes from "../src/modules/distributions/distribution.routes
 import {
   DISTRIBUTION_MANAGE_ROLES,
   DISTRIBUTION_READ_ROLES,
+  DISTRIBUTION_SCHEDULE_MANAGE_ROLES,
   assertDistributionManageAllowed,
   assertDistributionReadAllowed,
+  assertDistributionScheduleManageAllowed,
   distributionAccessWhere,
   resolveDistributionListBarangay,
 } from "../src/modules/distributions/distribution.policy.js";
@@ -71,6 +73,22 @@ test("System Administrator manages events while all staff roles have scoped read
   );
 });
 
+test("System Administrator and assigned facilitator manage schedules while DSWD remains read-only", () => {
+  assert.deepEqual(DISTRIBUTION_SCHEDULE_MANAGE_ROLES, [
+    "SYSTEM_ADMIN",
+    "BARANGAY_FACILITATOR",
+  ]);
+  assert.doesNotThrow(() => assertDistributionScheduleManageAllowed({ role: "SYSTEM_ADMIN" }));
+  assert.doesNotThrow(() => assertDistributionScheduleManageAllowed({
+    role: "BARANGAY_FACILITATOR",
+    barangayId,
+  }));
+  assert.throws(
+    () => assertDistributionScheduleManageAllowed({ role: "DSWD_STAFF" }),
+    (error) => error.statusCode === 403 && error.code === "FORBIDDEN",
+  );
+});
+
 test("facilitator reads only distribution events from the assigned barangay", () => {
   const facilitator = { role: "BARANGAY_FACILITATOR", barangayId };
   assert.equal(resolveDistributionListBarangay(facilitator), barangayId);
@@ -105,6 +123,7 @@ test("distribution creation normalizes date, time, duration, and text fields", (
   assert.equal(distribution.endTime.toISOString(), "1970-01-01T12:00:00.000Z");
   assert.equal(distribution.slotDurationMinutes, 30);
   assert.equal(distribution.location, "Barangay Hall");
+  assert.equal(distribution.deliveryMode, "SIMULATED_WALLET");
 });
 
 test("distribution schemas reject malformed fields and protected status updates", () => {
@@ -345,6 +364,7 @@ test("Phase 6 route surface adds simulated credit, transaction monitoring, and r
       { path: "/:distributionId/claims/verify-qr", methods: ["post"] },
       { path: "/:distributionId/claims/verify-biometric", methods: ["post"] },
       { path: "/:distributionId/claims/:claimId/signature", methods: ["post"] },
+      { path: "/:distributionId/claims/:claimId/release", methods: ["post"] },
       { path: "/:distributionId/claims/:claimId/receipt", methods: ["post"] },
       { path: "/:distributionId/claims/:claimId/receipt/print-events", methods: ["post"] },
       { path: "/:distributionId/claims/:claimId/disputes", methods: ["post"] },

@@ -15,9 +15,11 @@ import {
 import {
   DISTRIBUTION_MANAGE_ROLES,
   DISTRIBUTION_READ_ROLES,
+  DISTRIBUTION_SCHEDULE_MANAGE_ROLES,
   CLAIM_DISPUTE_FILE_ROLES,
   CLAIM_DISPUTE_REVIEW_ROLES,
   CLAIM_VERIFY_ROLES,
+  PHYSICAL_RELEASE_ROLES,
   QR_TOKEN_MANAGE_ROLES,
   WALLET_MANAGE_ROLES,
   WALLET_READ_ROLES,
@@ -98,7 +100,9 @@ import {
   qrTokenListQuerySchema,
   qrTokenParamsSchema,
   verifyQrClaimSchema,
+  markPhysicalClaimReleasedSchema,
 } from "./distributionClaim.schemas.js";
+import { markPhysicalClaimReleased } from "./distributionClaimRelease.controller.js";
 import {
   creditVerifiedClaim,
   listCreditableClaims,
@@ -252,14 +256,14 @@ distributionRoutes.get(
 );
 distributionRoutes.post(
   "/:distributionId/schedules/generate",
-  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  authorizeRoles(...DISTRIBUTION_SCHEDULE_MANAGE_ROLES),
   validateParams(distributionIdSchema),
   validateBody(generateDistributionSchedulesSchema),
   generateDistributionSchedules,
 );
 distributionRoutes.post(
   "/:distributionId/schedules",
-  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  authorizeRoles(...DISTRIBUTION_SCHEDULE_MANAGE_ROLES),
   validateParams(distributionIdSchema),
   validateBody(createDistributionScheduleSchema),
   createDistributionSchedule,
@@ -279,20 +283,20 @@ distributionRoutes.get(
 );
 distributionRoutes.post(
   "/:distributionId/schedules/:scheduleId/reschedule",
-  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  authorizeRoles(...DISTRIBUTION_SCHEDULE_MANAGE_ROLES),
   validateParams(distributionScheduleParamsSchema),
   validateBody(rescheduleDistributionScheduleSchema),
   rescheduleDistributionSchedule,
 );
 distributionRoutes.post(
   "/:distributionId/schedules/:scheduleId/cancel",
-  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  authorizeRoles(...DISTRIBUTION_SCHEDULE_MANAGE_ROLES),
   validateParams(distributionScheduleParamsSchema),
   cancelDistributionSchedule,
 );
 distributionRoutes.post(
   "/:distributionId/schedules/:scheduleId/reactivate",
-  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  authorizeRoles(...DISTRIBUTION_SCHEDULE_MANAGE_ROLES),
   validateParams(distributionScheduleParamsSchema),
   reactivateDistributionSchedule,
 );
@@ -371,6 +375,13 @@ distributionRoutes.post(
   validateParams(claimSignatureParamsSchema),
   validateBody(submitClaimSignatureSchema),
   submitClaimSignature,
+);
+distributionRoutes.post(
+  "/:distributionId/claims/:claimId/release",
+  authorizeRoles(...PHYSICAL_RELEASE_ROLES),
+  validateParams(claimParamsSchema),
+  validateBody(markPhysicalClaimReleasedSchema),
+  markPhysicalClaimReleased,
 );
 distributionRoutes.post(
   "/:distributionId/claims/:claimId/receipt",

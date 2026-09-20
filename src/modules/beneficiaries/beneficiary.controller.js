@@ -171,7 +171,10 @@ export const recordBiometricConsent = asyncHandler(async (req, res) => {
     });
 
     const revokedProfiles = await tx.biometricData.updateMany({
-      where: { beneficiaryId: beneficiary.beneficiaryId, dataStatus: "ACTIVE" },
+      where: {
+        beneficiaryId: beneficiary.beneficiaryId,
+        dataStatus: { in: ["ACTIVE", "PENDING_DUPLICATE_REVIEW", "DUPLICATE_BLOCKED"] },
+      },
       data: { dataStatus: "REVOKED" },
     });
 

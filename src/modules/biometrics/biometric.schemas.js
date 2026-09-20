@@ -71,3 +71,26 @@ export const biometricAttemptListQuerySchema = z.object({
   beneficiaryId: z.uuid().optional(),
   claimId: z.uuid().optional(),
 }).strict();
+
+export const biometricDuplicateCaseListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  status: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() ? value.trim().toUpperCase() : undefined),
+    z.enum(["PENDING", "CLEARED", "CONFIRMED"]).optional(),
+  ),
+  barangayId: z.uuid().optional(),
+}).strict();
+
+export const biometricDuplicateCaseParamsSchema = z.object({
+  duplicateCaseId: z.uuid(),
+}).strict();
+
+export const reviewBiometricDuplicateCaseSchema = z.object({
+  action: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
+    z.enum(["CLEAR_AS_DISTINCT", "CONFIRM_DUPLICATE"]),
+  ),
+  reviewNotes: z.string().trim().min(20).max(1000),
+  attestation: z.literal(true),
+}).strict();

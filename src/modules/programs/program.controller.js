@@ -3,6 +3,7 @@ import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
 import {
+  assertProgramCriteriaValid,
   assertProgramDetailsValid,
   assertProgramDraft,
   assertProgramTransition,
@@ -10,6 +11,21 @@ import {
   programCriterionSelect,
   programSelect,
 } from "./program.service.js";
+
+async function runProgramTransaction(operation) {
+  try {
+    return await prisma.$transaction(operation, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error?.code === "P2034") {
+      throw new AppError(
+        409,
+        "PROGRAM_CONCURRENT_CHANGE",
+        "The program changed while this request was being processed. Refresh and try again.",
+      );
+    }
+    throw error;
+  }
+}
 
 export const createProgram = asyncHandler(async (req, res) => {
   assertProgramDetailsValid(req.validatedBody);
@@ -44,11 +60,7 @@ export const createProgram = asyncHandler(async (req, res) => {
 export const listPrograms = asyncHandler(async (req, res) => {
   const { page, pageSize, status, search } = req.validatedQuery;
   const where = {
-    ...(req.staffUser.role === "BARANGAY_FACILITATOR"
-      ? { status: "ACTIVE" }
-      : status
-        ? { status }
-        : {}),
+    ...(status ? { status } : {}),
     ...(search ? {
       OR: [
         { programName: { contains: search, mode: "insensitive" } },
@@ -84,11 +96,15 @@ export const getProgram = asyncHandler(async (req, res) => {
 });
 
 export const updateProgram = asyncHandler(async (req, res) => {
-  const existingProgram = await getProgramOrThrow(req.validatedParams.programId, req.staffUser);
-  assertProgramDraft(existingProgram);
-  assertProgramDetailsValid({ ...existingProgram, ...req.validatedBody });
+  const program = await runProgramTransaction(async (tx) => {
+    const existingProgram = await getProgramOrThrow(
+      req.validatedParams.programId,
+      req.staffUser,
+      tx,
+    );
+    assertProgramDraft(existingProgram);
+    assertProgramDetailsValid({ ...existingProgram, ...req.validatedBody });
 
-  const program = await prisma.$transaction(async (tx) => {
     const updatedProgram = await tx.program.update({
       where: { programId: existingProgram.programId },
       data: req.validatedBody,
@@ -113,31 +129,35 @@ export const updateProgram = asyncHandler(async (req, res) => {
 });
 
 async function transitionProgram(req, res, nextStatus, action) {
-  const existingProgram = await getProgramOrThrow(req.validatedParams.programId, req.staffUser);
-  assertProgramTransition(existingProgram, nextStatus);
+  const program = await runProgramTransaction(async (tx) => {
+    const existingProgram = await getProgramOrThrow(
+      req.validatedParams.programId,
+      req.staffUser,
+      tx,
+    );
+    assertProgramTransition(existingProgram, nextStatus);
 
-  if (nextStatus === "ACTIVE") {
-    assertProgramDetailsValid(existingProgram);
+    if (nextStatus === "ACTIVE") {
+      assertProgramDetailsValid(existingProgram);
+      if (existingProgram.criteria.length === 0) {
+        throw new AppError(
+          409,
+          "PROGRAM_CRITERIA_REQUIRED",
+          "Add at least one eligibility criterion before activating the program.",
+        );
+      }
+      await assertProgramCriteriaValid(existingProgram.criteria, tx);
 
-    if (existingProgram.criteria.length === 0) {
-      throw new AppError(
-        409,
-        "PROGRAM_CRITERIA_REQUIRED",
-        "Add at least one eligibility criterion before activating the program.",
-      );
+      const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+      if (existingProgram.applicationEndDate && existingProgram.applicationEndDate < today) {
+        throw new AppError(
+          409,
+          "PROGRAM_APPLICATION_CLOSED",
+          "A program with an expired application period cannot be activated.",
+        );
+      }
     }
 
-    const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
-    if (existingProgram.applicationEndDate && existingProgram.applicationEndDate < today) {
-      throw new AppError(
-        409,
-        "PROGRAM_APPLICATION_CLOSED",
-        "A program with an expired application period cannot be activated.",
-      );
-    }
-  }
-
-  const program = await prisma.$transaction(async (tx) => {
     const transition = await tx.program.updateMany({
       where: {
         programId: existingProgram.programId,
@@ -189,14 +209,19 @@ export const cancelProgram = asyncHandler((req, res) => (
 ));
 
 export const createCriterion = asyncHandler(async (req, res) => {
-  const program = await getProgramOrThrow(req.validatedParams.programId, req.staffUser);
-  assertProgramDraft(program);
+  const criterion = await runProgramTransaction(async (tx) => {
+    const program = await getProgramOrThrow(
+      req.validatedParams.programId,
+      req.staffUser,
+      tx,
+    );
+    assertProgramDraft(program);
+    const [validatedCriterion] = await assertProgramCriteriaValid([req.validatedBody], tx);
 
-  const criterion = await prisma.$transaction(async (tx) => {
     const createdCriterion = await tx.programCriterion.create({
       data: {
         programId: program.programId,
-        ...req.validatedBody,
+        ...validatedCriterion,
       },
       select: programCriterionSelect,
     });
@@ -218,8 +243,8 @@ export const createCriterion = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: { criterion } });
 });
 
-async function getCriterionOrThrow(programId, criterionId) {
-  const criterion = await prisma.programCriterion.findFirst({
+async function getCriterionOrThrow(programId, criterionId, database = prisma) {
+  const criterion = await database.programCriterion.findFirst({
     where: { programId, criterionId },
     select: programCriterionSelect,
   });
@@ -232,17 +257,29 @@ async function getCriterionOrThrow(programId, criterionId) {
 }
 
 export const updateCriterion = asyncHandler(async (req, res) => {
-  const program = await getProgramOrThrow(req.validatedParams.programId, req.staffUser);
-  assertProgramDraft(program);
-  const existingCriterion = await getCriterionOrThrow(
-    program.programId,
-    req.validatedParams.criterionId,
-  );
+  const criterion = await runProgramTransaction(async (tx) => {
+    const program = await getProgramOrThrow(
+      req.validatedParams.programId,
+      req.staffUser,
+      tx,
+    );
+    assertProgramDraft(program);
+    const existingCriterion = await getCriterionOrThrow(
+      program.programId,
+      req.validatedParams.criterionId,
+      tx,
+    );
+    const [validatedCriterion] = await assertProgramCriteriaValid([{
+      ...existingCriterion,
+      ...req.validatedBody,
+    }], tx);
+    const updateData = Object.fromEntries(
+      Object.keys(req.validatedBody).map((field) => [field, validatedCriterion[field]]),
+    );
 
-  const criterion = await prisma.$transaction(async (tx) => {
     const updatedCriterion = await tx.programCriterion.update({
       where: { criterionId: existingCriterion.criterionId },
-      data: req.validatedBody,
+      data: updateData,
       select: programCriterionSelect,
     });
 
@@ -264,14 +301,19 @@ export const updateCriterion = asyncHandler(async (req, res) => {
 });
 
 export const deleteCriterion = asyncHandler(async (req, res) => {
-  const program = await getProgramOrThrow(req.validatedParams.programId, req.staffUser);
-  assertProgramDraft(program);
-  const existingCriterion = await getCriterionOrThrow(
-    program.programId,
-    req.validatedParams.criterionId,
-  );
+  await runProgramTransaction(async (tx) => {
+    const program = await getProgramOrThrow(
+      req.validatedParams.programId,
+      req.staffUser,
+      tx,
+    );
+    assertProgramDraft(program);
+    const existingCriterion = await getCriterionOrThrow(
+      program.programId,
+      req.validatedParams.criterionId,
+      tx,
+    );
 
-  await prisma.$transaction(async (tx) => {
     await tx.programCriterion.delete({ where: { criterionId: existingCriterion.criterionId } });
     await tx.auditLog.create({
       data: {

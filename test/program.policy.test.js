@@ -8,6 +8,7 @@ import {
   assertProgramDetailsValid,
   assertProgramDraft,
   assertProgramTransition,
+  getProgramOrThrow,
 } from "../src/modules/programs/program.service.js";
 
 test("DSWD manages programs while every authenticated staff role can read them", () => {
@@ -25,6 +26,25 @@ test("only draft programs are editable", () => {
     () => assertProgramDraft({ status: "ACTIVE" }),
     (error) => error.code === "PROGRAM_NOT_EDITABLE" && error.statusCode === 409,
   );
+});
+
+test("program detail lookup does not hide non-active records from read-authorized staff", async () => {
+  let capturedWhere;
+  const program = { programId: "11111111-1111-4111-8111-111111111111", status: "DRAFT" };
+  const database = {
+    program: {
+      findFirst: async ({ where }) => {
+        capturedWhere = where;
+        return program;
+      },
+    },
+  };
+
+  assert.equal(
+    await getProgramOrThrow(program.programId, { role: "BARANGAY_FACILITATOR" }, database),
+    program,
+  );
+  assert.deepEqual(capturedWhere, { programId: program.programId });
 });
 
 test("program dates and budget must be internally consistent", () => {

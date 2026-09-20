@@ -96,7 +96,100 @@ const criterionFieldsSchema = {
   isRequired: z.boolean().optional(),
 };
 
-export const createProgramCriterionSchema = z.object(criterionFieldsSchema).strict();
+const sexValues = ["MALE", "FEMALE", "OTHER", "UNKNOWN"];
+const equalityOperators = ["EQUALS", "NOT_EQUALS", "IN", "NOT_IN"];
+const ageOperators = [...equalityOperators, "GREATER_THAN", "GREATER_THAN_OR_EQUAL", "LESS_THAN", "LESS_THAN_OR_EQUAL"];
+
+function normalizeExpectedValue(fieldName, expectedValue) {
+  if (fieldName === "SEX" || fieldName === "DOCUMENT_TYPE") {
+    return Array.isArray(expectedValue)
+      ? expectedValue.map((value) => typeof value === "string" ? value.trim().toUpperCase() : value)
+      : typeof expectedValue === "string" ? expectedValue.trim().toUpperCase() : expectedValue;
+  }
+  if (fieldName === "BARANGAY_ID") {
+    return Array.isArray(expectedValue)
+      ? expectedValue.map((value) => typeof value === "string" ? value.trim() : value)
+      : typeof expectedValue === "string" ? expectedValue.trim() : expectedValue;
+  }
+  return expectedValue;
+}
+
+function criterionIssue(value) {
+  const { fieldName, operator } = value;
+  const expectedValue = normalizeExpectedValue(fieldName, value.expectedValue);
+  const expectsArray = ["IN", "NOT_IN"].includes(operator);
+  const hasUniqueValues = (items) => new Set(items).size === items.length;
+
+  if (fieldName === "AGE") {
+    if (!ageOperators.includes(operator)) return "Age criteria must use a numeric comparison or list operator.";
+    const values = expectsArray ? expectedValue : [expectedValue];
+    if (
+      !Array.isArray(values)
+      || values.length < 1
+      || values.length > 20
+      || !values.every((item) => Number.isInteger(item) && item >= 0 && item <= 150)
+      || (expectsArray && !Array.isArray(expectedValue))
+      || (!expectsArray && Array.isArray(expectedValue))
+    ) return "Age criteria require an integer from 0 to 150, or a unique list of those ages for IN and NOT IN.";
+    if (!hasUniqueValues(values)) return "Criterion lists cannot contain duplicate values.";
+    return null;
+  }
+
+  if (fieldName === "SEX") {
+    if (!equalityOperators.includes(operator)) return "Sex criteria support Equals, Not equals, In, or Not in.";
+    const values = expectsArray ? expectedValue : [expectedValue];
+    if (
+      !Array.isArray(values)
+      || values.length < 1
+      || values.length > sexValues.length
+      || !values.every((item) => sexValues.includes(item))
+      || (expectsArray && !Array.isArray(expectedValue))
+      || (!expectsArray && Array.isArray(expectedValue))
+    ) return "Sex criteria must use MALE, FEMALE, OTHER, or UNKNOWN.";
+    if (!hasUniqueValues(values)) return "Criterion lists cannot contain duplicate values.";
+    return null;
+  }
+
+  if (fieldName === "BARANGAY_ID") {
+    if (!equalityOperators.includes(operator)) return "Barangay criteria support Equals, Not equals, In, or Not in.";
+    const values = expectsArray ? expectedValue : [expectedValue];
+    if (
+      !Array.isArray(values)
+      || values.length < 1
+      || values.length > 50
+      || !values.every((item) => z.uuid().safeParse(item).success)
+      || (expectsArray && !Array.isArray(expectedValue))
+      || (!expectsArray && Array.isArray(expectedValue))
+    ) return "Barangay criteria require a UUID, or a unique UUID list for IN and NOT IN.";
+    if (!hasUniqueValues(values)) return "Criterion lists cannot contain duplicate values.";
+    return null;
+  }
+
+  if (fieldName === "DOCUMENT_TYPE") {
+    if (operator !== "REQUIRED") return "Document criteria must use the Required operator.";
+    if (!BENEFICIARY_DOCUMENT_TYPES.includes(expectedValue)) return "Select an approved beneficiary document type.";
+    return null;
+  }
+
+  if (fieldName === "MANUAL_REVIEW") {
+    if (operator !== "REQUIRED" || expectedValue !== true) return "Manual-review criteria must use Required with a true value.";
+    return null;
+  }
+
+  return "Unsupported eligibility criterion.";
+}
+
+function normalizeCriterion(value) {
+  return { ...value, expectedValue: normalizeExpectedValue(value.fieldName, value.expectedValue) };
+}
+
+export const createProgramCriterionSchema = z.object(criterionFieldsSchema).strict()
+  .transform(normalizeCriterion)
+  .superRefine((value, context) => {
+    const message = criterionIssue(value);
+    if (message) context.addIssue({ code: "custom", path: ["expectedValue"], message });
+  });
+
 export const updateProgramCriterionSchema = z.object(criterionFieldsSchema).partial().strict().refine(
   (value) => Object.keys(value).length > 0,
   "At least one criterion field must be supplied.",

@@ -22,6 +22,7 @@ export const enrollmentSelect = {
   reviewedById: true,
   reviewNotes: true,
   reviewedAt: true,
+  eligibilitySnapshot: true,
   createdAt: true,
   updatedAt: true,
   beneficiary: {
@@ -54,8 +55,8 @@ export function enrollmentAccessWhere(staffUser) {
   return { beneficiary: { barangayId: staffUser.barangayId } };
 }
 
-export async function getEnrollmentOrThrow(enrollmentId, staffUser) {
-  const enrollment = await prisma.enrollment.findFirst({
+export async function getEnrollmentOrThrow(enrollmentId, staffUser, database = prisma) {
+  const enrollment = await database.enrollment.findFirst({
     where: {
       enrollmentId,
       ...enrollmentAccessWhere(staffUser),

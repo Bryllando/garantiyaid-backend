@@ -2,16 +2,37 @@
 
 This workflow is for the authenticated staff web application only. A beneficiary is a managed record, not a login account.
 
-## Role boundaries
+## Staff permission matrix
+
+The web navigation and API use the same boundaries. “Assigned barangay” is enforced by the server even when a request is sent directly to the API.
 
 | Action | SYSTEM_ADMIN | DSWD_STAFF | BARANGAY_FACILITATOR |
 |---|---:|---:|---:|
-| Read programs and enrollments | Yes | Yes | Yes, assigned barangay only |
-| Create/edit/activate/close programs and criteria | No | Yes | No |
-| Create and update beneficiary records | Yes | No | Yes, assigned barangay only |
-| Upload beneficiary documents | No | No | Yes, assigned barangay only |
-| Submit/resubmit beneficiary enrollment | No | No | Yes, assigned barangay only |
-| Start review/request correction/approve/reject | No | Yes | No |
+| Browse every program status and read program details | Yes | Yes | Yes |
+| Create/edit/publish/close programs and criteria | No | Yes | No |
+| Read beneficiary records | Yes | Yes | Assigned barangay |
+| Create and update beneficiary records | Yes | No | Assigned barangay |
+| Read/download beneficiary documents | Yes | Yes | Assigned barangay |
+| Upload or replace beneficiary documents | No | No | Assigned barangay |
+| Accept or reject beneficiary documents | No | Yes | No |
+| Read enrollments | Yes | Yes | Assigned barangay |
+| Submit/resubmit enrollment | No | No | Assigned barangay |
+| Start review/request correction/approve/reject enrollment | No | Yes | No |
+| Read distribution events, slots, allocations, and schedules | Yes | Yes | Assigned barangay |
+| Create/update/cancel/open distribution events | Yes | No | No |
+| Generate/update/close distribution slots | Yes | No | No |
+| Create/cancel/reactivate allocations | Yes | No | No |
+| Generate/create/reschedule/cancel/reactivate schedules | Yes | No | Assigned barangay |
+| Verify QR or biometric claims | Yes | No | Assigned barangay |
+| Record physical assistance release | No | No | Assigned barangay |
+| File claim disputes | Yes | Yes | Assigned barangay |
+| Review claim disputes | Yes | Yes | No |
+| Read biometric status and consent | Yes | Yes | Assigned barangay |
+| Record or revoke biometric consent | Yes | Yes | Assigned barangay |
+| Capture/re-enroll and verify biometrics | Yes | No | Assigned barangay |
+| Review possible duplicate faces | Yes | Yes | No |
+| Permanently delete a biometric template | Yes | No | No |
+| Read/manage simulated wallets | Yes | Yes | No |
 
 ## Status flows
 

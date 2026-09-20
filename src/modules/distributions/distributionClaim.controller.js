@@ -820,7 +820,9 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
               verificationComplete: true,
               nextRequiredVerification: null,
               walletTransactionCreated: false,
-              nextPhase: "PHASE_6_SIMULATED_WALLET_TRANSACTION",
+              nextPhase: distribution.deliveryMode === "PHYSICAL_GOODS"
+                ? "PHYSICAL_ASSISTANCE_RELEASE"
+                : "SIMULATED_WALLET_SETTLEMENT",
             },
           });
         } else {
@@ -946,8 +948,10 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
             nextRequiredVerification: verificationComplete ? null : "BIOMETRIC",
             walletTransactionCreated: false,
             nextPhase: verificationComplete
-              ? "PHASE_6_SIMULATED_WALLET_TRANSACTION"
-              : "PHASE_7_BIOMETRIC_VERIFICATION",
+              ? distribution.deliveryMode === "PHYSICAL_GOODS"
+                ? "PHYSICAL_ASSISTANCE_RELEASE"
+                : "SIMULATED_WALLET_SETTLEMENT"
+              : "BIOMETRIC_VERIFICATION",
           },
         });
       }

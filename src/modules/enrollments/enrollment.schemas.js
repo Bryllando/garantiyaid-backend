@@ -38,9 +38,28 @@ export const enrollmentDecisionSchema = z.object({
   reason: z.string().trim().min(5).max(2000),
 }).strict();
 
+const manualEligibilityDecisions = z.array(z.object({
+  criterionId: z.uuid(),
+  passed: z.boolean(),
+  remarks: z.string().trim().min(5).max(1000),
+}).strict()).max(50).default([]).superRefine((decisions, context) => {
+  const seen = new Set();
+  decisions.forEach((decision, index) => {
+    if (seen.has(decision.criterionId)) {
+      context.addIssue({
+        code: "custom",
+        path: [index, "criterionId"],
+        message: "Submit only one decision for each manual-review criterion.",
+      });
+    }
+    seen.add(decision.criterionId);
+  });
+});
+
 export const enrollmentApprovalSchema = z.object({
   remarks: z.preprocess(
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
     z.string().trim().max(2000).optional(),
   ),
+  manualDecisions: manualEligibilityDecisions,
 }).strict();

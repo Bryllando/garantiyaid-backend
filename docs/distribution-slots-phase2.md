@@ -57,7 +57,7 @@ Content-Type: application/json
 ```json
 {
   "programId": "{{programId}}",
-  "title": "Phase 2 Slot Test",
+  "title": "Education Assistance Schedule",
   "distributionDate": "2026-09-20",
   "startTime": "08:00",
   "endTime": "10:00",
@@ -202,7 +202,7 @@ A non-scheduling draft update remains allowed:
 
 ```json
 {
-  "title": "Updated Phase 2 Slot Test"
+  "title": "September Education Assistance"
 }
 ```
 

@@ -4,6 +4,7 @@ import walletRoutes from "../src/modules/wallets/wallet.routes.js";
 import {
   SIMULATED_TRANSACTION_TYPES,
   TRANSACTION_STATUSES,
+  beneficiaryWalletParamsSchema,
   createWalletSchema,
   creditClaimSchema,
   reverseBenefitCreditSchema,
@@ -40,12 +41,14 @@ function creditableClaim(overrides = {}) {
     allocation: { allocationStatus: "ALLOCATED" },
     schedule: { status: "CHECKED_IN" },
     beneficiary: { status: "ACTIVE" },
+    distribution: { deliveryMode: "SIMULATED_WALLET" },
     disputes: [],
     ...overrides,
   };
 }
 
 test("Phase 6 schemas validate wallet creation, monetary precision, filters, and reversal reasons", () => {
+  assert.deepEqual(beneficiaryWalletParamsSchema.parse({ beneficiaryId }), { beneficiaryId });
   assert.deepEqual(createWalletSchema.parse({ beneficiaryId }), { beneficiaryId });
   assert.deepEqual(creditClaimSchema.parse({ description: "  Phase 6 credit  " }), {
     description: "Phase 6 credit",
@@ -82,6 +85,12 @@ test("wallet access excludes Barangay Facilitators from financial ledger data", 
   assert.deepEqual(WALLET_MANAGE_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
   assert.doesNotThrow(() => assertWalletReadAllowed({ role: "DSWD_STAFF" }));
   assert.doesNotThrow(() => assertWalletManageAllowed({ role: "SYSTEM_ADMIN" }));
+  assert.throws(
+    () => assertClaimCreditable(creditableClaim({
+      distribution: { deliveryMode: "PHYSICAL_GOODS" },
+    })),
+    (error) => error.code === "CLAIM_DELIVERY_MODE_MISMATCH",
+  );
   assert.throws(
     () => assertWalletReadAllowed({ role: "BARANGAY_FACILITATOR" }),
     (error) => error.code === "FORBIDDEN",
@@ -195,6 +204,7 @@ test("wallet router exposes create, read, transfer, receipt, and reversal endpoi
     }));
   assert.deepEqual(routes, [
     { path: "/", methods: ["post"] },
+    { path: "/beneficiaries/:beneficiaryId", methods: ["get"] },
     { path: "/:walletId", methods: ["get"] },
     { path: "/:walletId/transactions", methods: ["get"] },
     { path: "/:walletId/transfers", methods: ["post"] },

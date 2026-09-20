@@ -304,12 +304,20 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
     });
     return sendBiometricResult(res, distributionId, beneficiaryId, result);
   }
-  if (biometricProfileStatus(profile) !== "ENROLLED") {
+  const profileStatus = biometricProfileStatus(profile);
+  if (profileStatus !== "ENROLLED") {
     req.file.buffer.fill(0);
+    const duplicateReviewRequired = ["PENDING_DUPLICATE_REVIEW", "DUPLICATE_BLOCKED"].includes(profileStatus);
     const result = await persistRejectedRequest(req, {
       identity, hash, distributionId, beneficiaryId, biometricId: profile.biometricId,
-      result: "CONSENT_INVALID", status: 409, code: "BIOMETRIC_CONSENT_INVALID",
-      message: "Biometric verification is blocked because consent is revoked, declined, or expired.",
+      result: duplicateReviewRequired ? "DUPLICATE" : "CONSENT_INVALID",
+      status: 409,
+      code: duplicateReviewRequired
+        ? "BIOMETRIC_DUPLICATE_REVIEW_REQUIRED"
+        : "BIOMETRIC_CONSENT_INVALID",
+      message: duplicateReviewRequired
+        ? "Biometric verification is blocked until authorized staff resolve the possible duplicate profile."
+        : "Biometric verification is blocked because consent is revoked, declined, or expired.",
       deviceInfo, processor: "NOT_RUN",
     });
     return sendBiometricResult(res, distributionId, beneficiaryId, result);

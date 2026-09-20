@@ -20,6 +20,7 @@ import {
   distributionOpeningReadiness,
   distributionScheduleSelect,
   distributionScheduleToResponse,
+  getDistributionScheduleParentOrThrow,
   nextSlotQueueNumber,
   schedulableAllocationToResponse,
   scheduleBeneficiarySelect,
@@ -224,10 +225,34 @@ test("schedule responses expose operational fields but omit sensitive beneficiar
   });
   assert.equal(response.slot.slotStart, "2099-08-20T08:00:00+08:00");
   assert.equal(response.slot.slotEnd, "2099-08-20T08:30:00+08:00");
+  assert.equal(response.assignmentMethod, "STAFF_ASSIGNED");
   assert.equal(Object.hasOwn(scheduleBeneficiarySelect, "address"), false);
   assert.equal(Object.hasOwn(scheduleBeneficiarySelect, "contactNumber"), false);
   assert.equal(Object.hasOwn(scheduleBeneficiarySelect, "email"), false);
   assert.equal(Object.hasOwn(scheduleBeneficiarySelect, "philsysNumber"), false);
   assert.equal(Object.hasOwn(distributionScheduleSelect, "claim"), false);
   assert.equal(schedulableAllocationToResponse({ amount: { toString: () => "5000.00" } }).amount, "5000.00");
+});
+
+test("facilitator schedule access is always scoped to the assigned barangay", async () => {
+  const assignedBarangayId = "88888888-8888-4888-8888-888888888888";
+  let capturedWhere;
+  const database = {
+    distribution: {
+      findFirst: async ({ where }) => {
+        capturedWhere = where;
+        return null;
+      },
+    },
+  };
+
+  await assert.rejects(
+    () => getDistributionScheduleParentOrThrow(
+      distributionId,
+      { role: "BARANGAY_FACILITATOR", barangayId: assignedBarangayId },
+      database,
+    ),
+    (error) => error.statusCode === 404 && error.code === "DISTRIBUTION_NOT_FOUND",
+  );
+  assert.deepEqual(capturedWhere, { distributionId, barangayId: assignedBarangayId });
 });

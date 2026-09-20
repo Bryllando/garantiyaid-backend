@@ -35,6 +35,18 @@ export const loginSchema = z.object({
   }
 });
 
+export const requestPasswordResetSchema = z.object({
+  account: z.string().trim().toLowerCase().min(1).max(150).refine(
+    (value) => /^[a-z0-9._-]+$/.test(value) || z.string().email().safeParse(value).success,
+    "Use your Staff ID, username, or official email address.",
+  ),
+}).strict();
+
+export const completePasswordResetSchema = z.object({
+  token: z.string().min(43).max(200).regex(/^[A-Za-z0-9_-]+$/, "Password-reset token is invalid."),
+  newPassword: newStaffPasswordSchema,
+}).strict();
+
 export const confirmTotpSchema = z.object({
   code: totpCode,
 });

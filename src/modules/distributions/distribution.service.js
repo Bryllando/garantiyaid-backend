@@ -14,6 +14,7 @@ export const distributionSelect = {
   location: true,
   barangayId: true,
   status: true,
+  deliveryMode: true,
   verificationRequirement: true,
   createdAt: true,
   updatedAt: true,

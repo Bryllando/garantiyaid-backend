@@ -19,6 +19,16 @@ const securityMessages = {
     message: "Your staff account password was changed and other active sessions were signed out. If you did not make this change, contact a System Administrator immediately.",
     targetPath: "/account?section=password",
   }),
+  PASSWORD_RESET_REQUESTED: () => ({
+    title: "Reset your GarantiyAid staff password",
+    message: `A password reset was requested for your staff account. Use the secure link below within ${env.passwordResetTokenMinutes} minutes. If you did not request this, you can ignore this message and keep your current password.`,
+    targetPath: "/login",
+  }),
+  PASSWORD_RESET_COMPLETED: () => ({
+    title: "Your GarantiyAid password was reset",
+    message: "Your staff password was reset and every active session was signed out. Sign in again with your new password and existing authenticator. If you did not complete this reset, contact a System Administrator immediately.",
+    targetPath: "/login",
+  }),
   AUTHENTICATOR_ENABLED: () => ({
     title: "Authenticator added to your GarantiyAid account",
     message: "An authenticator was connected to your staff account. Keep your recovery codes private. If you did not complete this setup, contact a System Administrator immediately.",
@@ -74,13 +84,13 @@ export async function createStaffSecurityNotification({
 
 export async function dispatchStaffSecurityNotification(
   notification,
-  { database = prisma, enqueue = enqueueStaffEmailJobs } = {},
+  { database = prisma, enqueue = enqueueStaffEmailJobs, deliveryTargetPath } = {},
 ) {
   await publishStaffNotificationCreated(notification).catch(() => false);
   if (notification.emailStatus !== "PENDING") return emailDeliveryToResponse(notification);
 
   try {
-    await enqueue([notification]);
+    await enqueue([notification], { deliveryTargetPath });
     return emailDeliveryToResponse(notification);
   } catch {
     await database.staffNotification.updateMany({

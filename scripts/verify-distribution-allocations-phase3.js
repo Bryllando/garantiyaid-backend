@@ -166,7 +166,7 @@ try {
       programName: `Temporary Allocation Program ${suffix}`,
       programCode: `ALOC-${suffix}`,
       programType: "CASH_ASSISTANCE",
-      description: "Temporary record for Phase 3 verification.",
+      description: "Temporary allocation verification record.",
       grantAmount: 1000,
       budgetAmount: 2000,
       status: "ACTIVE",
@@ -234,7 +234,7 @@ try {
 
   const distributionBody = {
     programId: program.programId,
-    title: "Temporary Allocation Phase 3 Verification",
+    title: "Temporary Allocation Verification",
     distributionDate,
     startTime: "08:00",
     endTime: "10:00",
@@ -553,10 +553,10 @@ try {
     transactions: await prisma.transaction.count(),
   };
   if (JSON.stringify(downstreamCountsAfter) !== JSON.stringify(downstreamCountsBefore)) {
-    throw new Error("Allocation Phase 3 changed schedule, QR-token, claim, or transaction records.");
+    throw new Error("Allocation verification changed schedule, QR-token, claim, or transaction records.");
   }
 
-  console.log("Distribution Allocation Management Phase 3 HTTP workflow verification passed.");
+  console.log("Distribution allocation management HTTP workflow verification passed.");
 } finally {
   if (server) {
     await new Promise((resolve, reject) => {

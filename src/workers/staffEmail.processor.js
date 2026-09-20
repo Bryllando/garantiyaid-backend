@@ -15,6 +15,16 @@ function attemptsAllowed(job) {
   return Number(job.opts?.attempts ?? env.notificationMaxAttempts);
 }
 
+export function staffEmailDeliveryTargetPath(notification, jobTargetPath) {
+  if (notification.notificationType !== "SECURITY_PASSWORD_RESET_REQUESTED") {
+    return notification.targetPath;
+  }
+  return typeof jobTargetPath === "string"
+    && /^\/reset-password\?token=[A-Za-z0-9_-]{43,200}$/.test(jobTargetPath)
+    ? jobTargetPath
+    : null;
+}
+
 async function auditDelivery(tx, notification, action, details = {}) {
   await tx.auditLog.create({
     data: {
@@ -123,13 +133,19 @@ export async function processStaffEmailJob(
   const notification = await acquireStaffEmail(notificationId, database, now);
   if (!notification) return { outcome: "SKIPPED" };
 
+  const targetPath = staffEmailDeliveryTargetPath(notification, job.data?.deliveryTargetPath);
+  if (notification.notificationType === "SECURITY_PASSWORD_RESET_REQUESTED" && !targetPath) {
+    await recordFailure(notification, "PASSWORD_RESET_LINK_UNAVAILABLE", database, now);
+    return { outcome: "FAILED", errorCode: "PASSWORD_RESET_LINK_UNAVAILABLE" };
+  }
+
   const result = await provider.send({
     notificationId,
     recipient: notification.emailRecipient,
     recipientName: notification.user.fullName,
     subject: notification.title,
     message: notification.message,
-    targetPath: notification.targetPath,
+    targetPath,
     occurredAt: notification.createdAt,
   });
 

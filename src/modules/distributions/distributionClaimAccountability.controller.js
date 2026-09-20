@@ -237,7 +237,10 @@ export const reviewClaimDispute = asyncHandler(async (req, res) => {
     const change = disputeReviewUpdate(current, action, req.auth.userId, reviewNotes);
     if (change.claimData) {
       const claimUpdate = await tx.claim.updateMany({
-        where: { claimId: current.claimId, claimStatus: "VERIFIED" },
+        where: {
+          claimId: current.claimId,
+          claimStatus: change.claimExpectedStatus ?? "VERIFIED",
+        },
         data: change.claimData,
       });
       if (claimUpdate.count !== 1) {
@@ -250,7 +253,14 @@ export const reviewClaimDispute = asyncHandler(async (req, res) => {
           entityAffected: "CLAIM",
           recordId: current.claimId,
           ipAddress: clientIpAddress(req),
-          details: { disputeId, distributionId, referenceNo: current.referenceNo },
+          details: {
+            disputeId,
+            distributionId,
+            referenceNo: current.referenceNo,
+            releaseMethod: current.claim.releaseMethod,
+            walletReversalRequired: current.claim.releaseMethod !== "PHYSICAL_GOODS"
+              && current.claim.distribution?.deliveryMode !== "PHYSICAL_GOODS",
+          },
         },
       });
     }

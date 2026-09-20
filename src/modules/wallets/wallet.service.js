@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "../../lib/prisma.js";
 import { AppError } from "../../utils/AppError.js";
+import { claimIdentityRequirementSatisfied } from "../distributions/distributionClaim.service.js";
 
 export const SIMULATION_DISCLOSURE = Object.freeze({
   simulated: true,
@@ -9,7 +10,7 @@ export const SIMULATION_DISCLOSURE = Object.freeze({
   message: "Prototype ledger simulation only; this is not a bank, e-wallet, cash-out, or government fund release.",
 });
 
-const beneficiaryWalletSelect = {
+export const beneficiaryWalletSelect = {
   beneficiaryId: true,
   firstName: true,
   middleName: true,
@@ -121,7 +122,10 @@ export const receiptTransactionSelect = {
       qrVerified: true,
       biometricVerified: true,
       signatureVerified: true,
+      releaseMethod: true,
+      releasedAt: true,
       claimedAt: true,
+      releasedBy: { select: staffTransactionSelect },
       allocation: {
         select: {
           allocationId: true,
@@ -138,6 +142,7 @@ export const receiptTransactionSelect = {
       distributionDate: true,
       location: true,
       status: true,
+      deliveryMode: true,
       program: {
         select: {
           programId: true,
@@ -216,6 +221,34 @@ export function transactionSignedAmount(transaction) {
   return 0;
 }
 
+export function claimReconciliationException(claim, distributionDeliveryMode) {
+  const deliveryMode = claim.releaseMethod ?? distributionDeliveryMode;
+  const credit = claim.transactions.find((row) => row.transactionType === "BENEFIT_CREDIT");
+  const reversal = claim.transactions.find((row) => row.transactionType === "BENEFIT_REVERSAL");
+
+  if (claim.claimStatus === "VERIFIED") {
+    return {
+      code: deliveryMode === "PHYSICAL_GOODS"
+        ? "VERIFIED_PHYSICAL_CLAIM_AWAITING_RELEASE"
+        : "VERIFIED_CLAIM_AWAITING_CREDIT",
+      claimId: claim.claimId,
+    };
+  }
+  if (deliveryMode === "PHYSICAL_GOODS") {
+    if (claim.claimStatus === "CLAIMED" && (!claim.releasedAt || !claim.releasedById)) {
+      return { code: "CLAIMED_WITHOUT_PHYSICAL_RELEASE_EVIDENCE", claimId: claim.claimId };
+    }
+    return null;
+  }
+  if (claim.claimStatus === "CLAIMED" && credit?.status !== "COMPLETED") {
+    return { code: "CLAIMED_WITHOUT_COMPLETED_CREDIT", claimId: claim.claimId };
+  }
+  if (claim.claimStatus === "VOIDED" && (!reversal || credit?.status !== "REVERSED")) {
+    return { code: "VOIDED_WITHOUT_COMPLETE_REVERSAL", claimId: claim.claimId };
+  }
+  return null;
+}
+
 export function assertWalletActive(wallet) {
   if (wallet.accountStatus !== "ACTIVE") {
     throw new AppError(
@@ -227,6 +260,13 @@ export function assertWalletActive(wallet) {
 }
 
 export function assertClaimCreditable(claim) {
+  if (claim.distribution?.deliveryMode !== "SIMULATED_WALLET") {
+    throw new AppError(
+      409,
+      "CLAIM_DELIVERY_MODE_MISMATCH",
+      "Only a SIMULATED_WALLET distribution claim can be credited to the prototype ledger.",
+    );
+  }
   if (claim.claimStatus !== "VERIFIED") {
     throw new AppError(
       409,
@@ -241,16 +281,7 @@ export function assertClaimCreditable(claim) {
       "Resolve the active claim dispute before recording a simulated benefit credit.",
     );
   }
-  const verificationMethod = claim.verificationMethod
-    ?? (claim.qrVerified ? "QR" : "BIOMETRIC");
-  const identityRequirementSatisfied = {
-    QR: claim.qrVerified,
-    BIOMETRIC: claim.biometricVerified,
-    QR_AND_BIOMETRIC: claim.qrVerified && claim.biometricVerified,
-    BIOMETRIC_AND_SIGNATURE: claim.biometricVerified && claim.signatureVerified,
-    MANUAL: false,
-  }[verificationMethod] ?? false;
-  if (!identityRequirementSatisfied) {
+  if (!claimIdentityRequirementSatisfied(claim)) {
     throw new AppError(
       409,
       "CLAIM_IDENTITY_NOT_VERIFIED",

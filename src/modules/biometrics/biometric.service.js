@@ -59,6 +59,46 @@ export const biometricAttemptPublicSelect = {
   createdAt: true,
 };
 
+const duplicateBeneficiarySelect = {
+  beneficiaryId: true,
+  firstName: true,
+  middleName: true,
+  lastName: true,
+  birthDate: true,
+  status: true,
+  barangay: { select: { barangayId: true, barangayName: true, city: true } },
+};
+
+export const biometricDuplicateCasePublicSelect = {
+  duplicateCaseId: true,
+  candidateBeneficiaryId: true,
+  matchedBeneficiaryId: true,
+  candidateBiometricId: true,
+  matchedBiometricId: true,
+  matchScore: true,
+  matchThreshold: true,
+  status: true,
+  detectedAt: true,
+  reviewedAt: true,
+  reviewNotes: true,
+  candidateBeneficiary: { select: duplicateBeneficiarySelect },
+  matchedBeneficiary: { select: duplicateBeneficiarySelect },
+  candidateBiometric: {
+    select: {
+      biometricId: true,
+      dataStatus: true,
+      consentId: true,
+      consent: {
+        select: { consentGiven: true, revokedAt: true, retentionUntil: true },
+      },
+    },
+  },
+  matchedBiometric: { select: { biometricId: true, dataStatus: true } },
+  reviewedBy: {
+    select: { userId: true, employeeId: true, fullName: true, role: true },
+  },
+};
+
 export function consentEffectiveStatus(consent, now = new Date()) {
   if (!consent.consentGiven) return "DECLINED";
   if (consent.revokedAt) return "REVOKED";
@@ -74,7 +114,17 @@ export function biometricProfileStatus(profile, now = new Date()) {
     || !profile.consent?.consentGiven
     || profile.consent?.retentionUntil <= now
   ) return "EXPIRED";
+  if (profile.dataStatus === "PENDING_DUPLICATE_REVIEW") return "PENDING_DUPLICATE_REVIEW";
+  if (profile.dataStatus === "DUPLICATE_BLOCKED") return "DUPLICATE_BLOCKED";
   return "ENROLLED";
+}
+
+export function biometricDuplicateCaseToResponse(duplicateCase) {
+  return {
+    ...duplicateCase,
+    matchScore: duplicateCase.matchScore.toString(),
+    matchThreshold: duplicateCase.matchThreshold.toString(),
+  };
 }
 
 export function consentToResponse(consent, now = new Date()) {
@@ -251,7 +301,7 @@ function simulatedLiveness(buffer) {
   return Math.min(0.99, Math.max(0.05, uniqueBytes / 220));
 }
 
-function cosineSimilarity(left, right) {
+export function cosineSimilarity(left, right) {
   if (left.length !== right.length) return 0;
   let dot = 0;
   let leftMagnitude = 0;
@@ -263,6 +313,47 @@ function cosineSimilarity(left, right) {
   }
   if (leftMagnitude === 0 || rightMagnitude === 0) return 0;
   return Math.max(0, Math.min(1, dot / Math.sqrt(leftMagnitude * rightMagnitude)));
+}
+
+export function duplicateScanWhere(beneficiaryId, model, now = new Date()) {
+  return {
+    beneficiaryId: { not: beneficiaryId },
+    insightfaceModel: model,
+    dataStatus: "ACTIVE",
+    beneficiary: { status: "ACTIVE" },
+    consent: {
+      consentGiven: true,
+      revokedAt: null,
+      retentionUntil: { gt: now },
+    },
+  };
+}
+
+export function findBiometricDuplicateMatch(embedding, profiles, threshold = env.biometricMatchThreshold) {
+  let bestMatch = null;
+  for (const profile of profiles) {
+    const reference = decryptBiometricTemplate(
+      profile.faceEmbedding,
+      profile.beneficiaryId,
+      profile.consentId,
+    );
+    let matchScore;
+    try {
+      matchScore = validateScore(cosineSimilarity(embedding, reference), "matchScore");
+    } finally {
+      reference.fill(0);
+    }
+    if (matchScore >= threshold && (!bestMatch || matchScore > bestMatch.matchScore)) {
+      bestMatch = { profile, matchScore };
+    }
+  }
+  return bestMatch;
+}
+
+export async function acquireBiometricEnrollmentLock(database) {
+  // ponytail: one cross-instance lock keeps scan-and-write exact; use pgvector/ANN partition locks
+  // only when measured enrollment throughput makes the serialized O(n) scan a bottleneck.
+  await database.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('garantiyaid-biometric-enrollment'))`;
 }
 
 async function remoteRepresentation(file) {

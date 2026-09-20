@@ -10,11 +10,13 @@ import {
   createSimulatedTransfer,
   createSimulatedWallet,
   getSimulatedWallet,
+  getSimulatedWalletByBeneficiary,
   getTransactionReceipt,
   listWalletTransactions,
   reverseBenefitCredit,
 } from "./wallet.controller.js";
 import {
+  beneficiaryWalletParamsSchema,
   createWalletSchema,
   reverseBenefitCreditSchema,
   simulatedTransferSchema,
@@ -31,6 +33,12 @@ walletRoutes.post(
   authorizeRoles(...WALLET_MANAGE_ROLES),
   validateBody(createWalletSchema),
   createSimulatedWallet,
+);
+walletRoutes.get(
+  "/beneficiaries/:beneficiaryId",
+  authorizeRoles(...WALLET_READ_ROLES),
+  validateParams(beneficiaryWalletParamsSchema),
+  getSimulatedWalletByBeneficiary,
 );
 walletRoutes.get(
   "/:walletId",

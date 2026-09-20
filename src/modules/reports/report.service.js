@@ -29,6 +29,7 @@ export const DISTRIBUTION_EXPORT_COLUMNS = Object.freeze([
   { key: "location", label: "location" },
   { key: "distribution_status", label: "distribution_status" },
   { key: "verification_requirement", label: "verification_requirement" },
+  { key: "delivery_mode", label: "delivery_mode" },
   { key: "beneficiary_id", label: "beneficiary_id" },
   { key: "beneficiary_name", label: "beneficiary_name" },
   { key: "allocation_id", label: "allocation_id" },
@@ -45,6 +46,11 @@ export const DISTRIBUTION_EXPORT_COLUMNS = Object.freeze([
   { key: "qr_verified", label: "qr_verified" },
   { key: "biometric_verified", label: "biometric_verified" },
   { key: "claimed_at_ph", label: "claimed_at_ph" },
+  { key: "released_at_ph", label: "released_at_ph" },
+  { key: "released_by_employee_id", label: "released_by_employee_id" },
+  { key: "released_by_name", label: "released_by_name" },
+  { key: "release_evidence_type", label: "release_evidence_type" },
+  { key: "release_evidence_reference", label: "release_evidence_reference" },
   { key: "benefit_credit_status", label: "benefit_credit_status" },
   { key: "benefit_credit_reference", label: "benefit_credit_reference" },
   { key: "credited_amount_php", label: "credited_amount_php" },
@@ -64,7 +70,7 @@ function beneficiaryName(beneficiary) {
 function reportEnvelope(type, distributionId, data, generatedAt = new Date()) {
   return {
     reportType: type,
-    reportVersion: "GYA-PHASE8-1",
+    reportVersion: "GYA-REPORT-1",
     generatedAt: formatPhilippineTimestamp(generatedAt),
     timeZone: PHILIPPINE_TIME_ZONE,
     distributionId,
@@ -102,7 +108,7 @@ export async function generateClaimStatusReport(
   { page, pageSize, status, dateFrom, dateTo },
   database = prisma,
 ) {
-  await getDashboardDistributionOrThrow(distributionId, staffUser, database);
+  const distribution = await getDashboardDistributionOrThrow(distributionId, staffUser, database);
   const where = {
     distributionId,
     ...(status ? { claimStatus: status } : {}),
@@ -122,6 +128,10 @@ export async function generateClaimStatusReport(
         qrVerified: true,
         biometricVerified: true,
         signatureVerified: true,
+        releaseMethod: true,
+        releasedAt: true,
+        releaseEvidenceType: true,
+        releaseEvidenceReference: true,
         isDuplicateFlag: true,
         claimedAt: true,
         createdAt: true,
@@ -135,6 +145,9 @@ export async function generateClaimStatusReport(
           },
         },
         allocation: { select: { amount: true, allocationStatus: true } },
+        releasedBy: {
+          select: { userId: true, employeeId: true, fullName: true, role: true },
+        },
         schedule: {
           select: {
             queueNumber: true,
@@ -182,6 +195,11 @@ export async function generateClaimStatusReport(
     qrVerified: claim.qrVerified,
     biometricVerified: claim.biometricVerified,
     signatureVerified: claim.signatureVerified,
+    deliveryMode: claim.releaseMethod ?? distribution.deliveryMode,
+    releasedAt: formatPhilippineTimestamp(claim.releasedAt),
+    releasedBy: claim.releasedBy,
+    releaseEvidenceType: claim.releaseEvidenceType,
+    releaseEvidenceReference: claim.releaseEvidenceReference,
     duplicateFlag: claim.isDuplicateFlag,
     claimedAt: formatPhilippineTimestamp(claim.claimedAt),
     recordedAt: formatPhilippineTimestamp(claim.createdAt),
@@ -391,7 +409,7 @@ function allocationExportRow({
   const credited = credit ? decimalToCents(credit.amount) : 0n;
   const reversed = reversal?.status === "COMPLETED" ? decimalToCents(reversal.amount) : 0n;
   return {
-    report_version: "GYA-PHASE8-1",
+    report_version: "GYA-REPORT-1",
     prototype_disclaimer: REPORT_DISCLAIMER,
     generated_at_ph: formatPhilippineTimestamp(generatedAt),
     distribution_id: distribution.distributionId,
@@ -405,6 +423,7 @@ function allocationExportRow({
     session_label: schedule?.slot.sessionLabel ?? "",
     distribution_status: distribution.status,
     verification_requirement: distribution.verificationRequirement,
+    delivery_mode: claim?.releaseMethod ?? distribution.deliveryMode,
     beneficiary_id: allocation.beneficiaryId,
     beneficiary_name: beneficiaryName(allocation.beneficiary),
     allocation_id: allocation.allocationId,
@@ -422,13 +441,20 @@ function allocationExportRow({
     biometric_verified: claim?.biometricVerified ?? false,
     signature_verified: claim?.signatureVerified ?? false,
     claimed_at_ph: formatPhilippineTimestamp(claim?.claimedAt),
-    benefit_credit_status: credit?.status ?? "NOT_CREDITED",
+    released_at_ph: formatPhilippineTimestamp(claim?.releasedAt),
+    released_by_employee_id: claim?.releasedBy?.employeeId ?? "",
+    released_by_name: claim?.releasedBy?.fullName ?? "",
+    release_evidence_type: claim?.releaseEvidenceType ?? "",
+    release_evidence_reference: claim?.releaseEvidenceReference ?? "",
+    benefit_credit_status: distribution.deliveryMode === "PHYSICAL_GOODS"
+      ? "NOT_APPLICABLE"
+      : credit?.status ?? "NOT_CREDITED",
     benefit_credit_reference: credit?.referenceNo ?? "",
     credited_amount_php: formatMoney(credited),
     reversal_reference: reversal?.referenceNo ?? "",
     reversed_amount_php: formatMoney(reversed),
     net_simulated_amount_php: formatMoney(credited - reversed),
-    simulated: true,
+    simulated: distribution.deliveryMode === "SIMULATED_WALLET",
     real_funds_moved: false,
   };
 }
@@ -480,7 +506,14 @@ export async function generateDistributionCsvExport(
         qrVerified: true,
         biometricVerified: true,
         signatureVerified: true,
+        releaseMethod: true,
+        releasedAt: true,
+        releaseEvidenceType: true,
+        releaseEvidenceReference: true,
         claimedAt: true,
+        releasedBy: {
+          select: { employeeId: true, fullName: true },
+        },
       },
     }),
     database.transaction.findMany({

@@ -9,6 +9,7 @@ let server;
 let baseUrl;
 let programId;
 let criterionId;
+let manualCriterionId;
 let enrollmentId;
 let documentId;
 let replacementDocumentId;
@@ -72,6 +73,7 @@ async function cleanup() {
   const recordIds = [
     enrollmentId,
     criterionId,
+    manualCriterionId,
     programId,
     ...temporaryDocumentIds,
   ].filter(Boolean);
@@ -98,8 +100,9 @@ async function cleanup() {
       }
     }
   }
-  if (criterionId) {
-    await prisma.programCriterion.deleteMany({ where: { criterionId } });
+  const criterionIds = [criterionId, manualCriterionId].filter(Boolean);
+  if (criterionIds.length > 0) {
+    await prisma.programCriterion.deleteMany({ where: { criterionId: { in: criterionIds } } });
   }
   if (programId) {
     await prisma.program.deleteMany({ where: { programId } });
@@ -213,14 +216,27 @@ try {
     method: "POST",
     token: dswdToken,
     body: {
-      criterionName: "Adult beneficiary",
-      fieldName: "AGE",
-      operator: "GREATER_THAN_OR_EQUAL",
-      expectedValue: 18,
+      criterionName: "Resident of the covered barangay",
+      fieldName: "BARANGAY_ID",
+      operator: "EQUALS",
+      expectedValue: facilitator.barangayId,
     },
   });
   requireStatus(createCriterion, 201, "DSWD criterion creation");
   criterionId = createCriterion.payload.data.criterion.criterionId;
+
+  const createManualCriterion = await request(`/programs/${programId}/criteria`, {
+    method: "POST",
+    token: dswdToken,
+    body: {
+      criterionName: "DSWD case assessment",
+      fieldName: "MANUAL_REVIEW",
+      operator: "REQUIRED",
+      expectedValue: true,
+    },
+  });
+  requireStatus(createManualCriterion, 201, "DSWD manual criterion creation");
+  manualCriterionId = createManualCriterion.payload.data.criterion.criterionId;
 
   const activateProgram = await request(`/programs/${programId}/activate`, {
     method: "POST",
@@ -345,12 +361,49 @@ try {
   );
   requireStatus(acceptedDocumentRereview, 409, "accepted document transition lock");
 
-  const approveEnrollment = await request(`/enrollments/${enrollmentId}/approve`, {
+  const approvalWithoutManualDecision = await request(`/enrollments/${enrollmentId}/approve`, {
     method: "POST",
     token: dswdToken,
     body: { remarks: "Reusable end-to-end verification passed." },
   });
-  requireStatus(approveEnrollment, 200, "DSWD enrollment approval");
+  requireStatus(approvalWithoutManualDecision, 409, "manual eligibility decision requirement");
+  if (approvalWithoutManualDecision.payload.error.code !== "ENROLLMENT_ELIGIBILITY_REVIEW_REQUIRED") {
+    throw new Error("Enrollment approval did not require the configured manual decision.");
+  }
+
+  const approvalBody = {
+    remarks: "Reusable end-to-end verification passed.",
+    manualDecisions: [{
+      criterionId: manualCriterionId,
+      passed: true,
+      remarks: "Case assessment evidence was verified by DSWD.",
+    }],
+  };
+  const approvalAttempts = await Promise.all([
+    request(`/enrollments/${enrollmentId}/approve`, {
+      method: "POST",
+      token: dswdToken,
+      body: approvalBody,
+    }),
+    request(`/enrollments/${enrollmentId}/approve`, {
+      method: "POST",
+      token: dswdToken,
+      body: approvalBody,
+    }),
+  ]);
+  const approvalStatuses = approvalAttempts.map((result) => result.response.status).sort();
+  if (approvalStatuses[0] !== 200 || approvalStatuses[1] !== 409) {
+    throw new Error(`Concurrent approval must return one 200 and one 409, received ${approvalStatuses.join(", ")}.`);
+  }
+  const approveEnrollment = approvalAttempts.find((result) => result.response.status === 200);
+  const approvalSnapshot = approveEnrollment.payload.data.enrollment.eligibilitySnapshot;
+  if (
+    approvalSnapshot?.schemaVersion !== 1
+    || approvalSnapshot?.overallStatus !== "ELIGIBLE"
+    || approvalSnapshot?.results?.length !== 2
+  ) {
+    throw new Error("Enrollment approval did not return a complete eligibility snapshot.");
+  }
 
   const adminRead = await request(`/enrollments/${enrollmentId}`, {
     token: adminToken,
@@ -358,6 +411,24 @@ try {
   requireStatus(adminRead, 200, "SYSTEM_ADMIN read-only enrollment access");
   if (adminRead.payload.data.enrollment.status !== "APPROVED") {
     throw new Error("Final enrollment status was not APPROVED.");
+  }
+  if (
+    JSON.stringify(adminRead.payload.data.enrollment.eligibilitySnapshot)
+    !== JSON.stringify(approvalSnapshot)
+  ) {
+    throw new Error("Enrollment detail did not preserve the approval eligibility snapshot.");
+  }
+
+  const approvalAuditLogs = await prisma.auditLog.findMany({
+    where: { recordId: enrollmentId, action: "ENROLLMENT_APPROVED" },
+    select: { details: true },
+  });
+  if (
+    approvalAuditLogs.length !== 1
+    || JSON.stringify(approvalAuditLogs[0].details?.eligibilitySnapshot)
+      !== JSON.stringify(approvalSnapshot)
+  ) {
+    throw new Error("Approval must create exactly one audit entry with the stored eligibility snapshot.");
   }
 
   const forbiddenFacilitatorAuditRead = await request("/audit-logs", {

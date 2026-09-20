@@ -18,6 +18,7 @@ import notificationRoutes, {
 } from "../modules/notifications/notification.routes.js";
 import chatbotRoutes from "../modules/chatbot/chatbot.routes.js";
 import staffNotificationRoutes from "../modules/staffNotifications/staffNotification.routes.js";
+import biometricDuplicateRoutes from "../modules/biometrics/biometricDuplicate.routes.js";
 
 const apiRoutes = Router();
 
@@ -26,6 +27,7 @@ apiRoutes.use("/auth", authRoutes);
 apiRoutes.use("/barangays", barangayRoutes);
 apiRoutes.use("/beneficiaries/:beneficiaryId/documents", beneficiaryDocumentRoutes);
 apiRoutes.use("/beneficiaries", beneficiaryRoutes);
+apiRoutes.use("/biometric-duplicate-cases", biometricDuplicateRoutes);
 apiRoutes.use("/programs/:programId/enrollments", programEnrollmentRoutes);
 apiRoutes.use("/programs", programRoutes);
 apiRoutes.use("/enrollments", enrollmentRoutes);

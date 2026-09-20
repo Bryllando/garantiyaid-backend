@@ -92,7 +92,7 @@ async function unusedDate(barangayId) {
     });
     if (count === 0) return value;
   }
-  throw new Error("No unused future date is available for Phase 7 verification.");
+  throw new Error("No unused future date is available for biometric verification.");
 }
 
 async function cleanup() {
@@ -208,10 +208,10 @@ try {
   const suffix = Date.now().toString().slice(-10);
   const program = await prisma.program.create({
     data: {
-      programName: `Temporary Phase Seven Program ${suffix}`,
+      programName: `Temporary Biometric Program ${suffix}`,
       programCode: `BIO-${suffix}`,
       programType: "CASH_ASSISTANCE",
-      description: "Temporary Phase 7 verification fixture.",
+      description: "Temporary biometric verification fixture.",
       grantAmount: 1000,
       budgetAmount: 10000,
       status: "ACTIVE",
@@ -225,7 +225,7 @@ try {
     const beneficiary = await prisma.beneficiary.create({
       data: {
         firstName,
-        lastName: `PhaseSeven${suffix}`,
+        lastName: `BiometricVerify${suffix}`,
         birthDate: new Date(`198${index}-01-01T00:00:00.000Z`),
         sex: index === 1 ? "FEMALE" : "MALE",
         address: "Temporary biometric verification address",
@@ -258,7 +258,7 @@ try {
     data: {
       programId: program.programId,
       createdById: administrator.userId,
-      title: `Temporary Phase 7 Event ${suffix}`,
+      title: `Temporary Biometric Verification Event ${suffix}`,
       distributionDate: new Date(`${date}T00:00:00.000Z`),
       startTime: new Date("1970-01-01T08:00:00.000Z"),
       endTime: new Date("1970-01-01T09:00:00.000Z"),
@@ -395,7 +395,7 @@ try {
     method: "POST",
     token: facilitatorToken,
     idempotencyKey: randomUUID(),
-    body: { token: tokenByBeneficiary.get(beneficiaries[0].beneficiaryId), deviceInfo: "Phase 7 QR first" },
+    body: { token: tokenByBeneficiary.get(beneficiaries[0].beneficiaryId), deviceInfo: "QR-first verification" },
   });
   requireStatus(alphaQr, 201, "QR-first partial claim");
   temporaryClaimIds.push(alphaQr.payload.data.claim.claimId);
@@ -411,7 +411,7 @@ try {
       token: facilitatorToken,
       capture: captures[0],
       idempotencyKey: alphaBiometricKey,
-      fields: { beneficiaryId: beneficiaries[0].beneficiaryId, deviceInfo: "Phase 7 biometric second" },
+      fields: { beneficiaryId: beneficiaries[0].beneficiaryId, deviceInfo: "Biometric-second verification" },
     },
   );
   requireStatus(alphaBiometric, 201, "biometric completion after QR");
@@ -426,7 +426,7 @@ try {
       token: facilitatorToken,
       capture: captures[0],
       idempotencyKey: alphaBiometricKey,
-      fields: { beneficiaryId: beneficiaries[0].beneficiaryId, deviceInfo: "Phase 7 biometric second" },
+      fields: { beneficiaryId: beneficiaries[0].beneficiaryId, deviceInfo: "Biometric-second verification" },
     },
   );
   requireStatus(alphaReplay, 201, "biometric idempotent replay");
@@ -441,7 +441,7 @@ try {
       token: facilitatorToken,
       capture: pngCapture("spoof", true),
       idempotencyKey: randomUUID(),
-      fields: { beneficiaryId: beneficiaries[1].beneficiaryId, deviceInfo: "Phase 7 spoof" },
+      fields: { beneficiaryId: beneficiaries[1].beneficiaryId, deviceInfo: "Spoof verification capture" },
     },
   );
   requireStatus(livenessFailure, 422, "liveness failure");
@@ -452,7 +452,7 @@ try {
       token: facilitatorToken,
       capture: captures[0],
       idempotencyKey: randomUUID(),
-      fields: { beneficiaryId: beneficiaries[1].beneficiaryId, deviceInfo: "Phase 7 mismatch" },
+      fields: { beneficiaryId: beneficiaries[1].beneficiaryId, deviceInfo: "Mismatch verification capture" },
     },
   );
   requireStatus(noMatch, 422, "face mismatch");
@@ -463,7 +463,7 @@ try {
       token: facilitatorToken,
       capture: captures[1],
       idempotencyKey: randomUUID(),
-      fields: { beneficiaryId: beneficiaries[1].beneficiaryId, deviceInfo: "Phase 7 biometric first" },
+      fields: { beneficiaryId: beneficiaries[1].beneficiaryId, deviceInfo: "Biometric-first verification" },
     },
   );
   requireStatus(bravoBiometric, 201, "biometric-first partial claim");
@@ -476,7 +476,7 @@ try {
     method: "POST",
     token: facilitatorToken,
     idempotencyKey: randomUUID(),
-    body: { token: tokenByBeneficiary.get(beneficiaries[1].beneficiaryId), deviceInfo: "Phase 7 QR second" },
+    body: { token: tokenByBeneficiary.get(beneficiaries[1].beneficiaryId), deviceInfo: "QR-second verification" },
   });
   requireStatus(bravoQr, 201, "QR completion after biometric");
   if (
@@ -550,19 +550,19 @@ try {
       method: "POST",
       token: dswdToken,
       idempotencyKey: randomUUID(),
-      body: { description: "Phase 7 combined identity verification credit test" },
+      body: { description: "Combined identity verification credit test" },
     },
   );
-  requireStatus(credited, 201, "Phase 6 credit after combined verification");
+  requireStatus(credited, 201, "wallet credit after combined verification");
   if (
     credited.payload.data.lifecycle.claimStatus !== "CLAIMED"
     || credited.payload.data.wallet.balance !== "1000"
-  ) throw new Error("Combined identity verification did not integrate with Phase 6 credit.");
+  ) throw new Error("Combined identity verification did not integrate with wallet credit.");
 
-  console.log("Phase 7 biometric consent and identity verification passed.");
+  console.log("Biometric consent and identity verification passed.");
   console.log("Verified consent gating/history, transient captures, encrypted templates, RBAC,");
   console.log("re-enrollment, QR-first and biometric-first combined claims, replay protection,");
-  console.log("liveness/no-match logging, revocation/deletion, privacy, and Phase 6 credit compatibility.");
+  console.log("liveness/no-match logging, revocation/deletion, privacy, and wallet-credit compatibility.");
 } finally {
   if (server) {
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));

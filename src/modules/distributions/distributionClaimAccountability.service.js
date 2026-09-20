@@ -21,6 +21,11 @@ export const claimReceiptSourceSelect = {
   biometricVerified: true,
   qrVerified: true,
   signatureVerified: true,
+  releaseMethod: true,
+  releasedAt: true,
+  releaseEvidenceType: true,
+  releaseEvidenceReference: true,
+  releaseNotes: true,
   claimedAt: true,
   updatedAt: true,
   beneficiary: {
@@ -41,6 +46,7 @@ export const claimReceiptSourceSelect = {
       startTime: true,
       endTime: true,
       location: true,
+      deliveryMode: true,
       verificationRequirement: true,
       program: { select: { programCode: true, programName: true } },
       barangay: { select: { barangayName: true } },
@@ -62,6 +68,7 @@ export const claimReceiptSourceSelect = {
   },
   allocation: { select: { amount: true, allocationStatus: true } },
   verifiedBy: { select: staffSelect },
+  releasedBy: { select: staffSelect },
   signature: {
     select: {
       imageSha256: true,
@@ -133,7 +140,11 @@ export const claimDisputePublicSelect = {
       claimId: true,
       claimStatus: true,
       verificationMethod: true,
+      releaseMethod: true,
+      releasedAt: true,
       claimedAt: true,
+      releasedBy: { select: staffSelect },
+      distribution: { select: { deliveryMode: true } },
       beneficiary: {
         select: {
           beneficiaryId: true,
@@ -220,6 +231,16 @@ export function buildClaimReceiptSnapshot(claim) {
       amount: decimalString(claim.allocation.amount),
       allocationStatus: claim.allocation.allocationStatus,
       currency: "PHP",
+      deliveryMode: claim.releaseMethod ?? claim.distribution.deliveryMode,
+      releasedAt: iso(claim.releasedAt),
+      releasedBy: claim.releasedBy,
+      evidence: claim.releaseEvidenceType
+        ? {
+            type: claim.releaseEvidenceType,
+            reference: claim.releaseEvidenceReference,
+            notes: claim.releaseNotes,
+          }
+        : null,
     },
     verificationEvidence: {
       verifiedBy: claim.verifiedBy,
@@ -376,14 +397,16 @@ export function disputeReviewUpdate(dispute, action, userId, reviewNotes, now = 
     };
   }
   if (action === "COMPLETE_REMEDIATION") {
-    if (dispute.claim.claimStatus === "CLAIMED") {
+    const physicalRelease = dispute.claim.releaseMethod === "PHYSICAL_GOODS"
+      || dispute.claim.distribution?.deliveryMode === "PHYSICAL_GOODS";
+    if (dispute.claim.claimStatus === "CLAIMED" && !physicalRelease) {
       throw new AppError(
         409,
         "CLAIM_REVERSAL_REQUIRED",
         "Reverse the completed benefit credit before resolving this dispute as remediated.",
       );
     }
-    if (!["VERIFIED", "VOIDED"].includes(dispute.claim.claimStatus)) {
+    if (!["VERIFIED", "VOIDED", ...(physicalRelease ? ["CLAIMED"] : [])].includes(dispute.claim.claimStatus)) {
       throw new AppError(409, "CLAIM_NOT_REMEDIABLE", "This claim cannot be remediated in its current state.");
     }
     return {
@@ -395,7 +418,10 @@ export function disputeReviewUpdate(dispute, action, userId, reviewNotes, now = 
         reviewedAt: now,
         resolvedAt: now,
       },
-      claimData: dispute.claim.claimStatus === "VERIFIED" ? { claimStatus: "VOIDED" } : null,
+      claimData: ["VERIFIED", "CLAIMED"].includes(dispute.claim.claimStatus)
+        ? { claimStatus: "VOIDED" }
+        : null,
+      claimExpectedStatus: dispute.claim.claimStatus,
     };
   }
   throw new AppError(400, "INVALID_DISPUTE_ACTION", "Unsupported dispute review action.");

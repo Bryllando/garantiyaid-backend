@@ -8,6 +8,7 @@ import { publishDistributionUpdated } from "../../realtime/publishers.js";
 import {
   assertDistributionManageAllowed,
   assertDistributionReadAllowed,
+  assertDistributionScheduleManageAllowed,
 } from "./distribution.policy.js";
 import { idempotencyKeySchema } from "./distributionAllocation.schemas.js";
 import { distributionSelect, distributionToResponse } from "./distribution.service.js";
@@ -192,7 +193,7 @@ export const listSchedulableAllocations = asyncHandler(async (req, res) => {
 });
 
 export const createDistributionSchedule = asyncHandler(async (req, res) => {
-  assertDistributionManageAllowed(req.staffUser);
+  assertDistributionScheduleManageAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
   const { allocationId, slotId } = req.validatedBody;
 
@@ -306,7 +307,7 @@ async function generationAllocations(transaction, distributionId, allocationIds)
 }
 
 export const generateDistributionSchedules = asyncHandler(async (req, res) => {
-  assertDistributionManageAllowed(req.staffUser);
+  assertDistributionScheduleManageAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
   const { allocationIds } = req.validatedBody;
   const idempotencyKey = scheduleIdempotencyKey(req);
@@ -582,7 +583,7 @@ export const getDistributionSchedule = asyncHandler(async (req, res) => {
 });
 
 export const rescheduleDistributionSchedule = asyncHandler(async (req, res) => {
-  assertDistributionManageAllowed(req.staffUser);
+  assertDistributionScheduleManageAllowed(req.staffUser);
   const { distributionId, scheduleId } = req.validatedParams;
   const { slotId: targetSlotId } = req.validatedBody;
 
@@ -703,7 +704,7 @@ async function transitionDistributionSchedule(req, nextStatus, action) {
 }
 
 export const cancelDistributionSchedule = asyncHandler(async (req, res) => {
-  assertDistributionManageAllowed(req.staffUser);
+  assertDistributionScheduleManageAllowed(req.staffUser);
   const schedule = await transitionDistributionSchedule(
     req,
     "CANCELLED",
@@ -716,7 +717,7 @@ export const cancelDistributionSchedule = asyncHandler(async (req, res) => {
 });
 
 export const reactivateDistributionSchedule = asyncHandler(async (req, res) => {
-  assertDistributionManageAllowed(req.staffUser);
+  assertDistributionScheduleManageAllowed(req.staffUser);
   const schedule = await transitionDistributionSchedule(
     req,
     "SCHEDULED",

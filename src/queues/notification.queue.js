@@ -65,12 +65,15 @@ export async function enqueueNotificationJobs(
 
 export async function enqueueStaffEmailJobs(
   notifications,
-  { queue = getNotificationQueue() } = {},
+  { queue = getNotificationQueue(), deliveryTargetPath } = {},
 ) {
   if (notifications.length === 0) return [];
   return queue.addBulk(notifications.map((notification) => ({
     name: STAFF_EMAIL_JOB_NAME,
-    data: { notificationId: notification.notificationId },
+    data: {
+      notificationId: notification.notificationId,
+      ...(deliveryTargetPath ? { deliveryTargetPath } : {}),
+    },
     opts: {
       jobId: staffEmailJobId(notification.notificationId),
       attempts: env.notificationMaxAttempts,

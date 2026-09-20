@@ -21,6 +21,8 @@ import {
 import {
   SIMULATION_DISCLOSURE,
   assertClaimCreditable,
+  beneficiaryWalletSelect,
+  claimReconciliationException,
   assertWalletActive,
   generateTransactionReference,
   getWalletOrThrow,
@@ -195,6 +197,32 @@ export const getSimulatedWallet = asyncHandler(async (req, res) => {
   });
 });
 
+export const getSimulatedWalletByBeneficiary = asyncHandler(async (req, res) => {
+  assertWalletReadAllowed(req.staffUser);
+  const { beneficiaryId } = req.validatedParams;
+  const [beneficiary, wallet] = await Promise.all([
+    prisma.beneficiary.findUnique({
+      where: { beneficiaryId },
+      select: beneficiaryWalletSelect,
+    }),
+    prisma.walletAccount.findUnique({
+      where: { beneficiaryId },
+      select: walletPublicSelect,
+    }),
+  ]);
+  if (!beneficiary) {
+    throw new AppError(404, "BENEFICIARY_NOT_FOUND", "Beneficiary was not found.");
+  }
+  return res.status(200).json({
+    success: true,
+    data: {
+      beneficiary,
+      wallet: wallet ? walletToResponse(wallet) : null,
+      simulation: SIMULATION_DISCLOSURE,
+    },
+  });
+});
+
 export const listWalletTransactions = asyncHandler(async (req, res) => {
   assertWalletReadAllowed(req.staffUser);
   const { walletId } = req.validatedParams;
@@ -231,6 +259,13 @@ export const listCreditableClaims = asyncHandler(async (req, res) => {
   const { distributionId } = req.validatedParams;
   const { page, pageSize } = req.validatedQuery;
   const distribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
+  if (distribution.deliveryMode !== "SIMULATED_WALLET") {
+    throw new AppError(
+      409,
+      "DISTRIBUTION_NOT_SIMULATED_WALLET",
+      "Physical-goods distributions are released by the assigned Barangay Facilitator and do not enter the simulated wallet credit queue.",
+    );
+  }
   if (distribution.status !== "OPEN") {
     throw new AppError(
       409,
@@ -270,6 +305,13 @@ export const creditVerifiedClaim = asyncHandler(async (req, res) => {
   const { distributionId, claimId } = req.validatedParams;
   const { description } = req.validatedBody;
   const distribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
+  if (distribution.deliveryMode !== "SIMULATED_WALLET") {
+    throw new AppError(
+      409,
+      "DISTRIBUTION_NOT_SIMULATED_WALLET",
+      "Only a SIMULATED_WALLET distribution can create a prototype benefit credit.",
+    );
+  }
   if (distribution.status !== "OPEN") {
     throw new AppError(
       409,
@@ -294,6 +336,19 @@ export const creditVerifiedClaim = asyncHandler(async (req, res) => {
     if (concurrentRecord) {
       assertMatchingIdempotencyRequest(concurrentRecord, requestHash);
       return { replayed: true, responseStatus: concurrentRecord.responseStatus, responseBody: concurrentRecord.responseBody };
+    }
+
+    const currentDistribution = await getDistributionClaimParentOrThrow(
+      distributionId,
+      req.staffUser,
+      tx,
+    );
+    if (currentDistribution.status !== "OPEN" || currentDistribution.deliveryMode !== "SIMULATED_WALLET") {
+      throw new AppError(
+        409,
+        "DISTRIBUTION_NOT_OPEN_FOR_SIMULATED_CREDIT",
+        "This distribution is no longer open for simulated wallet credit.",
+      );
     }
 
     const claimRecord = await tx.claim.findFirst({
@@ -330,7 +385,13 @@ export const creditVerifiedClaim = asyncHandler(async (req, res) => {
       where: { beneficiaryId: claimRecord.beneficiaryId },
       select: { beneficiaryId: true, status: true },
     });
-    const claim = { ...claimRecord, allocation, schedule, beneficiary };
+    const claim = {
+      ...claimRecord,
+      allocation,
+      schedule,
+      beneficiary,
+      distribution: currentDistribution,
+    };
     const priorCredit = await tx.transaction.findFirst({
       where: { claimId, transactionType: "BENEFIT_CREDIT" },
       select: { transactionId: true, referenceNo: true, status: true },
@@ -358,7 +419,13 @@ export const creditVerifiedClaim = asyncHandler(async (req, res) => {
 
     const claimUpdate = await tx.claim.updateMany({
       where: { claimId, distributionId, claimStatus: "VERIFIED" },
-      data: { claimStatus: "CLAIMED", claimedAt: now },
+      data: {
+        claimStatus: "CLAIMED",
+        releaseMethod: "SIMULATED_WALLET",
+        releasedById: req.auth.userId,
+        releasedAt: now,
+        claimedAt: now,
+      },
     });
     const allocationUpdate = await tx.distributionAllocation.updateMany({
       where: { allocationId: claim.allocation.allocationId, allocationStatus: "ALLOCATED" },
@@ -648,7 +715,7 @@ export const reverseBenefitCredit = asyncHandler(async (req, res) => {
       throw new AppError(
         409,
         "TRANSACTION_NOT_REVERSIBLE",
-        "Phase 6 reversal is limited to completed simulated benefit credits.",
+        "Reversal is limited to completed simulated benefit credits.",
       );
     }
     const existingReversal = await tx.transaction.findUnique({
@@ -826,7 +893,7 @@ export const listDistributionTransactions = asyncHandler(async (req, res) => {
 export const reconcileDistribution = asyncHandler(async (req, res) => {
   assertWalletReadAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
-  await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
+  const distribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
   const [allocations, claims, distributionTransactions] = await Promise.all([
     prisma.distributionAllocation.findMany({
       where: { distributionId },
@@ -838,6 +905,9 @@ export const reconcileDistribution = asyncHandler(async (req, res) => {
         claimId: true,
         beneficiaryId: true,
         claimStatus: true,
+        releaseMethod: true,
+        releasedAt: true,
+        releasedById: true,
         allocation: { select: { allocationId: true, amount: true, allocationStatus: true } },
         transactions: {
           where: { transactionType: { in: ["BENEFIT_CREDIT", "BENEFIT_REVERSAL"] } },
@@ -881,17 +951,8 @@ export const reconcileDistribution = asyncHandler(async (req, res) => {
 
   const exceptions = [];
   for (const claim of claims) {
-    const credit = claim.transactions.find((row) => row.transactionType === "BENEFIT_CREDIT");
-    const reversal = claim.transactions.find((row) => row.transactionType === "BENEFIT_REVERSAL");
-    if (claim.claimStatus === "VERIFIED" && !credit) {
-      exceptions.push({ code: "VERIFIED_CLAIM_AWAITING_CREDIT", claimId: claim.claimId });
-    }
-    if (claim.claimStatus === "CLAIMED" && credit?.status !== "COMPLETED") {
-      exceptions.push({ code: "CLAIMED_WITHOUT_COMPLETED_CREDIT", claimId: claim.claimId });
-    }
-    if (claim.claimStatus === "VOIDED" && (!reversal || credit?.status !== "REVERSED")) {
-      exceptions.push({ code: "VOIDED_WITHOUT_COMPLETE_REVERSAL", claimId: claim.claimId });
-    }
+    const exception = claimReconciliationException(claim, distribution.deliveryMode);
+    if (exception) exceptions.push(exception);
   }
   for (const wallet of wallets) {
     const ledgerBalance = wallet.transactions.reduce(
@@ -915,17 +976,36 @@ export const reconcileDistribution = asyncHandler(async (req, res) => {
   const reversals = distributionTransactions
     .filter((row) => row.transactionType === "BENEFIT_REVERSAL" && row.status === "COMPLETED")
     .reduce((total, row) => total + cents(row.amount), 0);
-  const expectedClaimedAmount = claims
+  const totalClaimedAmount = claims
     .filter((claim) => claim.claimStatus === "CLAIMED")
     .reduce((total, claim) => total + cents(claim.allocation.amount), 0);
+  const expectedWalletCreditedAmount = claims
+    .filter((claim) => (
+      claim.claimStatus === "CLAIMED"
+      && (claim.releaseMethod ?? distribution.deliveryMode) === "SIMULATED_WALLET"
+    ))
+    .reduce((total, claim) => total + cents(claim.allocation.amount), 0);
+  const physicalReleasedClaims = claims.filter((claim) => (
+    claim.claimStatus === "CLAIMED"
+    && (claim.releaseMethod ?? distribution.deliveryMode) === "PHYSICAL_GOODS"
+    && claim.releasedAt
+    && claim.releasedById
+  ));
+  const physicalReleasedAmount = physicalReleasedClaims
+    .reduce((total, claim) => total + cents(claim.allocation.amount), 0);
   const netCreditedAmount = grossCredits - reversals;
-  const hardExceptions = exceptions.filter((row) => row.code !== "VERIFIED_CLAIM_AWAITING_CREDIT");
+  const awaitingSettlementCodes = new Set([
+    "VERIFIED_CLAIM_AWAITING_CREDIT",
+    "VERIFIED_PHYSICAL_CLAIM_AWAITING_RELEASE",
+  ]);
+  const hardExceptions = exceptions.filter((row) => !awaitingSettlementCodes.has(row.code));
 
   return res.status(200).json({
     success: true,
     data: {
       reconciliation: {
         distributionId,
+        deliveryMode: distribution.deliveryMode,
         allocationCount: allocations.length,
         allocatedAmount: money(allocations.reduce((total, row) => total + cents(row.amount), 0)),
         claimCounts: {
@@ -942,9 +1022,15 @@ export const reconcileDistribution = asyncHandler(async (req, res) => {
         grossCreditedAmount: money(grossCredits),
         reversedAmount: money(reversals),
         netCreditedAmount: money(netCreditedAmount),
-        expectedClaimedAmount: money(expectedClaimedAmount),
-        ledgerBalanced: hardExceptions.length === 0 && netCreditedAmount === expectedClaimedAmount,
-        readyToClose: exceptions.length === 0 && netCreditedAmount === expectedClaimedAmount,
+        expectedClaimedAmount: money(expectedWalletCreditedAmount),
+        expectedWalletCreditedAmount: money(expectedWalletCreditedAmount),
+        totalClaimedAmount: money(totalClaimedAmount),
+        physicalReleasedCount: physicalReleasedClaims.length,
+        physicalReleasedAmount: money(physicalReleasedAmount),
+        ledgerBalanced: hardExceptions.length === 0
+          && netCreditedAmount === expectedWalletCreditedAmount,
+        readyToClose: exceptions.length === 0
+          && netCreditedAmount === expectedWalletCreditedAmount,
         exceptions,
       },
       simulation: SIMULATION_DISCLOSURE,

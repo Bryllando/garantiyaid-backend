@@ -70,6 +70,7 @@ async function insertDistribution(req, tx) {
           programId: createdDistribution.programId,
           barangayId: createdDistribution.barangayId,
           distributionDate: createdDistribution.distributionDate.toISOString().slice(0, 10),
+          deliveryMode: req.validatedBody.deliveryMode,
           status: createdDistribution.status,
           ...(req.assistantApprovalId ? { assistantApprovalId: req.assistantApprovalId } : {}),
         },

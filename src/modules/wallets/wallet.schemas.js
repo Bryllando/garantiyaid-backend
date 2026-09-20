@@ -35,6 +35,10 @@ export const walletParamsSchema = z.object({
   walletId: z.uuid(),
 }).strict();
 
+export const beneficiaryWalletParamsSchema = z.object({
+  beneficiaryId: z.uuid(),
+}).strict();
+
 export const walletTransactionParamsSchema = z.object({
   walletId: z.uuid(),
   transactionId: z.uuid(),

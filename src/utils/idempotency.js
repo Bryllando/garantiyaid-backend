@@ -44,7 +44,7 @@ export function assertIdempotencyRequestMatches(record, requestHash) {
     throw new AppError(
       409,
       "IDEMPOTENCY_KEY_REUSED",
-      "This Idempotency-Key was already used with a different notification request.",
+      "This Idempotency-Key was already used with different request details.",
     );
   }
 }

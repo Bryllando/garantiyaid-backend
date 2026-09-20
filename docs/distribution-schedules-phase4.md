@@ -1,10 +1,10 @@
-# Distribution Scheduling and Queue Management Phase 4
+# Distribution Scheduling and Queue Management
 
 ## Scope
 
-Phase 4 turns each active distribution allocation into one timed schedule with a queue number. System Administrators manage schedules and open ready events. DSWD Staff can monitor every event. Barangay Facilitators can read schedules only for events in their assigned Barangay.
+Each active distribution allocation receives one timed schedule with a queue number. System Administrators manage events, slots, allocations, schedules, and event opening. Barangay Facilitators may manage schedules only for draft events in their assigned barangay. DSWD Staff has read-only monitoring access.
 
-Phase 4 does not create QR tokens, perform scans or claims, send notifications, create payouts or wallet transactions, capture biometrics, or add frontend behavior.
+The automated scheduler is deterministic and rule-based. It orders beneficiaries by name, checks service-area coverage, fills sessions chronologically, and enforces capacity. It does not use a prediction model or AI optimization.
 
 ## Workflow
 
@@ -24,13 +24,13 @@ All paths below are relative to `/api/v1` and require a staff Bearer token.
 | Method | Endpoint | Access |
 |---|---|---|
 | `GET` | `/distributions/:distributionId/schedulable-allocations` | All staff; Barangay-scoped |
-| `POST` | `/distributions/:distributionId/schedules/generate` | System Administrator |
-| `POST` | `/distributions/:distributionId/schedules` | System Administrator |
+| `POST` | `/distributions/:distributionId/schedules/generate` | System Administrator; assigned Barangay Facilitator |
+| `POST` | `/distributions/:distributionId/schedules` | System Administrator; assigned Barangay Facilitator |
 | `GET` | `/distributions/:distributionId/schedules` | All staff; Barangay-scoped |
 | `GET` | `/distributions/:distributionId/schedules/:scheduleId` | All staff; Barangay-scoped |
-| `POST` | `/distributions/:distributionId/schedules/:scheduleId/reschedule` | System Administrator |
-| `POST` | `/distributions/:distributionId/schedules/:scheduleId/cancel` | System Administrator |
-| `POST` | `/distributions/:distributionId/schedules/:scheduleId/reactivate` | System Administrator |
+| `POST` | `/distributions/:distributionId/schedules/:scheduleId/reschedule` | System Administrator; assigned Barangay Facilitator |
+| `POST` | `/distributions/:distributionId/schedules/:scheduleId/cancel` | System Administrator; assigned Barangay Facilitator |
+| `POST` | `/distributions/:distributionId/schedules/:scheduleId/reactivate` | System Administrator; assigned Barangay Facilitator |
 | `POST` | `/distributions/:distributionId/open` | System Administrator |
 
 ## Enforced rules
@@ -55,7 +55,7 @@ All paths below are relative to `/api/v1` and require a staff Bearer token.
 - Opening requires at least one active allocation and an active schedule for every active allocation.
 - Opening rechecks schedule/allocation ownership and slot capacity in one serializable transaction.
 - `DRAFT -> OPEN` freezes event fields, slots, allocations, and schedules because every mutation endpoint requires `DRAFT`.
-- Every Phase 4 mutation creates an audit log.
+- Every schedule mutation creates an audit log.
 - Responses expose only operational beneficiary identity: UUID, name, Barangay, and lifecycle status. They omit address, contact details, email, PhilSys number, credentials, documents, biometric data, QR data, claims, and wallet data.
 
 ## Migration assessment
@@ -63,9 +63,11 @@ All paths below are relative to `/api/v1` and require a staff Bearer token.
 No Phase 4 migration is required. The existing `Schedule` model already contains:
 
 - `distributionId`, `beneficiaryId`, and `slotId` relations;
-- `queueNumber`, `status`, and `assignedByAi`;
+- `queueNumber`, `status`, and the legacy `assignedByAi` storage field.
 - `@@unique([distributionId, beneficiaryId])`;
 - `@@unique([slotId, queueNumber])`.
+
+API responses also expose `assignmentMethod` as `AUTOMATED_RULES` or `STAFF_ASSIGNED`. The legacy boolean remains for compatibility and does not imply AI optimization.
 
 The existing `IdempotencyRecord` table is reused for schedule batch generation. Existing records and migrations are preserved; no database reset or recreation is needed.
 
@@ -159,7 +161,7 @@ Content-Type: application/json
 }
 ```
 
-Expected: `201 Created`, `status: SCHEDULED`, `assignedByAi: false`, and a positive `queueNumber`.
+Expected: `201 Created`, `status: SCHEDULED`, `assignmentMethod: STAFF_ASSIGNED`, and a positive `queueNumber`.
 
 Save the schedule UUID in **Scripts -> After response**:
 
@@ -170,11 +172,11 @@ pm.environment.set("scheduleId", response.data.schedule.scheduleId);
 
 Send the same request again. Expected: `409 BENEFICIARY_ALREADY_SCHEDULED`.
 
-### 4. Confirm wrong-role protection
+### 4. Confirm role and barangay protection
 
-Repeat the manual request with `{{dswdToken}}`, then `{{barangayToken}}`.
+Repeat the manual request with `{{dswdToken}}`. Expected: `403 FORBIDDEN` because DSWD monitoring is read-only.
 
-Expected: `403 FORBIDDEN` for both. Read access does not grant mutation access.
+Repeat with `{{barangayToken}}` on a draft event in the facilitator's assigned barangay. Expected: the schedule mutation is accepted. Use an event from another barangay. Expected: `404 DISTRIBUTION_NOT_FOUND` without disclosing the other barangay's record.
 
 ### 5. Generate schedules automatically
 
@@ -204,7 +206,7 @@ Content-Type: application/json
 }
 ```
 
-Expected: `201 Created`, `assignedByAi: true`, and response header `Idempotency-Replayed: false`.
+Expected: `201 Created`, `assignmentMethod: AUTOMATED_RULES`, and response header `Idempotency-Replayed: false`.
 
 To schedule every remaining schedulable allocation instead, send an empty object with a new key:
 
@@ -338,7 +340,7 @@ DISTRIBUTION_OPENED
 
 ## Automated verification
 
-Run the Phase 4 unit tests and database-backed workflow verification:
+Run the scheduling unit tests and database-backed workflow verification:
 
 ```powershell
 npm.cmd test
@@ -352,4 +354,4 @@ Run all distribution phases:
 npm.cmd run verify:distribution
 ```
 
-The Phase 4 verification script creates isolated temporary beneficiaries, enrollments, a program, an event, slots, allocations, schedules, sessions, idempotency records, and audit logs. Its `finally` cleanup deletes only those tracked temporary records. It never resets, recreates, or migrates the database.
+The verification script creates isolated temporary beneficiaries, enrollments, a program, an event, slots, allocations, schedules, sessions, idempotency records, and audit logs. Its `finally` cleanup deletes only those tracked temporary records. It never resets, recreates, or migrates the database.

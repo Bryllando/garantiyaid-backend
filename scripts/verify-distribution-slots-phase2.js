@@ -141,7 +141,7 @@ try {
 
   const primaryInput = {
     programId: program.programId,
-    title: "Temporary Slot Phase 2 Verification",
+    title: "Temporary Slot Verification",
     distributionDate,
     startTime: "08:00",
     endTime: "10:00",
@@ -350,10 +350,10 @@ try {
     claims: await prisma.claim.count(),
   };
   if (JSON.stringify(relatedCountsAfter) !== JSON.stringify(relatedCountsBefore)) {
-    throw new Error("Slot Phase 2 changed allocation, schedule, QR-token, or claim records.");
+    throw new Error("Slot verification changed allocation, schedule, QR-token, or claim records.");
   }
 
-  console.log("Distribution Slots Phase 2 HTTP workflow verification passed.");
+  console.log("Distribution slots HTTP workflow verification passed.");
 } finally {
   if (server) {
     await new Promise((resolve, reject) => {

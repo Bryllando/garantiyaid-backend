@@ -83,6 +83,7 @@ export const distributionScheduleParentSelect = {
 export function distributionScheduleToResponse(schedule) {
   return {
     ...schedule,
+    assignmentMethod: schedule.assignedByAi ? "AUTOMATED_RULES" : "STAFF_ASSIGNED",
     ...(schedule.slot ? { slot: distributionSlotToResponse(schedule.slot) } : {}),
   };
 }

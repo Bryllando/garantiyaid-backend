@@ -142,7 +142,7 @@ Content-Type: application/json
 ```json
 {
   "programId": "{{programId}}",
-  "title": "Phase 4 Clean Postman Test",
+  "title": "Education Assistance Release - Batch A",
   "distributionDate": "2026-12-15",
   "startTime": "08:00",
   "endTime": "09:00",
@@ -607,4 +607,3 @@ Ang verification script temporary records ra ang gamiton ug limpyohan dayon. Dil
 - `409 IDEMPOTENCY_KEY_REUSED`: same key pero nausab ang body; generate a new UUID for a new request.
 - `409 DISTRIBUTION_ALLOCATIONS_UNSCHEDULED`: dili pa tanan active allocations adunay active schedule.
 - Ayaw i-cancel ang distribution before mahuman ang tests; terminal state ang `CANCELLED` ug dili na ma-reactivate.
-

@@ -5,12 +5,15 @@ import { once } from "node:events";
 import express from "express";
 import { env } from "../src/config/env.js";
 import beneficiaryRoutes from "../src/modules/beneficiaries/beneficiary.routes.js";
+import biometricDuplicateRoutes from "../src/modules/biometrics/biometricDuplicate.routes.js";
 import distributionRoutes from "../src/modules/distributions/distribution.routes.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import {
   BIOMETRIC_ATTEMPT_RESULTS,
   biometricAttemptListQuerySchema,
   biometricEnrollmentSchema,
+  biometricDuplicateCaseListQuerySchema,
+  reviewBiometricDuplicateCaseSchema,
   claimSignatureParamsSchema,
   submitClaimSignatureSchema,
   verifyBiometricClaimSchema,
@@ -18,22 +21,28 @@ import {
 import {
   BIOMETRIC_CONSENT_MANAGE_ROLES,
   BIOMETRIC_DELETE_ROLES,
+  BIOMETRIC_DUPLICATE_REVIEW_ROLES,
   BIOMETRIC_ENROLL_ROLES,
   BIOMETRIC_READ_ROLES,
   BIOMETRIC_VERIFY_ROLES,
   assertBiometricDeleteAllowed,
+  assertBiometricDuplicateReviewAllowed,
   assertBiometricEnrollAllowed,
+  assertIndependentBiometricDuplicateReviewer,
   assertBiometricVerifyAllowed,
 } from "../src/modules/biometrics/biometric.policy.js";
 import {
   assertValidBiometricCapture,
+  acquireBiometricEnrollmentLock,
   biometricAttemptPublicSelect,
   biometricProfileInternalSelect,
   biometricProfileStatus,
   biometricProfileToResponse,
   consentEffectiveStatus,
+  duplicateScanWhere,
   decryptBiometricTemplate,
   encryptBiometricTemplate,
+  findBiometricDuplicateMatch,
   normalizeBiometricEmbedding,
   parseDeepFaceRepresentation,
   processBiometricEnrollment,
@@ -131,6 +140,30 @@ test("Phase 7 RBAC separates metadata, consent, enrollment, verification, and de
   assert.throws(() => assertBiometricDeleteAllowed({ role: "DSWD_STAFF" }), (error) => error.code === "FORBIDDEN");
 });
 
+test("duplicate review is restricted to independent oversight roles", () => {
+  assert.deepEqual(BIOMETRIC_DUPLICATE_REVIEW_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
+  assert.doesNotThrow(() => assertBiometricDuplicateReviewAllowed({ role: "DSWD_STAFF" }));
+  assert.throws(
+    () => assertBiometricDuplicateReviewAllowed({ role: "BARANGAY_FACILITATOR" }),
+    (error) => error.code === "FORBIDDEN",
+  );
+  assert.doesNotThrow(() => assertIndependentBiometricDuplicateReviewer("reviewer", "enroller"));
+  assert.throws(
+    () => assertIndependentBiometricDuplicateReviewer("same-staff", "same-staff"),
+    (error) => error.code === "BIOMETRIC_DUPLICATE_SELF_REVIEW_FORBIDDEN",
+  );
+  assert.deepEqual(biometricDuplicateCaseListQuerySchema.parse({ status: " pending " }), {
+    page: 1,
+    pageSize: 20,
+    status: "PENDING",
+  });
+  assert.equal(reviewBiometricDuplicateCaseSchema.safeParse({
+    action: "CLEAR_AS_DISTINCT",
+    reviewNotes: "Records and in-person evidence show different people.",
+    attestation: false,
+  }).success, false);
+});
+
 test("biometric templates use authenticated encryption bound to beneficiary and consent", () => {
   const embedding = Array.from({ length: 128 }, (_, index) => (index - 64) / 128);
   const encrypted = encryptBiometricTemplate(embedding, beneficiaryId, consentId);
@@ -179,6 +212,41 @@ test("the development processor is deterministic, detects mismatch, and rejects 
   }
 });
 
+test("duplicate scan matches another active profile, allows a different face, and excludes self", () => {
+  const otherBeneficiaryId = "33333333-3333-4333-8333-333333333333";
+  const otherConsentId = "44444444-4444-4444-8444-444444444444";
+  const embedding = normalizeBiometricEmbedding(Array.from({ length: 128 }, (_, index) => index + 1));
+  const different = normalizeBiometricEmbedding(Array.from({ length: 128 }, (_, index) => index % 2 ? 1 : -1));
+  const profile = {
+    biometricId: "55555555-5555-4555-8555-555555555555",
+    beneficiaryId: otherBeneficiaryId,
+    consentId: otherConsentId,
+    faceEmbedding: encryptBiometricTemplate(embedding, otherBeneficiaryId, otherConsentId),
+  };
+  assert.equal(findBiometricDuplicateMatch(embedding, [profile], 0.80)?.profile.biometricId, profile.biometricId);
+  assert.equal(findBiometricDuplicateMatch(different, [profile], 0.80), null);
+
+  const now = new Date("2026-09-18T00:00:00.000Z");
+  const where = duplicateScanWhere(beneficiaryId, "ArcFace", now);
+  assert.equal(where.beneficiaryId.not, beneficiaryId);
+  assert.equal(where.dataStatus, "ACTIVE");
+  assert.equal(where.consent.consentGiven, true);
+  assert.equal(where.consent.revokedAt, null);
+  assert.deepEqual(where.consent.retentionUntil, { gt: now });
+});
+
+test("enrollment scan obtains one cross-instance database transaction lock", async () => {
+  let statement = "";
+  await acquireBiometricEnrollmentLock({
+    $executeRaw(strings) {
+      statement = strings.join("");
+      return Promise.resolve(1);
+    },
+  });
+  assert.match(statement, /pg_advisory_xact_lock/);
+  assert.match(statement, /garantiyaid-biometric-enrollment/);
+});
+
 test("DeepFace ArcFace output is normalized and requires exactly one face", () => {
   const rawEmbedding = Array.from({ length: 512 }, (_, index) => index - 256);
   const embedding = parseDeepFaceRepresentation({ results: [{ embedding: rawEmbedding }] });
@@ -222,6 +290,39 @@ test("remote biometric processing requests ArcFace anti-spoofing and matches loc
     assert.equal(enrollment.processor, "REMOTE_DEEPFACE_ARCFACE");
     assert.equal(enrollment.livenessPassed, true);
     assert.equal(verification.matchPassed, true);
+  } finally {
+    globalThis.fetch = previous.fetch;
+    env.biometricProcessorMode = previous.mode;
+    env.biometricServiceUrl = previous.url;
+    env.biometricServiceApiKey = previous.key;
+  }
+});
+
+test("remote processor returns clear spoof and outage outcomes", async () => {
+  const previous = {
+    fetch: globalThis.fetch,
+    mode: env.biometricProcessorMode,
+    url: env.biometricServiceUrl,
+    key: env.biometricServiceApiKey,
+  };
+  env.biometricProcessorMode = "REMOTE";
+  env.biometricServiceUrl = "http://biometric-ai.test";
+  env.biometricServiceApiKey = "test-biometric-token-with-32-characters";
+  try {
+    globalThis.fetch = async () => Response.json(
+      { error: "Exception while representing: Spoof detected in the given image." },
+      { status: 400 },
+    );
+    const spoof = await processBiometricEnrollment(jpegCapture("printed-photo-spoof"));
+    assert.equal(spoof.livenessPassed, false);
+    assert.equal(spoof.embedding, null);
+    assert.equal(spoof.processor, "REMOTE_DEEPFACE_ARCFACE");
+
+    globalThis.fetch = async () => { throw new TypeError("connection refused") };
+    await assert.rejects(
+      processBiometricEnrollment(jpegCapture("live-capture-service-outage")),
+      (error) => error.code === "BIOMETRIC_SERVICE_UNAVAILABLE" && error.statusCode === 503,
+    );
   } finally {
     globalThis.fetch = previous.fetch;
     env.biometricProcessorMode = previous.mode;
@@ -325,6 +426,8 @@ test("consent and profile status enforce active, revoked, and expired lifecycle"
   assert.equal(consentEffectiveStatus({ ...activeConsent, retentionUntil: past }), "EXPIRED");
   assert.equal(biometricProfileStatus({ dataStatus: "ACTIVE", consent: activeConsent }), "ENROLLED");
   assert.equal(biometricProfileStatus({ dataStatus: "REVOKED", consent: activeConsent }), "REVOKED");
+  assert.equal(biometricProfileStatus({ dataStatus: "PENDING_DUPLICATE_REVIEW", consent: activeConsent }), "PENDING_DUPLICATE_REVIEW");
+  assert.equal(biometricProfileStatus({ dataStatus: "DUPLICATE_BLOCKED", consent: activeConsent }), "DUPLICATE_BLOCKED");
 });
 
 test("public biometric responses and attempt selections never expose templates or raw captures", () => {
@@ -370,4 +473,7 @@ test("Phase 7 route surface exposes consent lifecycle, enrollment, verification,
   assert.equal(distributionSurface.some((route) => route.path === "/:distributionId/claims/verify-biometric"), true);
   assert.equal(distributionSurface.some((route) => route.path === "/:distributionId/claims/:claimId/signature"), true);
   assert.equal(distributionSurface.some((route) => route.path === "/:distributionId/biometric-attempts"), true);
+  const duplicateSurface = routeSurface(biometricDuplicateRoutes);
+  assert.equal(duplicateSurface.some((route) => route.path === "/" && route.methods.includes("get")), true);
+  assert.equal(duplicateSurface.some((route) => route.path === "/:duplicateCaseId/review" && route.methods.includes("post")), true);
 });

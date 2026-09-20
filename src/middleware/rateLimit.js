@@ -33,6 +33,12 @@ export const authenticationRateLimiter = rateLimit({
   skipSuccessfulRequests: true,
 });
 
+export const passwordResetRateLimiter = rateLimit({
+  ...commonOptions,
+  identifier: "garantiyaid-password-reset",
+  limit: env.passwordResetRateLimitPer15Minutes,
+});
+
 export const totpRateLimiter = rateLimit({
   ...commonOptions,
   identifier: "garantiyaid-totp",

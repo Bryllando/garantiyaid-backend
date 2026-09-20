@@ -87,7 +87,7 @@ Content-Type: application/json
 ```json
 {
   "programId": "{{programId}}",
-  "title": "Phase 3 Allocation Test",
+  "title": "October Education Assistance",
   "distributionDate": "2026-10-20",
   "startTime": "08:00",
   "endTime": "10:00",

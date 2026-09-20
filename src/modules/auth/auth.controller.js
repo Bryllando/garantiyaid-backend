@@ -26,6 +26,161 @@ import {
   findValidTotpCounter,
   generateTotpSecret,
 } from "./totp.service.js";
+import {
+  PASSWORD_RESET_PUBLIC_MESSAGE,
+  generatePasswordResetToken,
+  hashPasswordResetToken,
+  passwordResetLookupWhere,
+  passwordResetPath,
+  passwordResetTokenIsUsable,
+} from "./passwordReset.service.js";
+
+function invalidPasswordResetTokenError() {
+  return new AppError(
+    400,
+    "INVALID_OR_EXPIRED_PASSWORD_RESET_TOKEN",
+    "This password-reset link is invalid, expired, or already used. Request a new link.",
+  );
+}
+
+export const requestPasswordReset = asyncHandler(async (req, res) => {
+  const user = await prisma.user.findFirst({
+    where: passwordResetLookupWhere(req.validatedBody.account),
+    select: { userId: true, employeeId: true, fullName: true, email: true },
+  });
+
+  if (user) {
+    const now = new Date();
+    const generated = generatePasswordResetToken(now);
+    const securityNotification = await prisma.$transaction(async (tx) => {
+      await tx.staffPasswordResetToken.updateMany({
+        where: { userId: user.userId, usedAt: null },
+        data: { usedAt: now },
+      });
+      const resetRecord = await tx.staffPasswordResetToken.create({
+        data: {
+          userId: user.userId,
+          tokenHash: generated.tokenHash,
+          expiresAt: generated.expiresAt,
+        },
+        select: { resetTokenId: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: null,
+          actorType: "SYSTEM",
+          action: "STAFF_PASSWORD_RESET_REQUESTED",
+          entityAffected: "USER",
+          recordId: user.userId,
+          ipAddress: clientIpAddress(req),
+          details: { resetTokenId: resetRecord.resetTokenId, expiresAt: generated.expiresAt },
+        },
+      });
+      return createStaffSecurityNotification({
+        event: "PASSWORD_RESET_REQUESTED",
+        eventKey: resetRecord.resetTokenId,
+        user,
+      }, tx);
+    });
+    await dispatchStaffSecurityNotification(securityNotification, {
+      deliveryTargetPath: passwordResetPath(generated.token),
+    });
+  }
+
+  res.set("Cache-Control", "no-store").status(202).json({
+    success: true,
+    data: { message: PASSWORD_RESET_PUBLIC_MESSAGE },
+  });
+});
+
+export const completePasswordReset = asyncHandler(async (req, res) => {
+  const tokenHash = hashPasswordResetToken(req.validatedBody.token);
+  const candidate = await prisma.staffPasswordResetToken.findUnique({
+    where: { tokenHash },
+    include: {
+      user: {
+        select: {
+          userId: true,
+          employeeId: true,
+          fullName: true,
+          email: true,
+          passwordHash: true,
+          isActive: true,
+          archivedAt: true,
+        },
+      },
+    },
+  });
+  if (!passwordResetTokenIsUsable(candidate)) throw invalidPasswordResetTokenError();
+  if (await bcrypt.compare(req.validatedBody.newPassword, candidate.user.passwordHash)) {
+    throw new AppError(400, "PASSWORD_REUSE_NOT_ALLOWED", "Choose a password different from your current password.");
+  }
+
+  const passwordHash = await bcrypt.hash(req.validatedBody.newPassword, 12);
+  const completedAt = new Date();
+  const result = await prisma.$transaction(async (tx) => {
+    const consumed = await tx.staffPasswordResetToken.updateMany({
+      where: {
+        resetTokenId: candidate.resetTokenId,
+        tokenHash,
+        usedAt: null,
+        expiresAt: { gt: completedAt },
+      },
+      data: { usedAt: completedAt },
+    });
+    if (consumed.count !== 1) throw invalidPasswordResetTokenError();
+
+    const changed = await tx.user.updateMany({
+      where: { userId: candidate.userId, isActive: true, archivedAt: null },
+      data: {
+        passwordHash,
+        mustChangePassword: false,
+        failedLoginAttempts: 0,
+        lastFailedLoginAt: null,
+        lockedUntil: null,
+      },
+    });
+    if (changed.count !== 1) throw invalidPasswordResetTokenError();
+
+    await tx.staffPasswordResetToken.updateMany({
+      where: { userId: candidate.userId, usedAt: null },
+      data: { usedAt: completedAt },
+    });
+    const revokedSessions = await tx.staffSession.updateMany({
+      where: { userId: candidate.userId, revokedAt: null },
+      data: { revokedAt: completedAt },
+    });
+    await tx.auditLog.create({
+      data: {
+        userId: null,
+        actorType: "SYSTEM",
+        action: "STAFF_PASSWORD_RESET_COMPLETED",
+        entityAffected: "USER",
+        recordId: candidate.userId,
+        ipAddress: clientIpAddress(req),
+        details: {
+          resetTokenId: candidate.resetTokenId,
+          revokedSessionCount: revokedSessions.count,
+        },
+      },
+    });
+    const securityNotification = await createStaffSecurityNotification({
+      event: "PASSWORD_RESET_COMPLETED",
+      eventKey: candidate.resetTokenId,
+      user: candidate.user,
+    }, tx);
+    return { revokedSessionCount: revokedSessions.count, securityNotification };
+  }, { isolationLevel: "Serializable" });
+
+  await dispatchStaffSecurityNotification(result.securityNotification);
+  res.set("Cache-Control", "no-store").status(200).json({
+    success: true,
+    data: {
+      message: "Password reset complete. Sign in again with your new password.",
+      revokedSessionCount: result.revokedSessionCount,
+    },
+  });
+});
 
 export const login = asyncHandler(async (req, res) => {
   const ipAddress = clientIpAddress(req);

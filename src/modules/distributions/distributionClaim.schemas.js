@@ -26,6 +26,13 @@ export const QR_SCAN_RESULTS = Object.freeze([
   "PENDING_BIOMETRIC",
 ]);
 
+export const PHYSICAL_RELEASE_EVIDENCE_TYPES = Object.freeze([
+  "SIGNED_ACKNOWLEDGEMENT",
+  "OFFICIAL_RELEASE_LOG",
+  "PHOTO_REFERENCE",
+  "OTHER",
+]);
+
 const optionalSearch = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
   z.string().trim().min(1).max(100).optional(),
@@ -59,6 +66,19 @@ export const qrTokenParamsSchema = z.object({
 export const claimParamsSchema = z.object({
   distributionId: z.uuid(),
   claimId: z.uuid(),
+}).strict();
+
+export const markPhysicalClaimReleasedSchema = z.object({
+  evidenceType: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
+    z.enum(PHYSICAL_RELEASE_EVIDENCE_TYPES),
+  ),
+  evidenceReference: z.string().trim().min(3).max(120),
+  notes: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().trim().min(3).max(1000).optional(),
+  ),
+  beneficiaryAcknowledged: z.literal(true),
 }).strict();
 
 export const qrEligibleScheduleListQuerySchema = z.object({

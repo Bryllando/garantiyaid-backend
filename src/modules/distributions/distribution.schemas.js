@@ -14,6 +14,11 @@ export const VERIFICATION_REQUIREMENTS = Object.freeze([
   "BIOMETRIC_AND_SIGNATURE",
 ]);
 
+export const ASSISTANCE_DELIVERY_MODES = Object.freeze([
+  "PHYSICAL_GOODS",
+  "SIMULATED_WALLET",
+]);
+
 export function isValidDateOnly(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
@@ -49,6 +54,10 @@ const distributionFields = {
   slotDurationMinutes: z.coerce.number().int().min(5).max(720),
   location: z.string().trim().min(1).max(200),
   barangayId: z.uuid(),
+  deliveryMode: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
+    z.enum(ASSISTANCE_DELIVERY_MODES).default("SIMULATED_WALLET"),
+  ),
   verificationRequirement: z.preprocess(
     (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
     z.enum(VERIFICATION_REQUIREMENTS).default("QR"),

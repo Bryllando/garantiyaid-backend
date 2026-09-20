@@ -76,7 +76,7 @@ async function unusedDistributionDate(barangayId) {
       return date;
     }
   }
-  throw new Error("Could not find an unused future date for Phase 5 verification.");
+  throw new Error("Could not find an unused future date for claim verification.");
 }
 
 async function cleanup() {
@@ -191,7 +191,7 @@ try {
       programName: `Temporary QR Claim Program ${suffix}`,
       programCode: `QRC-${suffix}`,
       programType: "CASH_ASSISTANCE",
-      description: "Temporary record for Phase 5 verification.",
+      description: "Temporary claim verification record.",
       grantAmount: 1000,
       budgetAmount: 10000,
       status: "ACTIVE",
@@ -205,7 +205,7 @@ try {
     const beneficiary = await prisma.beneficiary.create({
       data: {
         firstName,
-        lastName: `PhaseFive${suffix}`,
+        lastName: `ClaimVerify${suffix}`,
         birthDate: new Date(`198${index}-01-01T00:00:00.000Z`),
         sex: index === 0 ? "FEMALE" : "MALE",
         address: "Temporary verification address",
@@ -239,7 +239,7 @@ try {
     data: {
       programId: program.programId,
       createdById: administrator.userId,
-      title: `Temporary Phase 5 Event ${suffix}`,
+      title: `Temporary Claim Verification Event ${suffix}`,
       distributionDate: new Date(`${distributionDate}T00:00:00.000Z`),
       startTime: new Date("1970-01-01T08:00:00.000Z"),
       endTime: new Date("1970-01-01T09:00:00.000Z"),
@@ -315,7 +315,7 @@ try {
     method: "POST",
     token: adminToken,
   });
-  requireStatus(opened, 200, "Phase 4 to Phase 5 OPEN transition");
+  requireStatus(opened, 200, "distribution OPEN transition");
 
   const eligible = await request(
     `/distributions/${distribution.distributionId}/qr-eligible-schedules?page=1&pageSize=20`,
@@ -384,7 +384,7 @@ try {
       method: "POST",
       token: facilitatorToken,
       idempotencyKey: randomUUID(),
-      body: { token: firstToken.token, deviceInfo: "Phase 5 Verification" },
+      body: { token: firstToken.token, deviceInfo: "Claim verification device" },
     },
   );
   requireStatus(revokedScan, 409, "revoked-token scan protection");
@@ -448,7 +448,7 @@ try {
     || databaseToken.qrStatus !== "USED"
     || transactionsAfter !== transactionsBefore
   ) {
-    throw new Error("QR verification lifecycle or Phase 6 isolation is incorrect.");
+    throw new Error("QR verification lifecycle or wallet isolation is incorrect.");
   }
 
   const successfulScanCount = await prisma.qrScanLog.count({
@@ -559,10 +559,10 @@ try {
     throw new Error("Scan-log monitoring exposed submitted token material.");
   }
 
-  console.log("Phase 5 QR and claim verification passed.");
+  console.log("QR and claim verification passed.");
   console.log("Verified OPEN-event gating, batch token generation, hash-only storage, role scope,");
   console.log("revocation/reissue, invalid and duplicate scan logs, one-time consumption,");
-  console.log("idempotent replay, VERIFIED claims, privacy, audits, and Phase 6 isolation.");
+  console.log("idempotent replay, VERIFIED claims, privacy, audits, and wallet isolation.");
 } finally {
   if (server) {
     await new Promise((resolve, reject) => {

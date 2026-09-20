@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import bcrypt from "bcrypt";
 import app from "../src/app.js";
 import prisma from "../src/lib/prisma.js";
 import { issueAccessToken } from "../src/modules/auth/auth.service.js";
@@ -18,6 +19,7 @@ const temporaryWalletIds = [];
 const temporaryTransactionIds = [];
 const temporarySessionIds = [];
 const temporaryIdempotencyKeys = [];
+const temporaryUserIds = [];
 
 async function verificationAccessToken(user) {
   const session = await issueAccessToken(user, { ipAddress: "127.0.0.1" });
@@ -78,7 +80,7 @@ async function unusedDistributionDate(barangayId) {
       return date;
     }
   }
-  throw new Error("Could not find an unused date for Phase 6 verification.");
+  throw new Error("Could not find an unused date for wallet verification.");
 }
 
 async function cleanup() {
@@ -93,8 +95,15 @@ async function cleanup() {
     ...temporaryClaimIds,
     ...temporaryDistributionIds,
   ];
-  if (auditRecordIds.length > 0) {
-    await prisma.auditLog.deleteMany({ where: { recordId: { in: auditRecordIds } } });
+  if (auditRecordIds.length > 0 || temporaryUserIds.length > 0) {
+    await prisma.auditLog.deleteMany({
+      where: {
+        OR: [
+          ...(auditRecordIds.length > 0 ? [{ recordId: { in: auditRecordIds } }] : []),
+          ...(temporaryUserIds.length > 0 ? [{ userId: { in: temporaryUserIds } }] : []),
+        ],
+      },
+    });
   }
   if (temporaryTransactionIds.length > 0) {
     await prisma.transaction.deleteMany({
@@ -137,10 +146,14 @@ async function cleanup() {
   if (temporarySessionIds.length > 0) {
     await prisma.staffSession.deleteMany({ where: { sessionId: { in: temporarySessionIds } } });
   }
+  if (temporaryUserIds.length > 0) {
+    await prisma.user.deleteMany({ where: { userId: { in: temporaryUserIds } } });
+  }
 }
 
 try {
-  const [administrator, dswd, facilitator] = await Promise.all([
+  const suffix = Date.now().toString().slice(-10);
+  const [administrator, dswd, existingFacilitator] = await Promise.all([
     prisma.user.findFirst({ where: { role: "SYSTEM_ADMIN", isActive: true } }),
     prisma.user.findFirst({ where: { role: "DSWD_STAFF", isActive: true } }),
     prisma.user.findFirst({
@@ -152,10 +165,30 @@ try {
       },
     }),
   ]);
-  if (!administrator || !dswd || !facilitator) {
+  if (!administrator || !dswd) {
     throw new Error(
-      "Active SYSTEM_ADMIN, DSWD_STAFF, and assigned BARANGAY_FACILITATOR are required.",
+      "Active SYSTEM_ADMIN and DSWD_STAFF accounts are required. Run the initial seed and create an active DSWD staff account first.",
     );
+  }
+  let facilitator = existingFacilitator;
+  if (!facilitator) {
+    const barangay = await prisma.barangay.findFirst({ where: { isActive: true } });
+    if (!barangay) {
+      throw new Error("An active Barangay is required for the temporary verification facilitator.");
+    }
+    facilitator = await prisma.user.create({
+      data: {
+        employeeId: `VERIFY-BRGY-${suffix}`,
+        username: `verify.brgy.${suffix}`,
+        fullName: "Temporary Wallet Verifier",
+        email: `verify-wallet-${suffix}@example.invalid`,
+        passwordHash: await bcrypt.hash(randomUUID(), 12),
+        role: "BARANGAY_FACILITATOR",
+        barangayId: barangay.barangayId,
+        isActive: true,
+      },
+    });
+    temporaryUserIds.push(facilitator.userId);
   }
   const [adminToken, dswdToken, facilitatorToken] = await Promise.all([
     verificationAccessToken(administrator),
@@ -166,13 +199,12 @@ try {
   await once(server, "listening");
   baseUrl = `http://127.0.0.1:${server.address().port}/api/v1`;
 
-  const suffix = Date.now().toString().slice(-10);
   const program = await prisma.program.create({
     data: {
       programName: `Temporary Simulated Wallet Program ${suffix}`,
       programCode: `WAL-${suffix}`,
       programType: "CASH_ASSISTANCE",
-      description: "Temporary Phase 6 verification fixture.",
+      description: "Temporary wallet verification fixture.",
       grantAmount: 1000,
       budgetAmount: 10000,
       status: "ACTIVE",
@@ -186,10 +218,10 @@ try {
     const beneficiary = await prisma.beneficiary.create({
       data: {
         firstName,
-        lastName: `PhaseSix${suffix}`,
+        lastName: `WalletVerify${suffix}`,
         birthDate: new Date(`198${index}-06-01T00:00:00.000Z`),
         sex: index === 0 ? "FEMALE" : "MALE",
-        address: "Temporary Phase 6 verification address",
+        address: "Temporary wallet verification address",
         barangayId: facilitator.barangayId,
         isVerified: true,
         status: "ACTIVE",
@@ -215,7 +247,7 @@ try {
     data: {
       programId: program.programId,
       createdById: administrator.userId,
-      title: `Temporary Phase 6 Event ${suffix}`,
+      title: `Temporary Wallet Verification Event ${suffix}`,
       distributionDate: new Date(`${distributionDate}T00:00:00.000Z`),
       startTime: new Date("1970-01-01T08:00:00.000Z"),
       endTime: new Date("1970-01-01T09:00:00.000Z"),
@@ -229,6 +261,10 @@ try {
   const slot = await prisma.distributionSlot.create({
     data: {
       distributionId: distribution.distributionId,
+      sessionId: randomUUID(),
+      sessionLabel: "Wallet verification session",
+      location: distribution.location,
+      serviceAreas: [],
       slotStart: new Date(`${distributionDate}T00:00:00.000Z`),
       slotEnd: new Date(`${distributionDate}T01:00:00.000Z`),
       capacity: 1,
@@ -272,6 +308,23 @@ try {
     },
   });
   temporaryClaimIds.push(claim.claimId);
+
+  const walletAbsent = await request(
+    `/wallets/beneficiaries/${beneficiaries[1].beneficiaryId}`,
+    { token: dswdToken },
+  );
+  requireStatus(walletAbsent, 200, "beneficiary wallet lookup before creation");
+  if (
+    walletAbsent.payload.data.beneficiary.beneficiaryId !== beneficiaries[1].beneficiaryId
+    || walletAbsent.payload.data.wallet !== null
+  ) {
+    throw new Error("Beneficiary wallet lookup did not distinguish an absent wallet.");
+  }
+  const facilitatorWalletLookup = await request(
+    `/wallets/beneficiaries/${beneficiaries[1].beneficiaryId}`,
+    { token: facilitatorToken },
+  );
+  requireStatus(facilitatorWalletLookup, 403, "beneficiary wallet lookup restriction");
 
   const createdRecipientWallet = await request("/wallets", {
     method: "POST",
@@ -323,7 +376,7 @@ try {
       method: "POST",
       token: dswdToken,
       idempotencyKey: creditKey,
-      body: { description: "Phase 6 automated benefit credit" },
+      body: { description: "Automated wallet verification credit" },
     },
   );
   requireStatus(credited, 201, "verified claim simulated credit");
@@ -350,7 +403,7 @@ try {
       method: "POST",
       token: dswdToken,
       idempotencyKey: creditKey,
-      body: { description: "Phase 6 automated benefit credit" },
+      body: { description: "Automated wallet verification credit" },
     },
   );
   requireStatus(creditReplay, 201, "simulated credit idempotent replay");
@@ -402,7 +455,7 @@ try {
     body: {
       recipientBeneficiaryId: beneficiaries[1].beneficiaryId,
       amount: 400,
-      description: "Closed-loop Phase 6 test transfer",
+      description: "Closed-loop wallet verification transfer",
     },
   });
   requireStatus(transferred, 201, "internal simulated transfer");
@@ -426,12 +479,35 @@ try {
     body: {
       recipientBeneficiaryId: beneficiaries[1].beneficiaryId,
       amount: 400,
-      description: "Closed-loop Phase 6 test transfer",
+      description: "Closed-loop wallet verification transfer",
     },
   });
   requireStatus(transferReplay, 201, "internal transfer idempotent replay");
   if (transferReplay.response.headers.get("idempotency-replayed") !== "true") {
     throw new Error("Internal transfer replay was not marked as replayed.");
+  }
+
+  const [sourceHistory, recipientHistory] = await Promise.all([
+    request(`/wallets/${sourceWallet.walletId}/transactions?page=1&pageSize=20`, {
+      token: dswdToken,
+    }),
+    request(`/wallets/${recipientWalletId}/transactions?page=1&pageSize=20`, {
+      token: dswdToken,
+    }),
+  ]);
+  requireStatus(sourceHistory, 200, "source wallet history after transfer");
+  requireStatus(recipientHistory, 200, "recipient wallet history after transfer");
+  const sourceDebit = sourceHistory.payload.data.transactions.find(
+    ({ transferGroupId }) => transferGroupId === transferred.payload.data.transferGroupId,
+  );
+  const recipientCredit = recipientHistory.payload.data.transactions.find(
+    ({ transferGroupId }) => transferGroupId === transferred.payload.data.transferGroupId,
+  );
+  if (
+    sourceDebit?.transactionType !== "SIMULATED_TRANSFER_OUT"
+    || recipientCredit?.transactionType !== "SIMULATED_TRANSFER_IN"
+  ) {
+    throw new Error("Individual wallet histories did not expose the matching debit and credit.");
   }
 
   const prematureReversal = await request(
@@ -492,7 +568,7 @@ try {
       method: "POST",
       token: adminToken,
       idempotencyKey: reversalKey,
-      body: { reason: "Phase 6 controlled test reversal after balance restoration." },
+      body: { reason: "Controlled verification reversal after balance restoration." },
     },
   );
   requireStatus(reversed, 201, "controlled benefit-credit reversal");
@@ -512,7 +588,7 @@ try {
       method: "POST",
       token: adminToken,
       idempotencyKey: reversalKey,
-      body: { reason: "Phase 6 controlled test reversal after balance restoration." },
+      body: { reason: "Controlled verification reversal after balance restoration." },
     },
   );
   requireStatus(reversalReplay, 201, "reversal idempotent replay");
@@ -564,11 +640,11 @@ try {
     "SIMULATED_BENEFIT_CREDIT_REVERSED",
   ]) {
     if (!actions.has(action)) {
-      throw new Error(`Missing Phase 6 audit action ${action}.`);
+      throw new Error(`Missing wallet audit action ${action}.`);
     }
   }
 
-  console.log("Phase 6 simulated wallet and benefit transaction verification passed.");
+  console.log("Simulated wallet and benefit transaction verification passed.");
   console.log("Verified wallet creation, one-time credit, idempotent replay, role restrictions,");
   console.log("closed-loop transfers, balance controls, receipts, reversal, reconciliation, audits,");
   console.log("and explicit no-real-funds/no-external-payment-rail disclosures.");

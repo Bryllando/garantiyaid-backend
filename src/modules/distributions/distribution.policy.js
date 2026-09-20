@@ -8,12 +8,19 @@ export const DISTRIBUTION_READ_ROLES = Object.freeze([
 
 export const DISTRIBUTION_MANAGE_ROLES = Object.freeze(["SYSTEM_ADMIN"]);
 
+export const DISTRIBUTION_SCHEDULE_MANAGE_ROLES = Object.freeze([
+  "SYSTEM_ADMIN",
+  "BARANGAY_FACILITATOR",
+]);
+
 export const QR_TOKEN_MANAGE_ROLES = Object.freeze(["SYSTEM_ADMIN"]);
 
 export const CLAIM_VERIFY_ROLES = Object.freeze([
   "SYSTEM_ADMIN",
   "BARANGAY_FACILITATOR",
 ]);
+
+export const PHYSICAL_RELEASE_ROLES = Object.freeze(["BARANGAY_FACILITATOR"]);
 
 export const CLAIM_DISPUTE_FILE_ROLES = DISTRIBUTION_READ_ROLES;
 
@@ -48,6 +55,16 @@ export function assertDistributionManageAllowed(staffUser) {
   }
 }
 
+export function assertDistributionScheduleManageAllowed(staffUser) {
+  if (!staffUser || !DISTRIBUTION_SCHEDULE_MANAGE_ROLES.includes(staffUser.role)) {
+    throw new AppError(
+      403,
+      "FORBIDDEN",
+      "Only System Administrators and assigned Barangay Facilitators may manage schedules.",
+    );
+  }
+}
+
 export function assertQrTokenManageAllowed(staffUser) {
   if (!staffUser || !QR_TOKEN_MANAGE_ROLES.includes(staffUser.role)) {
     throw new AppError(
@@ -64,6 +81,16 @@ export function assertClaimVerifyAllowed(staffUser) {
       403,
       "FORBIDDEN",
       "Only System Administrators and assigned Barangay Facilitators may verify QR claims.",
+    );
+  }
+}
+
+export function assertPhysicalReleaseAllowed(staffUser) {
+  if (!staffUser || !PHYSICAL_RELEASE_ROLES.includes(staffUser.role)) {
+    throw new AppError(
+      403,
+      "FORBIDDEN",
+      "Only the assigned Barangay Facilitator may record a physical assistance release.",
     );
   }
 }

@@ -24,6 +24,11 @@ export const BIOMETRIC_VERIFY_ROLES = Object.freeze([
 
 export const BIOMETRIC_DELETE_ROLES = Object.freeze(["SYSTEM_ADMIN"]);
 
+export const BIOMETRIC_DUPLICATE_REVIEW_ROLES = Object.freeze([
+  "SYSTEM_ADMIN",
+  "DSWD_STAFF",
+]);
+
 function assertRole(staffUser, roles, message) {
   if (!staffUser || !roles.includes(staffUser.role)) {
     throw new AppError(403, "FORBIDDEN", message);
@@ -48,4 +53,22 @@ export function assertBiometricVerifyAllowed(staffUser) {
 
 export function assertBiometricDeleteAllowed(staffUser) {
   assertRole(staffUser, BIOMETRIC_DELETE_ROLES, "Only System Administrators may permanently delete biometric templates.");
+}
+
+export function assertBiometricDuplicateReviewAllowed(staffUser) {
+  assertRole(
+    staffUser,
+    BIOMETRIC_DUPLICATE_REVIEW_ROLES,
+    "Only System Administrators and DSWD Staff may review possible duplicate biometric profiles.",
+  );
+}
+
+export function assertIndependentBiometricDuplicateReviewer(reviewerUserId, enrolledById) {
+  if (reviewerUserId === enrolledById) {
+    throw new AppError(
+      403,
+      "BIOMETRIC_DUPLICATE_SELF_REVIEW_FORBIDDEN",
+      "A different authorized staff member must review this possible duplicate.",
+    );
+  }
 }
