@@ -213,6 +213,7 @@ test("intent detection is deterministic, controlled, multilingual-aware, and con
     ["Hello", "GREETING"],
     ["What documents do I need?", "DOCUMENT_REQUIREMENTS"],
     ["Tell me about available programs", "PROGRAM_INFORMATION"],
+    ["What is this system and how can I apply?", "PROGRAM_INFORMATION"],
     ["When is my schedule?", "DISTRIBUTION_SCHEDULE"],
     ["What is the status of my claim?", "CLAIM_STATUS"],
     ["What is my enrollment status?", "ENROLLMENT_STATUS"],
