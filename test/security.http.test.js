@@ -42,6 +42,17 @@ test("CORS rejects an untrusted browser origin", async () => {
   assert.equal(body.error.requestId, response.headers.get("x-request-id"));
 });
 
+test("CORS allows every explicitly configured browser origin", async () => {
+  for (const origin of env.corsOrigins) {
+    const response = await fetch(`${baseUrl}/api/v1/health`, {
+      headers: { origin },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("access-control-allow-origin"), origin);
+  }
+});
+
 test("unsupported body types, malformed JSON, and oversized JSON fail safely", async () => {
   const unsupported = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: "POST",
