@@ -61,7 +61,7 @@
   },
   "devDependencies": {
     "prisma": "^7.10.0",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.3"
   },
   "overrides": {
     "fast-uri": "3.1.6"
