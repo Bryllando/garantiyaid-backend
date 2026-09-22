@@ -10,7 +10,7 @@ const KNOWLEDGE = Object.freeze({
     ENROLLMENT_STATUS: "I cannot view or confirm a personal enrollment result without beneficiary authentication. A staff member must verify ownership before discussing an application. I have escalated this inquiry for safe follow-up.",
     CLAIM_PROCESS: "For an assigned distribution, follow the official schedule and location, bring only the documents stated in your notice, and present the assigned QR credential when instructed. Authorized staff perform verification. This chatbot cannot approve claims, scan QR codes, or move funds.",
     HUMAN_ASSISTANCE: "I have escalated this session for staff follow-up. Do not post passwords, QR credentials, biometric data, PhilSys numbers, or full contact details in chat.",
-    UNKNOWN: "I could not match that question to the controlled knowledge base. I have escalated it for staff follow-up. Do not include sensitive identifiers or credentials.",
+    UNKNOWN: "I am not sure which service topic you mean. You can ask what GarantiyAid is, how to apply, which documents may be required, how enrollment or distribution works, or how to claim. If you need a person, say 'I need staff assistance.' Do not include sensitive identifiers or credentials.",
   }),
   fil: Object.freeze({
     GREETING: "Kumusta. Makapagbibigay ako ng pangkalahatang gabay tungkol sa mga dokumento, programa, distribusyon, enrollment, at proseso ng pag-claim. Hindi ako makakabukas ng personal na rekord.",
@@ -21,7 +21,7 @@ const KNOWLEDGE = Object.freeze({
     ENROLLMENT_STATUS: "Hindi ko makikita o makukumpirma ang personal na enrollment nang walang beneficiary authentication. Kailangang beripikahin muna ng staff ang may-ari ng aplikasyon. In-escalate ko ito para sa ligtas na follow-up.",
     CLAIM_PROCESS: "Sundin ang opisyal na schedule at lokasyon, dalhin lamang ang mga dokumentong nasa notice, at ipakita ang nakatalagang QR credential kapag inutusan. Awtorisadong staff ang gumagawa ng verification. Hindi kayang mag-apruba ng claim, mag-scan ng QR, o maglipat ng pondo ang chatbot.",
     HUMAN_ASSISTANCE: "In-escalate ko ang session para sa follow-up ng staff. Huwag maglagay ng password, QR credential, biometric data, PhilSys number, o buong contact details dito.",
-    UNKNOWN: "Hindi ko maitugma ang tanong sa kontroladong knowledge base. In-escalate ko ito para sa follow-up ng staff. Huwag maglagay ng sensitibong identifier o credential.",
+    UNKNOWN: "Hindi ako sigurado kung aling service topic ang ibig mong sabihin. Maaari mong itanong kung ano ang GarantiyAid, paano mag-apply, anong dokumento ang maaaring kailanganin, paano gumagana ang enrollment o distribusyon, o paano mag-claim. Sabihin ang 'Kailangan ko ng staff' kung gusto mong kumausap ng tao. Huwag maglagay ng sensitibong identifier o credential.",
   }),
   ceb: Object.freeze({
     GREETING: "Kumusta. Makahatag ko og kinatibuk-ang giya bahin sa dokumento, programa, distribution, enrollment, ug claim process. Dili ko makaabli og personal nga rekord.",
@@ -32,7 +32,7 @@ const KNOWLEDGE = Object.freeze({
     ENROLLMENT_STATUS: "Dili nako makita o makumpirma ang personal nga enrollment kung walay beneficiary authentication. Kinahanglan i-verify una sa staff ang tag-iya sa aplikasyon. Gi-escalate nako kini alang sa luwas nga follow-up.",
     CLAIM_PROCESS: "Sunda ang opisyal nga schedule ug lugar, dad-a lamang ang mga dokumentong naa sa notice, ug ipakita ang gi-assign nga QR credential kung suguon. Awtorisadong staff ang mo-verify. Dili maka-approve og claim, maka-scan og QR, o makabalhin og pondo ang chatbot.",
     HUMAN_ASSISTANCE: "Gi-escalate nako ang session alang sa follow-up sa staff. Ayaw pag-post og password, QR credential, biometric data, PhilSys number, o tibuok contact details dinhi.",
-    UNKNOWN: "Wala nako matugma ang pangutana sa kontroladong knowledge base. Gi-escalate nako kini alang sa follow-up sa staff. Ayaw paglakip og sensitibong identifier o credential.",
+    UNKNOWN: "Dili pa klaro kung unsang service topic ang imong pasabot. Mahimo kang mangutana kung unsa ang GarantiyAid, unsaon pag-apply, unsang dokumento ang posibleng kinahanglan, unsaon ang enrollment o distribution, o unsaon pag-claim. Isulti ang 'Kinahanglan ko og staff' kung gusto kang makigstorya og tawo. Ayaw paglakip og sensitibong identifier o credential.",
   }),
 });
 
@@ -41,7 +41,6 @@ const ESCALATED_INTENTS = new Set([
   "CLAIM_STATUS",
   "ENROLLMENT_STATUS",
   "HUMAN_ASSISTANCE",
-  "UNKNOWN",
 ]);
 
 const PERSONAL_INTENTS = new Set([

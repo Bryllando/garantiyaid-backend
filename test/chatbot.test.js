@@ -214,6 +214,9 @@ test("intent detection is deterministic, controlled, multilingual-aware, and con
     ["What documents do I need?", "DOCUMENT_REQUIREMENTS"],
     ["Tell me about available programs", "PROGRAM_INFORMATION"],
     ["What is this system and how can I apply?", "PROGRAM_INFORMATION"],
+    ["Where can I apply for assistance?", "PROGRAM_INFORMATION"],
+    ["Pwede ba ko maka apply?", "PROGRAM_INFORMATION"],
+    ["What DSWD programs are available?", "PROGRAM_INFORMATION"],
     ["When is my schedule?", "DISTRIBUTION_SCHEDULE"],
     ["What is the status of my claim?", "CLAIM_STATUS"],
     ["What is my enrollment status?", "ENROLLMENT_STATUS"],
@@ -249,7 +252,7 @@ test("controlled answers never claim personal access or external AI and escalate
     assert.equal(escalationReasonForIntent(intent, 0.99), "PERSONAL_DATA_REQUIRED");
   }
   assert.equal(controlledChatbotAnswer("CLAIM_PROCESS", "en").requiresEscalation, false);
-  assert.equal(controlledChatbotAnswer("UNKNOWN", "en").requiresEscalation, true);
+  assert.equal(controlledChatbotAnswer("UNKNOWN", "en").requiresEscalation, false);
 });
 
 test("chat text redaction removes credentials, tokens, PhilSys-like IDs, and full contact numbers before storage", () => {
@@ -289,10 +292,10 @@ test("multi-turn processing stores deterministic order, controlled bot answers, 
   const first = await processGenericChatbotTurn({
     sessionId,
     token: created.sessionToken,
-    messageText: "Write me a poem about volcanoes",
+    messageText: "I need to talk to a person",
     ipAddress: "127.0.0.1",
   }, database, new Date("2099-01-01T00:01:00.000Z"));
-  assert.equal(first.classification.intent, "UNKNOWN");
+  assert.equal(first.classification.intent, "HUMAN_ASSISTANCE");
   assert.equal(first.escalatedNow, true);
   assert.equal(first.session.status, "ESCALATED");
   assert.deepEqual(database.state.messages.map((message) => message.sequence), [1, 2]);
