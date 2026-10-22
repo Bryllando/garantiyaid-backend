@@ -35,6 +35,10 @@ export const WALLET_READ_ROLES = Object.freeze([
 ]);
 
 export const WALLET_MANAGE_ROLES = Object.freeze([
+  "DSWD_STAFF",
+]);
+
+export const WALLET_CREATE_ROLES = Object.freeze([
   "SYSTEM_ADMIN",
   "DSWD_STAFF",
 ]);
@@ -126,8 +130,14 @@ export function assertWalletManageAllowed(staffUser) {
     throw new AppError(
       403,
       "FORBIDDEN",
-      "Only System Administrators and DSWD Staff may manage simulated wallet transactions.",
+      "Only DSWD Staff may settle simulated wallet transactions.",
     );
+  }
+}
+
+export function assertWalletCreateAllowed(staffUser) {
+  if (!staffUser || !WALLET_CREATE_ROLES.includes(staffUser.role)) {
+    throw new AppError(403, "FORBIDDEN", "Only System Administrators and DSWD Staff may create simulated wallets.");
   }
 }
 

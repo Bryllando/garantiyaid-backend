@@ -2,6 +2,7 @@ import prisma from "../../lib/prisma.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
+import { publishPhysicalReleaseResult } from "../../realtime/publishers.js";
 import {
   assertIdempotencyRequestMatches,
   findIdempotencyRecord,
@@ -199,5 +200,6 @@ export const markPhysicalClaimReleased = asyncHandler(async (req, res) => {
   }
 
   res.set("Idempotency-Replayed", String(result.replayed));
+  await publishPhysicalReleaseResult(distributionId, result);
   return res.status(result.responseStatus).json(result.responseBody);
 });

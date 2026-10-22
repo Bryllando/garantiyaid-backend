@@ -15,6 +15,7 @@ const temporaryAllocationIds = [];
 const temporaryScheduleIds = [];
 const temporaryQrTokenIds = [];
 const temporaryClaimIds = [];
+const temporaryReceiptIds = [];
 const temporarySessionIds = [];
 
 async function verificationAccessToken(user) {
@@ -83,9 +84,10 @@ async function cleanup() {
   if (temporaryDistributionIds.length > 0) {
     await prisma.idempotencyRecord.deleteMany({
       where: {
-        operation: {
-          in: temporaryDistributionIds.map((id) => `QR_CLAIM_VERIFY:${id}`),
-        },
+        OR: temporaryDistributionIds.flatMap((id) => [
+          { operation: `QR_CLAIM_VERIFY:${id}` },
+          { operation: { startsWith: `PHYSICAL_ASSISTANCE_RELEASE:${id}:` } },
+        ]),
       },
     });
   }
@@ -95,6 +97,7 @@ async function cleanup() {
     ...temporaryScheduleIds,
     ...temporaryQrTokenIds,
     ...temporaryClaimIds,
+    ...temporaryReceiptIds,
   ];
   if (auditRecordIds.length > 0) {
     await prisma.auditLog.deleteMany({ where: { recordId: { in: auditRecordIds } } });
@@ -113,6 +116,7 @@ async function cleanup() {
     });
   }
   if (temporaryClaimIds.length > 0) {
+    await prisma.claimReceipt.deleteMany({ where: { claimId: { in: temporaryClaimIds } } });
     await prisma.claim.deleteMany({ where: { claimId: { in: temporaryClaimIds } } });
   }
   if (temporaryQrTokenIds.length > 0) {
@@ -247,13 +251,19 @@ try {
       location: "Temporary QR Verification Hall",
       barangayId: facilitator.barangayId,
       status: "DRAFT",
+      deliveryMode: "PHYSICAL_GOODS",
     },
   });
   temporaryDistributionIds.push(distribution.distributionId);
+  const claimSessionId = randomUUID();
   const slots = await Promise.all([
     prisma.distributionSlot.create({
       data: {
         distributionId: distribution.distributionId,
+        sessionId: claimSessionId,
+        sessionLabel: "QR claim verification",
+        location: distribution.location,
+        serviceAreas: [],
         slotStart: new Date(`${distributionDate}T00:00:00.000Z`),
         slotEnd: new Date(`${distributionDate}T00:30:00.000Z`),
         capacity: 1,
@@ -263,6 +273,10 @@ try {
     prisma.distributionSlot.create({
       data: {
         distributionId: distribution.distributionId,
+        sessionId: claimSessionId,
+        sessionLabel: "QR claim verification",
+        location: distribution.location,
+        serviceAreas: [],
         slotStart: new Date(`${distributionDate}T00:30:00.000Z`),
         slotEnd: new Date(`${distributionDate}T01:00:00.000Z`),
         capacity: 1,
@@ -559,10 +573,89 @@ try {
     throw new Error("Scan-log monitoring exposed submitted token material.");
   }
 
+  const forbiddenRelease = await request(
+    `/distributions/${distribution.distributionId}/claims/${claim.claimId}/release`,
+    { method: "POST", token: adminToken, body: { evidenceType: "OFFICIAL_RELEASE_LOG", evidenceReference: "TEST-LOG-1", beneficiaryAcknowledged: true } },
+  );
+  requireStatus(forbiddenRelease, 403, "administrator physical-release protection");
+
+  const releaseKey = randomUUID();
+  const releaseBody = {
+    evidenceType: "OFFICIAL_RELEASE_LOG",
+    evidenceReference: `TEST-LOG-${suffix}`,
+    beneficiaryAcknowledged: true,
+  };
+  const releasePath = `/distributions/${distribution.distributionId}/claims/${claim.claimId}/release`;
+  const released = await request(releasePath, {
+    method: "POST", token: facilitatorToken, idempotencyKey: releaseKey, body: releaseBody,
+  });
+  requireStatus(released, 201, "physical goods release");
+  if (
+    released.payload.data.lifecycle.claimStatus !== "CLAIMED"
+    || released.payload.data.lifecycle.allocationStatus !== "CLAIMED"
+    || released.payload.data.release.method !== "PHYSICAL_GOODS"
+    || released.payload.data.release.releasedBy?.userId !== facilitator.userId
+    || !released.payload.data.release.releasedAt
+  ) {
+    throw new Error("Physical release did not record both lifecycle transitions and release evidence.");
+  }
+  const releaseReplay = await request(releasePath, {
+    method: "POST", token: facilitatorToken, idempotencyKey: releaseKey, body: releaseBody,
+  });
+  requireStatus(releaseReplay, 201, "physical-release idempotent replay");
+  if (releaseReplay.response.headers.get("idempotency-replayed") !== "true") {
+    throw new Error("Physical-release replay was not identified.");
+  }
+  const secondRelease = await request(releasePath, {
+    method: "POST", token: facilitatorToken, idempotencyKey: randomUUID(), body: releaseBody,
+  });
+  requireStatus(secondRelease, 409, "second physical-release protection");
+  requireErrorCode(secondRelease, "CLAIM_NOT_RELEASABLE", "second physical-release protection");
+
+  const receiptPath = `/distributions/${distribution.distributionId}/claims/${claim.claimId}/receipt`;
+  const receipt = await request(receiptPath, { method: "POST", token: facilitatorToken });
+  requireStatus(receipt, 201, "physical claim receipt");
+  temporaryReceiptIds.push(receipt.payload.data.receipt.receiptId);
+  const snapshot = receipt.payload.data.receipt.snapshot;
+  if (
+    snapshot.assistance.deliveryMode !== "PHYSICAL_GOODS"
+    || snapshot.assistance.evidence?.type !== releaseBody.evidenceType
+    || snapshot.assistance.evidence?.reference !== releaseBody.evidenceReference
+    || snapshot.assistance.releasedBy?.userId !== facilitator.userId
+    || !snapshot.assistance.releasedAt
+  ) {
+    throw new Error("Physical receipt did not preserve release details.");
+  }
+  const receiptReplay = await request(receiptPath, { method: "POST", token: facilitatorToken });
+  requireStatus(receiptReplay, 200, "receipt reissue protection");
+  if (receiptReplay.payload.data.receipt.receiptId !== receipt.payload.data.receipt.receiptId) {
+    throw new Error("Receipt reissue created a second receipt.");
+  }
+
+  const reconciliation = await request(
+    `/distributions/${distribution.distributionId}/reconciliation`, { token: dswdToken },
+  );
+  requireStatus(reconciliation, 200, "physical distribution reconciliation");
+  const account = reconciliation.payload.data.reconciliation;
+  if (
+    account.physicalReleasedCount !== 1
+    || account.completedBenefitCreditCount !== 0
+    || account.netCreditedAmount !== "0.00"
+    || account.ledgerBalanced !== true
+  ) {
+    throw new Error("Physical release reconciliation incorrectly requires a wallet credit.");
+  }
+  const releaseAuditCount = await prisma.auditLog.count({
+    where: { recordId: claim.claimId, action: "PHYSICAL_ASSISTANCE_RELEASED" },
+  });
+  if (releaseAuditCount !== 1 || await prisma.transaction.count() !== transactionsBefore) {
+    throw new Error("Physical release was duplicated or created a wallet transaction.");
+  }
+
   console.log("QR and claim verification passed.");
   console.log("Verified OPEN-event gating, batch token generation, hash-only storage, role scope,");
   console.log("revocation/reissue, invalid and duplicate scan logs, one-time consumption,");
-  console.log("idempotent replay, VERIFIED claims, privacy, audits, and wallet isolation.");
+  console.log("idempotent replay, one-time physical release, receipt, reconciliation, privacy, and audits.");
 } finally {
   if (server) {
     await new Promise((resolve, reject) => {

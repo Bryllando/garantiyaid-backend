@@ -1,4 +1,5 @@
 import { Router } from "express";
+import beneficiaryImportRoutes from "./beneficiaryImport.routes.js";
 import { authenticateStaff } from "../../middleware/authenticate.js";
 import { authorizeRoles } from "../../middleware/authorize.js";
 import { validateBody, validateParams, validateQuery } from "../../middleware/validate.js";
@@ -35,6 +36,7 @@ import {
   BIOMETRIC_CONSENT_MANAGE_ROLES,
   BIOMETRIC_DELETE_ROLES,
   BIOMETRIC_ENROLL_ROLES,
+  BIOMETRIC_REENROLL_ROLES,
   BIOMETRIC_READ_ROLES,
 } from "../biometrics/biometric.policy.js";
 import {
@@ -47,6 +49,7 @@ import { uploadBiometricCapture } from "../biometrics/biometric.upload.js";
 const beneficiaryRoutes = Router();
 
 beneficiaryRoutes.use(authenticateStaff);
+beneficiaryRoutes.use("/import", beneficiaryImportRoutes);
 beneficiaryRoutes.get(
   "/",
   authorizeRoles(...BENEFICIARY_READ_ROLES),
@@ -110,7 +113,7 @@ beneficiaryRoutes.post(
 );
 beneficiaryRoutes.post(
   "/:beneficiaryId/biometrics/re-enroll",
-  authorizeRoles(...BIOMETRIC_ENROLL_ROLES),
+  authorizeRoles(...BIOMETRIC_REENROLL_ROLES),
   biometricRateLimiter,
   validateParams(beneficiaryIdSchema),
   uploadBiometricCapture,

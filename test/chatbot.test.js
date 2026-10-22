@@ -15,9 +15,11 @@ import {
 import {
   chatbotEscalateSchema,
   chatbotEscalationListQuerySchema,
+  chatbotHistoryQuerySchema,
   chatbotMessageListQuerySchema,
   chatbotMessageSchema,
   chatbotResolveSchema,
+  chatbotReferralSchema,
   chatbotSessionParamsSchema,
   createChatbotSessionSchema,
   staffAssistantFeedbackSchema,
@@ -40,9 +42,12 @@ import {
   createStaffChatbotReply,
   endGenericChatbotSession,
   getGenericChatbotSession,
+  getAdminChatbotConversation,
   hashChatbotSessionToken,
   listGenericChatbotMessages,
+  listAdminChatbotConversations,
   processGenericChatbotTurn,
+  referChatbotEscalationToBarangay,
   redactChatbotText,
   resolveStaffChatbotEscalation,
 } from "../src/modules/chatbot/chatbot.service.js";
@@ -166,6 +171,10 @@ test("chatbot schemas validate UUIDs, pagination, languages, strict fields, and 
   assert.deepEqual(chatbotMessageListQuerySchema.parse({}), { page: 1, pageSize: 20 });
   assert.equal(chatbotMessageListQuerySchema.safeParse({ pageSize: 51 }).success, false);
   assert.equal(chatbotEscalationListQuerySchema.parse({ assignedToMe: "false" }).assignedToMe, false);
+  assert.deepEqual(chatbotHistoryQuerySchema.parse({}), { page: 1, pageSize: 20 });
+  assert.equal(chatbotHistoryQuerySchema.safeParse({ status: "UNKNOWN" }).success, false);
+  assert.equal(chatbotReferralSchema.safeParse({ beneficiaryId, verificationMethod: "IN_PERSON_AT_OFFICE", identityVerified: true }).success, true);
+  assert.equal(chatbotReferralSchema.safeParse({ beneficiaryId, verificationMethod: "IN_PERSON_AT_OFFICE", identityVerified: false }).success, false);
   assert.equal(chatbotEscalateSchema.parse({}).reason, "HUMAN_REQUESTED");
   assert.equal(chatbotResolveSchema.parse({ resolutionCode: "answered" }).resolutionCode, "ANSWERED");
   assert.equal(chatbotResolveSchema.safeParse({ resolutionCode: "DELETE_HISTORY" }).success, false);
@@ -385,6 +394,10 @@ test("staff escalation RBAC isolates Barangays and denies facilitators access to
     () => assertChatbotSessionBarangayAccess(facilitatorA, { beneficiaryId: null, beneficiary: null }),
     { code: "CHATBOT_GENERIC_SESSION_FORBIDDEN" },
   );
+  assert.throws(
+    () => assertChatbotSessionBarangayAccess({ role: "DSWD_STAFF" }, { beneficiaryId: null, beneficiary: null }),
+    { code: "CHATBOT_GENERIC_SESSION_FORBIDDEN" },
+  );
   assert.doesNotThrow(() => assertChatbotSessionBarangayAccess(facilitatorA, {
     beneficiaryId,
     beneficiary: { barangayId: barangayA },
@@ -409,9 +422,9 @@ test("staff assignment prevents a second staff member from replying and resoluti
     ipAddress: "127.0.0.1",
   }, database, new Date("2099-01-01T00:01:00.000Z"));
   const staffA = { ...database.state.session, ...{
-    userId: staffAId, employeeId: "DSWD-001", fullName: "Staff A", role: "DSWD_STAFF", barangayId: null,
+    userId: staffAId, employeeId: "ADMIN-001", fullName: "Staff A", role: "SYSTEM_ADMIN", barangayId: null,
   } };
-  const staffB = { userId: staffBId, employeeId: "DSWD-002", fullName: "Staff B", role: "DSWD_STAFF", barangayId: null };
+  const staffB = { userId: staffBId, employeeId: "ADMIN-002", fullName: "Staff B", role: "SYSTEM_ADMIN", barangayId: null };
   const reply = await createStaffChatbotReply({
     sessionId,
     staffUser: staffA,
@@ -441,6 +454,39 @@ test("staff assignment prevents a second staff member from replying and resoluti
   assert.ok(database.state.audits.some((audit) => audit.action === "CHATBOT_STAFF_REPLIED"));
   assert.ok(database.state.audits.some((audit) => audit.action === "CHATBOT_SESSION_RESOLVED"));
   assert.equal(JSON.stringify(database.state.audits).includes("authorized desk"), false);
+});
+
+test("Administrator history includes generic sessions and referral requires a verified active beneficiary", async () => {
+  const database = inMemoryChatbotDatabase();
+  const admin = { userId: staffAId, role: "SYSTEM_ADMIN" };
+  const dswd = { userId: staffBId, role: "DSWD_STAFF" };
+  const created = await createGenericChatbotSession({ language: "en" }, database);
+  const history = await listAdminChatbotConversations(admin, { page: 1, pageSize: 20 }, database);
+  assert.equal(history.conversations[0].sessionId, created.session.sessionId);
+  assert.equal((await getAdminChatbotConversation(sessionId, admin, database)).session.isGeneric, true);
+  await assert.rejects(() => listAdminChatbotConversations(dswd, { page: 1, pageSize: 20 }, database), { code: "FORBIDDEN" });
+  await assert.rejects(() => getAdminChatbotConversation(sessionId, dswd, database), { code: "FORBIDDEN" });
+  await processGenericChatbotTurn({
+    sessionId, token: created.sessionToken, messageText: "I need a human", ipAddress: "127.0.0.1",
+  }, database);
+  database.beneficiary = { findUnique: async () => ({
+    beneficiaryId, firstName: "Sample", lastName: "Beneficiary", barangayId: barangayA,
+    contactNumber: "09171234567", status: "ACTIVE",
+    barangay: { barangayId: barangayA, barangayName: "Barangay A" },
+  }) };
+  await assert.rejects(() => referChatbotEscalationToBarangay({
+    sessionId, staffUser: dswd, beneficiaryId, verificationMethod: "IN_PERSON_AT_OFFICE",
+  }, database), { code: "FORBIDDEN" });
+  const referral = await referChatbotEscalationToBarangay({
+    sessionId, staffUser: admin, beneficiaryId, verificationMethod: "IN_PERSON_AT_OFFICE",
+  }, database);
+  assert.equal(referral.session.beneficiary.barangayId, barangayA);
+  assert.equal(database.state.session.beneficiaryId, beneficiaryId);
+  assert.equal(database.state.session.assignedStaffId, null);
+  assert.ok(database.state.audits.some((entry) => entry.action === "CHATBOT_SESSION_REFERRED_TO_BARANGAY"));
+  await assert.rejects(() => referChatbotEscalationToBarangay({
+    sessionId, staffUser: admin, beneficiaryId, verificationMethod: "IN_PERSON_AT_OFFICE",
+  }, database), { code: "CHATBOT_REFERRAL_UNAVAILABLE" });
 });
 
 test("queue filters, response selections, retention rules, audit sanitization, and realtime payloads exclude secrets", () => {
@@ -482,7 +528,7 @@ test("queue filters, response selections, retention rules, audit sanitization, a
   }), { sessionId, status: "ESCALATED" });
 });
 
-test("Phase 10 route surface is bounded, rate-limited, and exposes no edit, delete, or bulk endpoints", async () => {
+test("chatbot route surface is bounded, rate-limited, and exposes no edit, delete, or bulk endpoints", async () => {
   const routes = chatbotRoutes.stack
     .filter((layer) => layer.route)
     .map((layer) => ({
@@ -499,10 +545,13 @@ test("Phase 10 route surface is bounded, rate-limited, and exposes no edit, dele
     ["/sessions/:sessionId/messages", "post"],
     ["/sessions/:sessionId/escalate", "post"],
     ["/sessions/:sessionId/end", "post"],
+    ["/history", "get"],
+    ["/history/:sessionId", "get"],
     ["/escalations", "get"],
     ["/escalations/:sessionId", "get"],
     ["/escalations/:sessionId/reply", "post"],
     ["/escalations/:sessionId/resolve", "post"],
+    ["/escalations/:sessionId/refer", "post"],
   ];
   assert.deepEqual(routes.map((route) => [route.path, route.methods[0]]), expected);
   assert.equal(routes.some((route) => /edit|delete|bulk|impersonate/i.test(route.path)), false);
@@ -521,6 +570,11 @@ test("staff endpoints require authentication and anonymous session creation reje
   try {
     const staffResponse = await fetch(`${baseUrl}/api/v1/chatbot/escalations`);
     assert.equal(staffResponse.status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/v1/chatbot/history`)).status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/v1/chatbot/history/${sessionId}`)).status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/v1/chatbot/escalations/${sessionId}/refer`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    })).status, 401);
     const feedbackResponse = await fetch(`${baseUrl}/api/v1/chatbot/staff-feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -571,6 +625,7 @@ test("dedicated chatbot rate limiting rejects excess requests before session-tok
 test("Phase 10 realtime vocabulary remains server-controlled and carries no conversation text", () => {
   for (const eventName of [
     "chatbot.session.escalated",
+    "chatbot.session.referred",
     "chatbot.staff_reply.created",
     "chatbot.session.resolved",
     "chatbot.metrics.updated",

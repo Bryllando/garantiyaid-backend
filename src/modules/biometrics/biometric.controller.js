@@ -9,6 +9,7 @@ import {
   assertBiometricDeleteAllowed,
   assertBiometricDuplicateReviewAllowed,
   assertBiometricEnrollAllowed,
+  assertBiometricReenrollAllowed,
   assertIndependentBiometricDuplicateReviewer,
   assertBiometricReadAllowed,
 } from "./biometric.policy.js";
@@ -142,7 +143,8 @@ export const revokeBiometricConsent = asyncHandler(async (req, res) => {
 });
 
 async function saveEnrollment(req, res, requireExistingProfile) {
-  assertBiometricEnrollAllowed(req.staffUser);
+  if (requireExistingProfile) assertBiometricReenrollAllowed(req.staffUser);
+  else assertBiometricEnrollAllowed(req.staffUser);
   const beneficiary = await getBeneficiaryOrThrow(req.validatedParams.beneficiaryId, req.staffUser);
   if (beneficiary.status !== "ACTIVE") {
     throw new AppError(409, "BENEFICIARY_NOT_ACTIVE", "Only an active beneficiary can enroll biometrics.");

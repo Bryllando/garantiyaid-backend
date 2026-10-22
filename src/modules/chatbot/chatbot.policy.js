@@ -35,15 +35,16 @@ export function resolveChatbotBarangayScope(staffUser, requestedBarangayId) {
 
 export function assertChatbotSessionBarangayAccess(staffUser, session) {
   assertChatbotStaffAccess(staffUser);
-  if (staffUser.role !== "BARANGAY_FACILITATOR") return;
-  const assignedBarangayId = facilitatorBarangay(staffUser);
+  if (staffUser.role === "SYSTEM_ADMIN") return;
   if (!session.beneficiaryId || !session.beneficiary?.barangayId) {
     throw new AppError(
       403,
       "CHATBOT_GENERIC_SESSION_FORBIDDEN",
-      "Facilitators cannot access generic sessions that are not securely linked to their Barangay.",
+      "Unlinked conversations are available only to System Administrators.",
     );
   }
+  if (staffUser.role !== "BARANGAY_FACILITATOR") return;
+  const assignedBarangayId = facilitatorBarangay(staffUser);
   if (session.beneficiary.barangayId !== assignedBarangayId) {
     throw new AppError(
       403,
@@ -55,7 +56,16 @@ export function assertChatbotSessionBarangayAccess(staffUser, session) {
 
 export function chatbotEscalationScope(staffUser, requestedBarangayId) {
   const barangayId = resolveChatbotBarangayScope(staffUser, requestedBarangayId);
-  return barangayId ? { beneficiary: { is: { barangayId } } } : {};
+  if (staffUser.role === "SYSTEM_ADMIN") {
+    return barangayId ? { beneficiary: { is: { barangayId } } } : {};
+  }
+  if (staffUser.role === "BARANGAY_FACILITATOR") {
+    return { beneficiary: { is: { barangayId } } };
+  }
+  return {
+    beneficiaryId: { not: null },
+    ...(barangayId ? { beneficiary: { is: { barangayId } } } : {}),
+  };
 }
 
 export function assertChatbotReplyOwnership(staffUser, session) {

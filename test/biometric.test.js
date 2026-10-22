@@ -23,11 +23,13 @@ import {
   BIOMETRIC_DELETE_ROLES,
   BIOMETRIC_DUPLICATE_REVIEW_ROLES,
   BIOMETRIC_ENROLL_ROLES,
+  BIOMETRIC_REENROLL_ROLES,
   BIOMETRIC_READ_ROLES,
   BIOMETRIC_VERIFY_ROLES,
   assertBiometricDeleteAllowed,
   assertBiometricDuplicateReviewAllowed,
   assertBiometricEnrollAllowed,
+  assertBiometricReenrollAllowed,
   assertIndependentBiometricDuplicateReviewer,
   assertBiometricVerifyAllowed,
 } from "../src/modules/biometrics/biometric.policy.js";
@@ -131,12 +133,15 @@ test("Phase 7 schemas control verification policies, multipart fields, filters, 
 test("Phase 7 RBAC separates metadata, consent, enrollment, verification, and deletion", () => {
   assert.deepEqual(BIOMETRIC_READ_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF", "BARANGAY_FACILITATOR"]);
   assert.deepEqual(BIOMETRIC_CONSENT_MANAGE_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF", "BARANGAY_FACILITATOR"]);
-  assert.deepEqual(BIOMETRIC_ENROLL_ROLES, ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"]);
-  assert.deepEqual(BIOMETRIC_VERIFY_ROLES, ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"]);
+  assert.deepEqual(BIOMETRIC_ENROLL_ROLES, ["BARANGAY_FACILITATOR"]);
+  assert.deepEqual(BIOMETRIC_REENROLL_ROLES, ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"]);
+  assert.deepEqual(BIOMETRIC_VERIFY_ROLES, ["BARANGAY_FACILITATOR"]);
   assert.deepEqual(BIOMETRIC_DELETE_ROLES, ["SYSTEM_ADMIN"]);
   assert.doesNotThrow(() => assertBiometricEnrollAllowed({ role: "BARANGAY_FACILITATOR" }));
   assert.throws(() => assertBiometricEnrollAllowed({ role: "DSWD_STAFF" }), (error) => error.code === "FORBIDDEN");
-  assert.doesNotThrow(() => assertBiometricVerifyAllowed({ role: "SYSTEM_ADMIN" }));
+  assert.throws(() => assertBiometricEnrollAllowed({ role: "SYSTEM_ADMIN" }), (error) => error.code === "FORBIDDEN");
+  assert.doesNotThrow(() => assertBiometricReenrollAllowed({ role: "SYSTEM_ADMIN" }));
+  assert.throws(() => assertBiometricVerifyAllowed({ role: "SYSTEM_ADMIN" }), (error) => error.code === "FORBIDDEN");
   assert.throws(() => assertBiometricDeleteAllowed({ role: "DSWD_STAFF" }), (error) => error.code === "FORBIDDEN");
 });
 

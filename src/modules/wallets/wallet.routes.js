@@ -3,6 +3,7 @@ import { authenticateStaff } from "../../middleware/authenticate.js";
 import { authorizeRoles } from "../../middleware/authorize.js";
 import { validateBody, validateParams, validateQuery } from "../../middleware/validate.js";
 import {
+  WALLET_CREATE_ROLES,
   WALLET_MANAGE_ROLES,
   WALLET_READ_ROLES,
 } from "../distributions/distribution.policy.js";
@@ -30,7 +31,7 @@ const walletRoutes = Router();
 walletRoutes.use(authenticateStaff);
 walletRoutes.post(
   "/",
-  authorizeRoles(...WALLET_MANAGE_ROLES),
+  authorizeRoles(...WALLET_CREATE_ROLES),
   validateBody(createWalletSchema),
   createSimulatedWallet,
 );

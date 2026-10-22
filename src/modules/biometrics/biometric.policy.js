@@ -13,12 +13,15 @@ export const BIOMETRIC_CONSENT_MANAGE_ROLES = Object.freeze([
 ]);
 
 export const BIOMETRIC_ENROLL_ROLES = Object.freeze([
+  "BARANGAY_FACILITATOR",
+]);
+
+export const BIOMETRIC_REENROLL_ROLES = Object.freeze([
   "SYSTEM_ADMIN",
   "BARANGAY_FACILITATOR",
 ]);
 
 export const BIOMETRIC_VERIFY_ROLES = Object.freeze([
-  "SYSTEM_ADMIN",
   "BARANGAY_FACILITATOR",
 ]);
 
@@ -44,11 +47,15 @@ export function assertBiometricConsentManageAllowed(staffUser) {
 }
 
 export function assertBiometricEnrollAllowed(staffUser) {
-  assertRole(staffUser, BIOMETRIC_ENROLL_ROLES, "Only System Administrators and assigned Barangay Facilitators may enroll biometrics.");
+  assertRole(staffUser, BIOMETRIC_ENROLL_ROLES, "Only assigned Barangay Facilitators may enroll a new biometric profile.");
+}
+
+export function assertBiometricReenrollAllowed(staffUser) {
+  assertRole(staffUser, BIOMETRIC_REENROLL_ROLES, "Only System Administrators and assigned Barangay Facilitators may re-enroll biometrics.");
 }
 
 export function assertBiometricVerifyAllowed(staffUser) {
-  assertRole(staffUser, BIOMETRIC_VERIFY_ROLES, "Only System Administrators and assigned Barangay Facilitators may verify biometric claims.");
+  assertRole(staffUser, BIOMETRIC_VERIFY_ROLES, "Only assigned Barangay Facilitators may verify biometric claims.");
 }
 
 export function assertBiometricDeleteAllowed(staffUser) {

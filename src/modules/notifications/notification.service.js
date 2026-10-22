@@ -181,6 +181,15 @@ export function notificationDeduplicationKey({ scheduleId, notificationType, mes
   })).digest("hex");
 }
 
+export function scheduleNotificationPreviewHash(row, contactNumber) {
+  return createHash("sha256").update(JSON.stringify({
+    scheduleId: row.scheduleId,
+    notificationType: row.notificationType,
+    message: row.message,
+    recipient: normalizePhilippineMobileNumber(contactNumber),
+  })).digest("hex");
+}
+
 export function notificationScheduledFor(notificationType, requestedSendAt, slotStart, now = new Date()) {
   if (notificationType !== "DISTRIBUTION_REMINDER") return now;
   const computed = requestedSendAt ?? new Date(

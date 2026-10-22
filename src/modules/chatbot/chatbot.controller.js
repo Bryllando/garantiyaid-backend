@@ -4,6 +4,7 @@ import { AppError } from "../../utils/AppError.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import {
   publishChatbotSessionEscalated,
+  publishChatbotSessionReferred,
   publishChatbotSessionResolved,
   publishChatbotStaffReplyCreated,
 } from "../../realtime/publishers.js";
@@ -15,11 +16,14 @@ import {
   endGenericChatbotSession,
   escalateGenericChatbotSession,
   getGenericChatbotSession,
+  getAdminChatbotConversation,
   getStaffChatbotEscalation,
+  listAdminChatbotConversations,
   listGenericChatbotMessages,
   listStaffChatbotEscalations,
   processGenericChatbotTurn,
   redactChatbotText,
+  referChatbotEscalationToBarangay,
   resolveStaffChatbotEscalation,
 } from "./chatbot.service.js";
 
@@ -112,6 +116,28 @@ export const endChatbotSession = asyncHandler(async (req, res) => {
 
 export const listChatbotEscalations = asyncHandler(async (req, res) => {
   const data = await listStaffChatbotEscalations(req.staffUser, req.validatedQuery);
+  res.status(200).json({ success: true, data });
+});
+
+export const listChatbotConversationHistory = asyncHandler(async (req, res) => {
+  const data = await listAdminChatbotConversations(req.staffUser, req.validatedQuery);
+  res.status(200).json({ success: true, data });
+});
+
+export const getChatbotConversationHistory = asyncHandler(async (req, res) => {
+  const data = await getAdminChatbotConversation(req.validatedParams.sessionId, req.staffUser);
+  res.status(200).json({ success: true, data });
+});
+
+export const referChatbotEscalation = asyncHandler(async (req, res) => {
+  const data = await referChatbotEscalationToBarangay({
+    sessionId: req.validatedParams.sessionId,
+    staffUser: req.staffUser,
+    beneficiaryId: req.validatedBody.beneficiaryId,
+    verificationMethod: req.validatedBody.verificationMethod,
+    ipAddress: clientIpAddress(req),
+  });
+  await publishChatbotSessionReferred(eventSession(data.session));
   res.status(200).json({ success: true, data });
 });
 

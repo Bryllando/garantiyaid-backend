@@ -4,6 +4,10 @@ import { env } from "./config/env.js";
 import { attachRealtimeServer, clearRealtimePublisher } from "./realtime/socket.js";
 import { closeNotificationQueue } from "./queues/notification.queue.js";
 import prisma from "./lib/prisma.js";
+import { startAssistantHistoryCleanup } from "./modules/chatbot/assistantHistory.service.js";
+import { startBeneficiaryImportWorker } from "./workers/beneficiaryImport.worker.js";
+import { startProgramImportWorker } from "./workers/programImport.worker.js";
+import { startStaffImportWorker } from "./workers/staffImport.worker.js";
 import {
   closeNotificationRealtimeSubscriber,
   startNotificationRealtimeSubscriber,
@@ -12,6 +16,10 @@ import {
 const server = createServer(app);
 const io = attachRealtimeServer(server);
 void startNotificationRealtimeSubscriber();
+const stopProgramImportWorker = startProgramImportWorker();
+const stopStaffImportWorker = startStaffImportWorker();
+const stopBeneficiaryImportWorker = startBeneficiaryImportWorker();
+const stopAssistantHistoryCleanup = startAssistantHistoryCleanup();
 
 server.listen(env.port, () => {
   console.log(`GarantiyAid API listening on port ${env.port}.`);
@@ -21,6 +29,7 @@ let shuttingDown = false;
 
 async function closeResources(exitCode) {
   try {
+    await Promise.all([stopStaffImportWorker(), stopBeneficiaryImportWorker(), stopProgramImportWorker(), stopAssistantHistoryCleanup()]);
     await closeNotificationQueue();
     await closeNotificationRealtimeSubscriber();
     await prisma.$disconnect();

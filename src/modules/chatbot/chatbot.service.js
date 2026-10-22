@@ -582,6 +582,28 @@ export async function listStaffChatbotEscalations(staffUser, filters, database =
   };
 }
 
+export async function listAdminChatbotConversations(staffUser, filters, database = prisma) {
+  if (staffUser?.role !== "SYSTEM_ADMIN") {
+    throw new AppError(403, "FORBIDDEN", "Only System Administrators may view conversation history.");
+  }
+  const { page, pageSize, status } = filters;
+  const where = status ? { status } : {};
+  const [sessions, total] = await Promise.all([
+    database.chatbotSession.findMany({
+      where,
+      select: chatbotSessionAccessSelect,
+      orderBy: [{ lastActivityAt: "desc" }, { sessionId: "desc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    database.chatbotSession.count({ where }),
+  ]);
+  return {
+    conversations: sessions.map((session) => chatbotSessionToResponse(session, { staffView: true })),
+    pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+  };
+}
+
 async function hydrateSessionBeneficiary(session, database) {
   if (!session.beneficiaryId) return { ...session, beneficiary: null };
   const beneficiary = await database.beneficiary.findUnique({
@@ -609,12 +631,12 @@ async function getStaffSessionForMutationOrThrow(sessionId, staffUser, database)
   return scopedSession;
 }
 
-export async function getStaffChatbotEscalation(sessionId, staffUser, database = prisma) {
+async function getStaffChatbotConversation(sessionId, staffUser, database, escalationOnly) {
   const session = await database.chatbotSession.findUnique({
     where: { sessionId },
     select: chatbotSessionAccessSelect,
   });
-  if (!session || !["ESCALATED", "RESOLVED"].includes(session.status)) {
+  if (!session || (escalationOnly && !["ESCALATED", "RESOLVED"].includes(session.status))) {
     throw new AppError(404, "CHATBOT_ESCALATION_NOT_FOUND", "Chatbot escalation was not found.");
   }
   assertChatbotSessionBarangayAccess(staffUser, session);
@@ -628,6 +650,87 @@ export async function getStaffChatbotEscalation(sessionId, staffUser, database =
     session: chatbotSessionToResponse(session, { staffView: true }),
     messages: messages.map((message) => chatbotMessageToResponse(message, { staffView: true })),
   };
+}
+
+export async function getStaffChatbotEscalation(sessionId, staffUser, database = prisma) {
+  return getStaffChatbotConversation(sessionId, staffUser, database, true);
+}
+
+export async function getAdminChatbotConversation(sessionId, staffUser, database = prisma) {
+  if (staffUser?.role !== "SYSTEM_ADMIN") {
+    throw new AppError(403, "FORBIDDEN", "Only System Administrators may view conversation history.");
+  }
+  return getStaffChatbotConversation(sessionId, staffUser, database, false);
+}
+
+export async function referChatbotEscalationToBarangay(
+  { sessionId, staffUser, beneficiaryId, verificationMethod, ipAddress },
+  database = prisma,
+  now = new Date(),
+) {
+  if (staffUser?.role !== "SYSTEM_ADMIN") {
+    throw new AppError(403, "FORBIDDEN", "Only System Administrators may refer a conversation.");
+  }
+  return serializable(async (tx) => {
+    const session = await tx.chatbotSession.findUnique({
+      where: { sessionId },
+      select: chatbotSessionCoreSelect,
+    });
+    if (!session || session.status !== "ESCALATED" || session.beneficiaryId) {
+      throw new AppError(409, "CHATBOT_REFERRAL_UNAVAILABLE", "Only an unlinked open escalation can be referred.");
+    }
+    if (session.assignedStaffId && session.assignedStaffId !== staffUser.userId) {
+      throw new AppError(409, "CHATBOT_SESSION_ASSIGNED", "Another staff member owns this escalation.");
+    }
+    const beneficiary = await tx.beneficiary.findUnique({
+      where: { beneficiaryId },
+      select: {
+        beneficiaryId: true,
+        firstName: true,
+        lastName: true,
+        barangayId: true,
+        contactNumber: true,
+        status: true,
+        barangay: { select: { barangayId: true, barangayName: true } },
+      },
+    });
+    if (!beneficiary || beneficiary.status !== "ACTIVE" || !beneficiary.barangayId) {
+      throw new AppError(409, "CHATBOT_REFERRAL_BENEFICIARY_INVALID", "Select an active beneficiary with a Barangay assignment.");
+    }
+    if (verificationMethod === "REGISTERED_CONTACT_CALLBACK" && !beneficiary.contactNumber) {
+      throw new AppError(409, "CHATBOT_REFERRAL_CONTACT_UNAVAILABLE", "This beneficiary has no registered contact number for a callback.");
+    }
+    const change = await tx.chatbotSession.updateMany({
+      where: {
+        sessionId,
+        status: "ESCALATED",
+        beneficiaryId: null,
+        OR: [{ assignedStaffId: null }, { assignedStaffId: staffUser.userId }],
+      },
+      data: { beneficiaryId, assignedStaffId: null, assignedAt: null, lastActivityAt: now },
+    });
+    if (change.count !== 1) throw new AppError(409, "CHATBOT_CONCURRENT_CHANGE", "The escalation changed concurrently.");
+    await tx.auditLog.create({
+      data: {
+        userId: staffUser.userId,
+        actorType: "STAFF",
+        action: "CHATBOT_SESSION_REFERRED_TO_BARANGAY",
+        entityAffected: "CHATBOT_SESSION",
+        recordId: sessionId,
+        ipAddress,
+        details: { beneficiaryId, barangayId: beneficiary.barangayId, verificationMethod, identityVerified: true, conversationIncludedInAudit: false },
+      },
+    });
+    const updated = await tx.chatbotSession.findUnique({ where: { sessionId }, select: chatbotSessionCoreSelect });
+    return {
+      session: chatbotSessionToResponse({
+        ...updated,
+        beneficiary,
+        assignedStaff: null,
+        resolvedBy: null,
+      }, { staffView: true }),
+    };
+  }, database);
 }
 
 export async function createStaffChatbotReply(

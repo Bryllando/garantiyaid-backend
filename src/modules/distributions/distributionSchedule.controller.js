@@ -4,7 +4,7 @@ import { env } from "../../config/env.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
-import { publishDistributionUpdated } from "../../realtime/publishers.js";
+import { publishDistributionUpdated, publishScheduleUpdated } from "../../realtime/publishers.js";
 import {
   assertDistributionManageAllowed,
   assertDistributionReadAllowed,
@@ -256,6 +256,7 @@ export const createDistributionSchedule = asyncHandler(async (req, res) => {
   }
 
   const schedule = await getDistributionScheduleOrThrow(distributionId, scheduleId);
+  await publishScheduleUpdated(distributionId, "CREATED", scheduleId);
   return res.status(201).json({
     success: true,
     data: { schedule: distributionScheduleToResponse(schedule) },
@@ -518,6 +519,7 @@ export const generateDistributionSchedules = asyncHandler(async (req, res) => {
   }
 
   res.set("Idempotency-Replayed", String(result.replayed));
+  if (!result.replayed) await publishScheduleUpdated(distributionId, "GENERATED");
   return res.status(result.responseStatus).json(result.responseBody);
 });
 
@@ -536,7 +538,10 @@ export const listDistributionSchedules = asyncHandler(async (req, res) => {
   const [schedules, total, statusGroups] = await Promise.all([
     prisma.schedule.findMany({
       where: matchingWhere,
-      select: distributionScheduleSelect,
+      select: {
+        ...distributionScheduleSelect,
+        claim: { select: { claimStatus: true, releaseMethod: true } },
+      },
       orderBy: [
         { slot: { slotStart: "asc" } },
         { queueNumber: "asc" },
@@ -635,6 +640,7 @@ export const rescheduleDistributionSchedule = asyncHandler(async (req, res) => {
   });
 
   const schedule = await getDistributionScheduleOrThrow(distributionId, scheduleId);
+  await publishScheduleUpdated(distributionId, "RESCHEDULED", scheduleId);
   return res.status(200).json({
     success: true,
     data: { schedule: distributionScheduleToResponse(schedule) },
@@ -710,6 +716,7 @@ export const cancelDistributionSchedule = asyncHandler(async (req, res) => {
     "CANCELLED",
     "DISTRIBUTION_SCHEDULE_CANCELLED",
   );
+  await publishScheduleUpdated(req.validatedParams.distributionId, "CANCELLED", schedule.scheduleId);
   return res.status(200).json({
     success: true,
     data: { schedule: distributionScheduleToResponse(schedule) },
@@ -723,6 +730,7 @@ export const reactivateDistributionSchedule = asyncHandler(async (req, res) => {
     "SCHEDULED",
     "DISTRIBUTION_SCHEDULE_REACTIVATED",
   );
+  await publishScheduleUpdated(req.validatedParams.distributionId, "REACTIVATED", schedule.scheduleId);
   return res.status(200).json({
     success: true,
     data: { schedule: distributionScheduleToResponse(schedule) },

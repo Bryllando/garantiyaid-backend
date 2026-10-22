@@ -60,6 +60,9 @@ app.use(
   }),
 );
 app.use(requireSupportedContentType);
+app.use("/api/v1/users/import", express.json({ limit: "10mb" }));
+app.use("/api/v1/beneficiaries/import", express.json({ limit: "20mb" }));
+app.use("/api/v1/programs/import", express.json({ limit: "40mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(apiRateLimiter);
 

@@ -217,14 +217,55 @@ model User {
   staffRecoveryCodes              StaffRecoveryCode[]
   staffNotifications              StaffNotification[]
   idempotencyRecords              IdempotencyRecord[]
+  programImports                  ProgramImportJob[]
+  staffImports                    StaffImportJob[]
+  beneficiaryImports              BeneficiaryImportJob[]
   initiatedTransactions           Transaction[]                  @relation("TransactionInitiator")
   initiatedNotifications          Notification[]                 @relation("NotificationInitiator")
   assignedChatbotSessions         ChatbotSession[]               @relation("ChatbotAssignedStaff")
   resolvedChatbotSessions         ChatbotSession[]               @relation("ChatbotResolvedBy")
   chatbotMessages                 ChatbotMessage[]               @relation("ChatbotStaffMessage")
+  assistantConversations          StaffAssistantConversation[]
 
   @@index([archivedAt])
   @@map("users")
+}
+
+model StaffAssistantConversation {
+  id             String    @id @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  role           UserRole
+  barangayId     String?   @map("barangay_id") @db.Uuid
+  title          String    @default("New conversation") @db.VarChar(90)
+  language       String    @default("ceb") @db.VarChar(3)
+  input          String    @default("") @db.VarChar(300)
+  unfinished     Boolean   @default(false)
+  messageCount   Int       @default(0) @map("message_count")
+  revision       Int       @default(0)
+  lastMutationId String?   @map("last_mutation_id") @db.Uuid
+  archivedAt     DateTime? @map("archived_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt     DateTime  @map("last_used_at") @db.Timestamptz(6)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  user           User     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  messages       StaffAssistantMessage[]
+
+  @@index([userId, role, barangayId, lastUsedAt], map: "staff_assistant_conversations_owner_activity_idx")
+  @@index([expiresAt])
+  @@map("staff_assistant_conversations")
+}
+
+model StaffAssistantMessage {
+  conversationId String @map("conversation_id") @db.Uuid
+  position       Int
+  role           String @db.VarChar(10)
+  content        String @db.Text
+  local          Boolean @default(false)
+  conversation   StaffAssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, position])
+  @@map("staff_assistant_messages")
 }
 
 model StaffSession {
@@ -286,6 +327,79 @@ model IdempotencyRecord {
   @@unique([userId, operation, idempotencyKey])
   @@index([expiresAt])
   @@map("idempotency_records")
+}
+
+model StaffImportJob {
+  importId        String    @id @map("import_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  requestHash     String    @map("request_hash") @db.VarChar(64)
+  status          String    @default("QUEUED") @db.VarChar(20)
+  totalCount      Int       @map("total_count")
+  processedCount  Int       @default(0) @map("processed_count")
+  createdCount    Int       @default(0) @map("created_count")
+  failedCount     Int       @default(0) @map("failed_count")
+  encryptedRows   String?   @map("encrypted_rows") @db.Text
+  processingToken String?   @map("processing_token") @db.Uuid
+  leaseUntil      DateTime? @map("lease_until") @db.Timestamptz(6)
+  lastError       String?   @map("last_error") @db.VarChar(300)
+  ipAddress       String?   @map("ip_address") @db.VarChar(100)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  user            User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  batches         StaffImportBatch[]
+
+  @@index([userId, createdAt])
+  @@index([status, leaseUntil])
+  @@index([expiresAt])
+  @@map("staff_import_jobs")
+}
+
+model StaffImportBatch {
+  importId        String @map("import_id") @db.Uuid
+  batchIndex      Int    @map("batch_index")
+  encryptedResult String @map("encrypted_result") @db.Text
+  job             StaffImportJob @relation(fields: [importId], references: [importId], onDelete: Cascade)
+
+  @@id([importId, batchIndex])
+  @@map("staff_import_batches")
+}
+
+model BeneficiaryImportJob {
+  importId        String    @id @map("import_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  scopeBarangayId String?   @map("scope_barangay_id") @db.Uuid
+  requestHash     String    @map("request_hash") @db.VarChar(64)
+  status          String    @default("QUEUED") @db.VarChar(20)
+  totalCount      Int       @map("total_count")
+  processedCount  Int       @default(0) @map("processed_count")
+  createdCount    Int       @default(0) @map("created_count")
+  failedCount     Int       @default(0) @map("failed_count")
+  encryptedRows   String?   @map("encrypted_rows") @db.Text
+  processingToken String?   @map("processing_token") @db.Uuid
+  leaseUntil      DateTime? @map("lease_until") @db.Timestamptz(6)
+  lastError       String?   @map("last_error") @db.VarChar(300)
+  ipAddress       String?   @map("ip_address") @db.VarChar(100)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  user            User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  batches         BeneficiaryImportBatch[]
+
+  @@index([userId, createdAt])
+  @@index([status, leaseUntil])
+  @@index([expiresAt])
+  @@map("beneficiary_import_jobs")
+}
+
+model BeneficiaryImportBatch {
+  importId        String @map("import_id") @db.Uuid
+  batchIndex      Int    @map("batch_index")
+  encryptedResult String @map("encrypted_result") @db.Text
+  job             BeneficiaryImportJob @relation(fields: [importId], references: [importId], onDelete: Cascade)
+
+  @@id([importId, batchIndex])
+  @@map("beneficiary_import_batches")
 }
 
 model Barangay {
@@ -976,4 +1090,40 @@ model AuditLog {
   @@index([entityAffected, recordId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+model ProgramImportJob {
+  importId        String    @id @map("import_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  requestHash     String    @map("request_hash") @db.VarChar(64)
+  status          String    @default("QUEUED") @db.VarChar(20)
+  totalCount      Int       @map("total_count")
+  processedCount  Int       @default(0) @map("processed_count")
+  createdCount    Int       @default(0) @map("created_count")
+  failedCount     Int       @default(0) @map("failed_count")
+  encryptedRows   String?   @map("encrypted_rows") @db.Text
+  processingToken String?   @map("processing_token") @db.Uuid
+  leaseUntil      DateTime? @map("lease_until") @db.Timestamptz(6)
+  lastError       String?   @map("last_error") @db.VarChar(300)
+  ipAddress       String?   @map("ip_address") @db.VarChar(100)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  user            User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  batches         ProgramImportBatch[]
+
+  @@index([userId, createdAt])
+  @@index([status, leaseUntil])
+  @@index([expiresAt])
+  @@map("program_import_jobs")
+}
+
+model ProgramImportBatch {
+  importId        String @map("import_id") @db.Uuid
+  batchIndex      Int    @map("batch_index")
+  encryptedResult String @map("encrypted_result") @db.Text
+  job             ProgramImportJob @relation(fields: [importId], references: [importId], onDelete: Cascade)
+
+  @@id([importId, batchIndex])
+  @@map("program_import_batches")
 }

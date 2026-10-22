@@ -387,6 +387,7 @@ test("Socket rooms isolate Barangays, sanitize payloads, and reject client-publi
   const httpServer = createServer(app);
   const users = {
     admin: { userId: programId, role: "SYSTEM_ADMIN", barangayId: null, isActive: true },
+    dswd: { userId: "88888888-8888-4888-8888-888888888888", role: "DSWD_STAFF", barangayId: null, isActive: true },
     a: { userId: distributionId, role: "BARANGAY_FACILITATOR", barangayId: barangayA, isActive: true },
     b: { userId: barangayB, role: "BARANGAY_FACILITATOR", barangayId: barangayB, isActive: true },
   };
@@ -415,10 +416,11 @@ test("Socket rooms isolate Barangays, sanitize payloads, and reject client-publi
   bad.close();
 
   const admin = createSocketClient(url, options("admin"));
+  const dswd = createSocketClient(url, options("dswd"));
   const facilitatorA = createSocketClient(url, options("a"));
   const facilitatorB = createSocketClient(url, options("b"));
   try {
-    await Promise.all([once(admin, "connect"), once(facilitatorA, "connect"), once(facilitatorB, "connect")]);
+    await Promise.all([once(admin, "connect"), once(dswd, "connect"), once(facilitatorA, "connect"), once(facilitatorB, "connect")]);
     const adminEvent = eventWithin(admin, "claim.updated");
     const barangayAEvent = eventWithin(facilitatorA, "claim.updated");
     const barangayBEvent = eventWithin(facilitatorB, "claim.updated");
@@ -446,6 +448,20 @@ test("Socket rooms isolate Barangays, sanitize payloads, and reject client-publi
     assert.equal(Object.hasOwn(receivedByAdmin.data, "tokenHash"), false);
     assert.equal(Object.hasOwn(receivedByAdmin.data, "faceEmbedding"), false);
     assert.equal(Object.hasOwn(receivedByAdmin.data, "contactNumber"), false);
+
+    for (const eventName of ["schedule.updated", "claim.released"]) {
+      const adminUpdate = eventWithin(admin, eventName);
+      const assignedUpdate = eventWithin(facilitatorA, eventName);
+      const unrelatedUpdate = eventWithin(facilitatorB, eventName);
+      await publishRealtimeEvent(eventName, {
+        distributionId,
+        barangayId: barangayA,
+        data: { change: "UPDATED", claimId: programId },
+      });
+      assert.equal((await adminUpdate).distributionId, distributionId);
+      assert.equal((await assignedUpdate).distributionId, distributionId);
+      assert.equal(await unrelatedUpdate, null);
+    }
 
     const adminNotificationEvent = eventWithin(admin, "notification.sent");
     const barangayANotificationEvent = eventWithin(facilitatorA, "notification.sent");
@@ -495,12 +511,27 @@ test("Socket rooms isolate Barangays, sanitize payloads, and reject client-publi
     assert.equal(Object.hasOwn(adminChatbot.data, "accessToken"), false);
 
     const adminGenericChatbotEvent = eventWithin(admin, "chatbot.session.escalated");
+    const dswdGenericChatbotEvent = eventWithin(dswd, "chatbot.session.escalated");
     const facilitatorGenericChatbotEvent = eventWithin(facilitatorA, "chatbot.session.escalated");
     await publishRealtimeEvent("chatbot.session.escalated", {
       data: { sessionId: programId, status: "ESCALATED" },
     });
     assert.equal((await adminGenericChatbotEvent).data.status, "ESCALATED");
+    assert.equal(await dswdGenericChatbotEvent, null);
     assert.equal(await facilitatorGenericChatbotEvent, null);
+
+    const adminReferralEvent = eventWithin(admin, "chatbot.session.referred");
+    const dswdReferralEvent = eventWithin(dswd, "chatbot.session.referred");
+    const assignedReferralEvent = eventWithin(facilitatorA, "chatbot.session.referred");
+    const unrelatedReferralEvent = eventWithin(facilitatorB, "chatbot.session.referred");
+    await publishRealtimeEvent("chatbot.session.referred", {
+      barangayId: barangayA,
+      data: { sessionId: programId, status: "ESCALATED" },
+    });
+    assert.equal((await adminReferralEvent).data.sessionId, programId);
+    assert.equal((await dswdReferralEvent).data.sessionId, programId);
+    assert.equal((await assignedReferralEvent).data.sessionId, programId);
+    assert.equal(await unrelatedReferralEvent, null);
 
     const adminWalletEvent = eventWithin(admin, "wallet.transaction.completed");
     const facilitatorWalletEvent = eventWithin(facilitatorA, "wallet.transaction.completed");
@@ -542,6 +573,7 @@ test("Socket rooms isolate Barangays, sanitize payloads, and reject client-publi
     assert.equal(await illicitChatbot, null);
   } finally {
     admin.close();
+    dswd.close();
     facilitatorA.close();
     facilitatorB.close();
     clearRealtimePublisher(io);

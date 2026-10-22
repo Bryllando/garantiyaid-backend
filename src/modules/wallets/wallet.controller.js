@@ -10,6 +10,7 @@ import {
 } from "../../realtime/publishers.js";
 import { idempotencyKeySchema } from "../distributions/distributionAllocation.schemas.js";
 import {
+  assertWalletCreateAllowed,
   assertWalletManageAllowed,
   assertWalletReadAllowed,
 } from "../distributions/distribution.policy.js";
@@ -170,7 +171,7 @@ function money(valueInCents) {
 }
 
 export const createSimulatedWallet = asyncHandler(async (req, res) => {
-  assertWalletManageAllowed(req.staffUser);
+  assertWalletCreateAllowed(req.staffUser);
   const { beneficiaryId } = req.validatedBody;
   const result = await runWalletTransaction(async (tx) => createWalletForBeneficiary(
     tx,

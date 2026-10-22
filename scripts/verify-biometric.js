@@ -273,6 +273,10 @@ try {
   const slot = await prisma.distributionSlot.create({
     data: {
       distributionId: distribution.distributionId,
+      sessionId: randomUUID(),
+      sessionLabel: "Biometric verification",
+      location: distribution.location,
+      serviceAreas: [],
       slotStart: new Date(`${date}T00:00:00.000Z`),
       slotEnd: new Date(`${date}T00:30:00.000Z`),
       capacity: 3,

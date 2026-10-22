@@ -285,7 +285,7 @@ export function evaluateEnrollmentEligibility(enrollment, { manualDecisions = []
           criterion,
           null,
           ELIGIBILITY_OUTCOMES.REVIEW_REQUIRED,
-          "A DSWD reviewer must record this manual decision.",
+          "An authorized reviewer must record this manual decision.",
           { forceBlocking: true },
         );
       }

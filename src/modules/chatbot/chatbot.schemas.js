@@ -63,6 +63,18 @@ export const chatbotEscalationListQuerySchema = z.object({
   assignedToMe: booleanQuery.optional().default(false),
 }).strict();
 
+export const chatbotHistoryQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  status: z.enum(["ACTIVE", "ESCALATED", "RESOLVED", "ENDED"]).optional(),
+}).strict();
+
+export const chatbotReferralSchema = z.object({
+  beneficiaryId: z.uuid(),
+  verificationMethod: z.enum(["IN_PERSON_AT_OFFICE", "REGISTERED_CONTACT_CALLBACK"]),
+  identityVerified: z.literal(true),
+}).strict();
+
 export const chatbotStaffReplySchema = z.object({
   messageText,
 }).strict();

@@ -29,26 +29,25 @@ const otherBeneficiaryId = "22222222-2222-4222-8222-222222222222";
 const barangayId = "33333333-3333-4333-8333-333333333333";
 const otherBarangayId = "44444444-4444-4444-8444-444444444444";
 
-test("only Barangay facilitators upload documents while all staff can read them", () => {
-  assert.deepEqual(BENEFICIARY_DOCUMENT_UPLOAD_ROLES, ["BARANGAY_FACILITATOR"]);
+test("administrators and facilitators upload documents while all staff can read them", () => {
+  assert.deepEqual(BENEFICIARY_DOCUMENT_UPLOAD_ROLES, ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"]);
   assert.deepEqual(BENEFICIARY_DOCUMENT_READ_ROLES, [
     "SYSTEM_ADMIN",
     "DSWD_STAFF",
     "BARANGAY_FACILITATOR",
   ]);
-  assert.deepEqual(BENEFICIARY_DOCUMENT_REVIEW_ROLES, ["DSWD_STAFF"]);
-  assert.deepEqual(BENEFICIARY_DOCUMENT_REPLACEMENT_ROLES, ["BARANGAY_FACILITATOR"]);
+  assert.deepEqual(BENEFICIARY_DOCUMENT_REVIEW_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
+  assert.deepEqual(BENEFICIARY_DOCUMENT_REPLACEMENT_ROLES, ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"]);
 });
 
 test("document review and replacement roles are also enforced in domain logic", () => {
   assert.doesNotThrow(() => assertBeneficiaryDocumentReviewAllowed({ role: "DSWD_STAFF" }));
-  assert.throws(
-    () => assertBeneficiaryDocumentReviewAllowed({ role: "SYSTEM_ADMIN" }),
-    (error) => error.statusCode === 403 && error.code === "FORBIDDEN",
-  );
+  assert.doesNotThrow(() => assertBeneficiaryDocumentReviewAllowed({ role: "SYSTEM_ADMIN" }));
+  assert.throws(() => assertBeneficiaryDocumentReviewAllowed({ role: "BARANGAY_FACILITATOR" }), (error) => error.statusCode === 403 && error.code === "FORBIDDEN");
   assert.doesNotThrow(() => assertBeneficiaryDocumentReplacementAllowed({
     role: "BARANGAY_FACILITATOR",
   }));
+  assert.doesNotThrow(() => assertBeneficiaryDocumentReplacementAllowed({ role: "SYSTEM_ADMIN" }));
   assert.throws(
     () => assertBeneficiaryDocumentReplacementAllowed({ role: "DSWD_STAFF" }),
     (error) => error.statusCode === 403 && error.code === "FORBIDDEN",

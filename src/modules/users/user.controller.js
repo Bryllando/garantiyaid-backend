@@ -1,4 +1,3 @@
-import bcrypt from "bcrypt";
 import prisma from "../../lib/prisma.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
@@ -13,14 +12,13 @@ import {
   assertStaffAccountCanBeRemoved,
   assertActiveBarangay,
   assertStaffLoginIdentifiersAvailable,
-  generateStaffId,
-  generateTemporaryPassword,
   getStaffRemovalMode,
   getStaffUserOrThrow,
   operationalStaffActivityCountSelect,
   resolveStaffUserUpdate,
   staffUserSelect,
 } from "./user.service.js";
+import { insertStaffAccount, prepareStaffCredentials } from "./user.creation.js";
 
 export const getStaffEmailDeliveries = asyncHandler(async (req, res) => {
   const userId = req.validatedParams.userId;
@@ -37,39 +35,8 @@ export const createStaffUser = asyncHandler(async (req, res) => {
     await assertActiveBarangay(staffUserInput.barangayId);
   }
 
-  const temporaryPassword = generateTemporaryPassword();
-  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
-  const { user, securityNotification } = await prisma.$transaction(async (tx) => {
-    const employeeId = await generateStaffId(staffUserInput.role, tx);
-    await assertStaffLoginIdentifiersAvailable(
-      { employeeId, username: staffUserInput.username },
-      undefined,
-      tx,
-    );
-    const createdUser = await tx.user.create({
-      data: { ...staffUserInput, employeeId, passwordHash },
-      select: staffUserSelect,
-    });
-
-    await tx.auditLog.create({
-      data: {
-        userId: req.auth.userId,
-        action: "STAFF_ACCOUNT_CREATED",
-        entityAffected: "USER",
-        recordId: createdUser.userId,
-        ipAddress: clientIpAddress(req),
-        details: { role: createdUser.role, staffId: createdUser.employeeId },
-      },
-    });
-
-    const notification = await createStaffSecurityNotification({
-      event: "ACCOUNT_CREATED",
-      eventKey: createdUser.userId,
-      user: createdUser,
-    }, tx);
-
-    return { user: createdUser, securityNotification: notification };
-  });
+  const { temporaryPassword, passwordHash } = await prepareStaffCredentials();
+  const { user, securityNotification } = await prisma.$transaction((tx) => insertStaffAccount(tx, req, staffUserInput, passwordHash));
   const emailDelivery = await dispatchStaffSecurityNotification(securityNotification);
 
   res.set("Cache-Control", "no-store").status(201).json({

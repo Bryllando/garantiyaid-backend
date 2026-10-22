@@ -27,10 +27,13 @@ import {
   getNotificationOrThrow,
   notificationPublicSelect,
   notificationRowFromSchedule,
+  maskRecipient,
   notificationScheduleContextSelect,
+  scheduleNotificationPreviewHash,
   notificationToResponse,
   assistantReminderPreviewFromSchedules,
 } from "./notification.service.js";
+import { normalizePhilippineMobileNumber } from "./simulatedSms.provider.js";
 
 async function assertFilterScope(staffUser, filters) {
   if (staffUser.role !== "BARANGAY_FACILITATOR") return;
@@ -176,6 +179,9 @@ async function enqueueRows(req, operation, schedules, options = {}) {
     messageTemplate: options.messageTemplate,
     now,
   }));
+  if (req.validatedBody.previewHash && (rows.length !== 1 || scheduleNotificationPreviewHash(rows[0], schedules[0].beneficiary.contactNumber) !== req.validatedBody.previewHash)) {
+    throw new AppError(409, "NOTIFICATION_PREVIEW_CHANGED", "The schedule or message changed after preview. Review the current message before queueing.");
+  }
   const { notifications, newlyCreated } = await createNotificationRows(rows);
   const pending = notifications.filter((notification) => notification.status === "PENDING");
   try {
@@ -379,6 +385,34 @@ export const enqueueScheduleNotification = asyncHandler(async (req, res) => {
   );
   if (result.replay) return sendIdempotentResponse(res, result.replay, true);
   return sendIdempotentResponse(res, result, false);
+});
+
+export const previewScheduleNotification = asyncHandler(async (req, res) => {
+  const schedule = await prisma.schedule.findUnique({
+    where: { scheduleId: req.validatedParams.scheduleId },
+    select: notificationScheduleContextSelect,
+  });
+  if (!schedule) throw new AppError(404, "DISTRIBUTION_SCHEDULE_NOT_FOUND", "Distribution schedule was not found.");
+  assertNotificationBarangayAccess(req.staffUser, schedule.beneficiary.barangayId);
+  assertNotificationTypeAllowed(req.staffUser, req.validatedBody.notificationType);
+  const row = notificationRowFromSchedule(schedule, {
+    notificationType: req.validatedBody.notificationType,
+    initiatedById: req.auth.userId,
+  });
+  res.status(200).json({
+    success: true,
+    data: {
+      scheduleId: schedule.scheduleId,
+      distributionId: schedule.distributionId,
+      notificationType: row.notificationType,
+      message: row.message,
+      previewHash: scheduleNotificationPreviewHash(row, schedule.beneficiary.contactNumber),
+      recipientMasked: maskRecipient(schedule.beneficiary.contactNumber),
+      recipientAvailable: Boolean(normalizePhilippineMobileNumber(schedule.beneficiary.contactNumber)),
+      simulated: true,
+      realSmsSent: false,
+    },
+  });
 });
 
 export const enqueueDistributionNotifications = asyncHandler(async (req, res) => {

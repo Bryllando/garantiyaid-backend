@@ -7,14 +7,17 @@ export const BENEFICIARY_DOCUMENT_READ_ROLES = Object.freeze([
 ]);
 
 export const BENEFICIARY_DOCUMENT_UPLOAD_ROLES = Object.freeze([
+  "SYSTEM_ADMIN",
   "BARANGAY_FACILITATOR",
 ]);
 
 export const BENEFICIARY_DOCUMENT_REVIEW_ROLES = Object.freeze([
+  "SYSTEM_ADMIN",
   "DSWD_STAFF",
 ]);
 
 export const BENEFICIARY_DOCUMENT_REPLACEMENT_ROLES = Object.freeze([
+  "SYSTEM_ADMIN",
   "BARANGAY_FACILITATOR",
 ]);
 
@@ -28,7 +31,7 @@ export function assertBeneficiaryDocumentUploadAllowed(staffUser) {
   assertRole(
     staffUser,
     BENEFICIARY_DOCUMENT_UPLOAD_ROLES,
-    "Only Barangay Facilitators may upload beneficiary documents.",
+    "Only System Administrators and Barangay Facilitators may upload beneficiary documents.",
   );
 }
 
@@ -36,7 +39,7 @@ export function assertBeneficiaryDocumentReviewAllowed(staffUser) {
   assertRole(
     staffUser,
     BENEFICIARY_DOCUMENT_REVIEW_ROLES,
-    "Only DSWD Staff may review beneficiary documents.",
+    "Only System Administrators and DSWD Staff may review beneficiary documents.",
   );
 }
 
@@ -44,7 +47,7 @@ export function assertBeneficiaryDocumentReplacementAllowed(staffUser) {
   assertRole(
     staffUser,
     BENEFICIARY_DOCUMENT_REPLACEMENT_ROLES,
-    "Only Barangay Facilitators may replace rejected beneficiary documents.",
+    "Only System Administrators and Barangay Facilitators may replace rejected beneficiary documents.",
   );
 }
 

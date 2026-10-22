@@ -15,6 +15,7 @@ import {
   distributionNotificationEnqueueSchema,
   notificationListQuerySchema,
   scheduleNotificationEnqueueSchema,
+  scheduleNotificationPreviewSchema,
 } from "../src/modules/notifications/notification.schemas.js";
 import {
   assertNotificationBarangayAccess,
@@ -31,6 +32,7 @@ import {
   notificationDeduplicationKey,
   notificationPublicSelect,
   notificationRowFromSchedule,
+  scheduleNotificationPreviewHash,
   notificationScheduledFor,
   notificationToResponse,
 } from "../src/modules/notifications/notification.service.js";
@@ -368,6 +370,21 @@ test("notification rows are server-rendered, deduplicated, delayed safely, and l
     }),
     { code: "NOTIFICATION_LIFECYCLE_INVALID" },
   );
+});
+
+test("schedule confirmation stays stable over time and changes with wording or recipient", () => {
+  assert.equal(scheduleNotificationPreviewSchema.safeParse({ notificationType: "SCHEDULE_CREATED" }).success, true);
+  assert.equal(scheduleNotificationEnqueueSchema.safeParse({ notificationType: "SCHEDULE_CREATED", previewHash: "x" }).success, false);
+  const first = notificationRowFromSchedule(schedule(), {
+    notificationType: "SCHEDULE_CREATED", initiatedById: userId, now: new Date("2099-08-18T01:00:00Z"),
+  });
+  const later = notificationRowFromSchedule(schedule(), {
+    notificationType: "SCHEDULE_CREATED", initiatedById: userId, now: new Date("2099-08-18T01:01:00Z"),
+  });
+  const hash = scheduleNotificationPreviewHash(first, "09171234567");
+  assert.equal(hash, scheduleNotificationPreviewHash(later, "+639171234567"));
+  assert.notEqual(hash, scheduleNotificationPreviewHash(later, "09171234568"));
+  assert.notEqual(hash, scheduleNotificationPreviewHash({ ...later, message: "Different schedule" }, "09171234567"));
 });
 
 test("notification persistence reuses one row for the same deduplication key", async () => {
@@ -848,6 +865,7 @@ test("notification route surface exposes history, summary, controlled assistant 
     "POST /:distributionId/notifications/enqueue",
   ].sort());
   assert.deepEqual(routeSurface(scheduleNotificationRoutes), [
+    "POST /:scheduleId/notifications/preview",
     "POST /:scheduleId/notifications/enqueue",
   ]);
 });
@@ -876,12 +894,15 @@ test("all notification HTTP endpoints reject unauthenticated requests", async ()
       fetch(`${base}/schedules/${scheduleId}/notifications/enqueue`, {
         method: "POST", headers: { "content-type": "application/json" }, body: "{}",
       }),
+      fetch(`${base}/schedules/${scheduleId}/notifications/preview`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      }),
       fetch(`${base}/notifications/${notificationId}/retry`, {
         method: "POST", headers: { "content-type": "application/json" }, body: "{}",
       }),
     ];
     const responses = await Promise.all(requests);
-    assert.deepEqual(responses.map((response) => response.status), Array(10).fill(401));
+    assert.deepEqual(responses.map((response) => response.status), Array(11).fill(401));
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

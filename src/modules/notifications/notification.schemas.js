@@ -145,6 +145,11 @@ export const distributionNotificationEnqueueSchema = delayedReminderOnly(z.objec
 export const scheduleNotificationEnqueueSchema = delayedReminderOnly(z.object({
   notificationType: requiredEnum(NOTIFICATION_TYPES),
   sendAt,
+  previewHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict());
+
+export const scheduleNotificationPreviewSchema = z.object({
+  notificationType: z.enum(["SCHEDULE_CREATED", "SCHEDULE_UPDATED", "SCHEDULE_CANCELLED"]),
+}).strict();
 
 export const emptyNotificationBodySchema = z.object({}).strict();

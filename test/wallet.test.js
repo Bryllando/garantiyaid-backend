@@ -24,8 +24,10 @@ import {
   walletToResponse,
 } from "../src/modules/wallets/wallet.service.js";
 import {
+  WALLET_CREATE_ROLES,
   WALLET_MANAGE_ROLES,
   WALLET_READ_ROLES,
+  assertWalletCreateAllowed,
   assertWalletManageAllowed,
   assertWalletReadAllowed,
 } from "../src/modules/distributions/distribution.policy.js";
@@ -82,9 +84,12 @@ test("Phase 6 schemas validate wallet creation, monetary precision, filters, and
 
 test("wallet access excludes Barangay Facilitators from financial ledger data", () => {
   assert.deepEqual(WALLET_READ_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
-  assert.deepEqual(WALLET_MANAGE_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
+  assert.deepEqual(WALLET_CREATE_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
+  assert.deepEqual(WALLET_MANAGE_ROLES, ["DSWD_STAFF"]);
   assert.doesNotThrow(() => assertWalletReadAllowed({ role: "DSWD_STAFF" }));
-  assert.doesNotThrow(() => assertWalletManageAllowed({ role: "SYSTEM_ADMIN" }));
+  assert.doesNotThrow(() => assertWalletCreateAllowed({ role: "SYSTEM_ADMIN" }));
+  assert.doesNotThrow(() => assertWalletManageAllowed({ role: "DSWD_STAFF" }));
+  assert.throws(() => assertWalletManageAllowed({ role: "SYSTEM_ADMIN" }), (error) => error.statusCode === 403);
   assert.throws(
     () => assertClaimCreditable(creditableClaim({
       distribution: { deliveryMode: "PHYSICAL_GOODS" },

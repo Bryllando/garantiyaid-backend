@@ -10,6 +10,7 @@ import {
 } from "./enrollmentEligibility.service.js";
 import {
   assertEnrollmentStatus,
+  assertIndependentReviewer,
   assertProgramAcceptsEnrollment,
   assertRequiredDocuments,
   enrollmentAccessWhere,
@@ -184,6 +185,7 @@ async function reviewEnrollment(req, res, {
     req.validatedParams.enrollmentId,
     req.staffUser,
   );
+  assertIndependentReviewer(existingEnrollment, req.auth.userId);
   assertEnrollmentStatus(existingEnrollment, allowedStatuses, action);
 
   const enrollmentId = await prisma.$transaction(async (tx) => {
@@ -255,6 +257,7 @@ export const approveEnrollment = asyncHandler(async (req, res) => {
       req.staffUser,
       tx,
     );
+    assertIndependentReviewer(existingEnrollment, req.auth.userId);
     assertEnrollmentStatus(existingEnrollment, ["FOR_VALIDATION"], "ENROLLMENT_APPROVED");
 
     if (existingEnrollment.beneficiary.status !== "ACTIVE") {

@@ -51,6 +51,41 @@ export async function publishDistributionUpdated(distribution, change) {
   ]);
 }
 
+export async function publishScheduleUpdated(distributionId, change, scheduleId = null) {
+  await Promise.all([
+    publishRealtimeEvent("schedule.updated", {
+      distributionId,
+      data: { change, ...(scheduleId ? { scheduleId } : {}) },
+    }),
+    publishRealtimeEvent("dashboard.metrics.updated", {
+      distributionId,
+      data: { reason: `SCHEDULE_${change}` },
+    }),
+  ]);
+}
+
+export async function publishPhysicalReleaseResult(distributionId, result) {
+  if (result.replayed) return;
+  const { claim, lifecycle, release } = result.responseBody.data;
+  await Promise.all([
+    publishRealtimeEvent("claim.released", {
+      distributionId,
+      data: {
+        claimId: lifecycle.claimId,
+        beneficiaryId: claim.beneficiaryId,
+        claimStatus: lifecycle.claimStatus,
+        allocationStatus: lifecycle.allocationStatus,
+        releaseMethod: release.method,
+        releasedAt: release.releasedAt,
+      },
+    }),
+    publishRealtimeEvent("dashboard.metrics.updated", {
+      distributionId,
+      data: { reason: "PHYSICAL_ASSISTANCE_RELEASED" },
+    }),
+  ]);
+}
+
 function qrOutcome(result) {
   const errorCode = resultError(result)?.code;
   return {
@@ -340,6 +375,10 @@ async function publishChatbotLifecycle(eventName, session, data = {}) {
 
 export async function publishChatbotSessionEscalated(session, data = {}) {
   return publishChatbotLifecycle("chatbot.session.escalated", session, data);
+}
+
+export async function publishChatbotSessionReferred(session) {
+  return publishChatbotLifecycle("chatbot.session.referred", session);
 }
 
 export async function publishChatbotStaffReplyCreated(session, data = {}) {

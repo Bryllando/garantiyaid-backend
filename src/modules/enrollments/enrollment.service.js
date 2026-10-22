@@ -55,6 +55,12 @@ export function enrollmentAccessWhere(staffUser) {
   return { beneficiary: { barangayId: staffUser.barangayId } };
 }
 
+export function assertIndependentReviewer(enrollment, reviewerId) {
+  if (enrollment.submittedById === reviewerId) {
+    throw new AppError(403, "INDEPENDENT_REVIEW_REQUIRED", "A different authorized staff member must review an enrollment you submitted.");
+  }
+}
+
 export async function getEnrollmentOrThrow(enrollmentId, staffUser, database = prisma) {
   const enrollment = await database.enrollment.findFirst({
     where: {

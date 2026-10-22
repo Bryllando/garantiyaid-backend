@@ -25,9 +25,12 @@ import {
 } from "./program.schemas.js";
 import { PROGRAM_MANAGE_ROLES, PROGRAM_READ_ROLES } from "./program.policy.js";
 
+import programImportRoutes from "./programImport.routes.js";
+
 const programRoutes = Router();
 
 programRoutes.use(authenticateStaff);
+programRoutes.use("/import", programImportRoutes);
 programRoutes.get(
   "/",
   authorizeRoles(...PROGRAM_READ_ROLES),

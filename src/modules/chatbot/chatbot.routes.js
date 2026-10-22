@@ -1,4 +1,5 @@
 import { Router } from "express";
+import assistantHistoryRoutes from "./assistantHistory.routes.js";
 import { authenticateStaff } from "../../middleware/authenticate.js";
 import { authorizeRoles } from "../../middleware/authorize.js";
 import { chatbotRateLimiter } from "../../middleware/rateLimit.js";
@@ -8,10 +9,13 @@ import {
   endChatbotSession,
   escalateChatbotSession,
   getChatbotEscalation,
+  getChatbotConversationHistory,
   getChatbotSession,
   listChatbotEscalations,
+  listChatbotConversationHistory,
   listChatbotMessages,
   recordStaffAssistantFeedback,
+  referChatbotEscalation,
   replyToChatbotEscalation,
   resolveChatbotEscalation,
   submitStaffAssistantMessage,
@@ -21,9 +25,11 @@ import { CHATBOT_STAFF_ROLES } from "./chatbot.constants.js";
 import {
   chatbotEscalateSchema,
   chatbotEscalationListQuerySchema,
+  chatbotHistoryQuerySchema,
   chatbotMessageListQuerySchema,
   chatbotMessageSchema,
   chatbotResolveSchema,
+  chatbotReferralSchema,
   chatbotSessionParamsSchema,
   chatbotStaffReplySchema,
   createChatbotSessionSchema,
@@ -33,6 +39,7 @@ import {
 } from "./chatbot.schemas.js";
 
 const chatbotRoutes = Router();
+chatbotRoutes.use("/staff-assistant/conversations", authenticateStaff, authorizeRoles(...CHATBOT_STAFF_ROLES), assistantHistoryRoutes);
 
 chatbotRoutes.post(
   "/staff-assistant/messages",
@@ -94,6 +101,23 @@ chatbotRoutes.post(
 );
 
 chatbotRoutes.get(
+  "/history",
+  authenticateStaff,
+  authorizeRoles("SYSTEM_ADMIN"),
+  chatbotRateLimiter,
+  validateQuery(chatbotHistoryQuerySchema),
+  listChatbotConversationHistory,
+);
+chatbotRoutes.get(
+  "/history/:sessionId",
+  authenticateStaff,
+  authorizeRoles("SYSTEM_ADMIN"),
+  chatbotRateLimiter,
+  validateParams(chatbotSessionParamsSchema),
+  getChatbotConversationHistory,
+);
+
+chatbotRoutes.get(
   "/escalations",
   authenticateStaff,
   authorizeRoles(...CHATBOT_STAFF_ROLES),
@@ -126,6 +150,15 @@ chatbotRoutes.post(
   validateParams(chatbotSessionParamsSchema),
   validateBody(chatbotResolveSchema),
   resolveChatbotEscalation,
+);
+chatbotRoutes.post(
+  "/escalations/:sessionId/refer",
+  authenticateStaff,
+  authorizeRoles("SYSTEM_ADMIN"),
+  chatbotRateLimiter,
+  validateParams(chatbotSessionParamsSchema),
+  validateBody(chatbotReferralSchema),
+  referChatbotEscalation,
 );
 
 export default chatbotRoutes;

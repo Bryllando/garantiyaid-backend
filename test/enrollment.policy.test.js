@@ -7,6 +7,7 @@ import {
 } from "../src/modules/enrollments/enrollment.policy.js";
 import {
   assertEnrollmentStatus,
+  assertIndependentReviewer,
   assertProgramAcceptsEnrollment,
   assertRequiredDocuments,
   enrollmentAccessWhere,
@@ -14,14 +15,22 @@ import {
 
 const barangayId = "11111111-1111-4111-8111-111111111111";
 
-test("Barangay submits, DSWD reviews, and all staff roles can read enrollments", () => {
-  assert.deepEqual(ENROLLMENT_SUBMIT_ROLES, ["BARANGAY_FACILITATOR"]);
-  assert.deepEqual(ENROLLMENT_REVIEW_ROLES, ["DSWD_STAFF"]);
+test("administrators and facilitators submit, administrators and DSWD review, and all staff roles can read enrollments", () => {
+  assert.deepEqual(ENROLLMENT_SUBMIT_ROLES, ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"]);
+  assert.deepEqual(ENROLLMENT_REVIEW_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
   assert.deepEqual(ENROLLMENT_READ_ROLES, [
     "SYSTEM_ADMIN",
     "DSWD_STAFF",
     "BARANGAY_FACILITATOR",
   ]);
+});
+
+test("an enrollment submitter cannot review the same case", () => {
+  assert.throws(
+    () => assertIndependentReviewer({ submittedById: "staff-1" }, "staff-1"),
+    (error) => error.code === "INDEPENDENT_REVIEW_REQUIRED",
+  );
+  assert.doesNotThrow(() => assertIndependentReviewer({ submittedById: "staff-1" }, "staff-2"));
 });
 
 test("facilitator enrollment access is limited to the assigned barangay", () => {

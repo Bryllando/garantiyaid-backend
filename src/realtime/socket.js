@@ -6,9 +6,11 @@ import { verifyAccessToken } from "../modules/auth/auth.service.js";
 
 export const REALTIME_EVENT_NAMES = Object.freeze([
   "distribution.updated",
+  "schedule.updated",
   "schedule.checked_in",
   "qr.scan.recorded",
   "claim.updated",
+  "claim.released",
   "biometric.attempt.recorded",
   "wallet.transaction.completed",
   "wallet.transaction.reversed",
@@ -20,6 +22,7 @@ export const REALTIME_EVENT_NAMES = Object.freeze([
   "notification.metrics.updated",
   "staff.notification.created",
   "chatbot.session.escalated",
+  "chatbot.session.referred",
   "chatbot.staff_reply.created",
   "chatbot.session.resolved",
   "chatbot.metrics.updated",
@@ -30,6 +33,13 @@ const GLOBAL_REALTIME_ROLES = Object.freeze(["SYSTEM_ADMIN", "DSWD_STAFF"]);
 const GLOBAL_ONLY_EVENTS = new Set([
   "wallet.transaction.completed",
   "wallet.transaction.reversed",
+]);
+const ADMIN_ONLY_WHEN_UNSCOPED_EVENTS = new Set([
+  "chatbot.session.escalated",
+  "chatbot.session.referred",
+  "chatbot.staff_reply.created",
+  "chatbot.session.resolved",
+  "chatbot.metrics.updated",
 ]);
 const SENSITIVE_KEY_FRAGMENTS = Object.freeze([
   "password",
@@ -189,7 +199,10 @@ export async function publishRealtimeEvent(
     };
     let target = userId
       ? activeIo.to(`user:${userId}`)
-      : activeIo.to("role:SYSTEM_ADMIN").to("role:DSWD_STAFF");
+      : activeIo.to("role:SYSTEM_ADMIN");
+    if (!userId && (resolvedBarangayId || !ADMIN_ONLY_WHEN_UNSCOPED_EVENTS.has(eventName))) {
+      target = target.to("role:DSWD_STAFF");
+    }
     if (!userId && resolvedBarangayId && !GLOBAL_ONLY_EVENTS.has(eventName)) {
       target = target.to(`barangay:${resolvedBarangayId}`);
     }

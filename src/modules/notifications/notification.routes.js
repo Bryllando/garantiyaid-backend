@@ -7,6 +7,7 @@ import {
   enqueueDistributionNotifications,
   enqueueAssistantDistributionReminder,
   enqueueScheduleNotification,
+  previewScheduleNotification,
   getNotification,
   getNotificationQueueHealth,
   listDistributionNotifications,
@@ -30,6 +31,7 @@ import {
   notificationListQuerySchema,
   notificationSummaryQuerySchema,
   scheduleNotificationEnqueueSchema,
+  scheduleNotificationPreviewSchema,
   scheduleNotificationParamsSchema,
 } from "./notification.schemas.js";
 import { distributionIdSchema } from "../distributions/distribution.schemas.js";
@@ -104,6 +106,14 @@ distributionNotificationRoutes.post(
 
 export const scheduleNotificationRoutes = Router();
 scheduleNotificationRoutes.use(authenticateStaff);
+scheduleNotificationRoutes.post(
+  "/:scheduleId/notifications/preview",
+  authorizeRoles(...NOTIFICATION_ENQUEUE_ROLES),
+  notificationRateLimiter,
+  validateParams(scheduleNotificationParamsSchema),
+  validateBody(scheduleNotificationPreviewSchema),
+  previewScheduleNotification,
+);
 scheduleNotificationRoutes.post(
   "/:scheduleId/notifications/enqueue",
   authorizeRoles(...NOTIFICATION_ENQUEUE_ROLES),

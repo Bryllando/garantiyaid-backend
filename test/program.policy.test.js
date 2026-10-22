@@ -11,8 +11,8 @@ import {
   getProgramOrThrow,
 } from "../src/modules/programs/program.service.js";
 
-test("DSWD manages programs while every authenticated staff role can read them", () => {
-  assert.deepEqual(PROGRAM_MANAGE_ROLES, ["DSWD_STAFF"]);
+test("administrators and DSWD manage programs while every authenticated staff role can read them", () => {
+  assert.deepEqual(PROGRAM_MANAGE_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
   assert.deepEqual(PROGRAM_READ_ROLES, [
     "SYSTEM_ADMIN",
     "DSWD_STAFF",
