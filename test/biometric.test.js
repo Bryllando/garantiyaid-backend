@@ -100,7 +100,7 @@ function jpegCapture(seed) {
 }
 
 test("Phase 7 schemas control verification policies, multipart fields, filters, and result values", () => {
-  assert.deepEqual(VERIFICATION_REQUIREMENTS, ["QR", "BIOMETRIC", "QR_AND_BIOMETRIC", "BIOMETRIC_AND_SIGNATURE"]);
+  assert.deepEqual(VERIFICATION_REQUIREMENTS, ["QR", "BIOMETRIC", "QR_AND_BIOMETRIC", "QR_OR_BIOMETRIC", "BIOMETRIC_AND_SIGNATURE"]);
   const distribution = createDistributionSchema.parse({
     programId: beneficiaryId,
     title: "Biometric distribution",
@@ -113,6 +113,7 @@ test("Phase 7 schemas control verification policies, multipart fields, filters, 
     verificationRequirement: " qr_and_biometric ",
   });
   assert.equal(distribution.verificationRequirement, "QR_AND_BIOMETRIC");
+  assert.equal(createDistributionSchema.parse({ ...distribution, distributionDate: "2099-01-01", startTime: "08:00", endTime: "09:00", verificationRequirement: " qr_or_biometric " }).verificationRequirement, "QR_OR_BIOMETRIC");
   assert.deepEqual(biometricEnrollmentSchema.parse({ consentId }), { consentId });
   assert.deepEqual(verifyBiometricClaimSchema.parse({
     beneficiaryId,
@@ -135,12 +136,13 @@ test("Phase 7 RBAC separates metadata, consent, enrollment, verification, and de
   assert.deepEqual(BIOMETRIC_CONSENT_MANAGE_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF", "BARANGAY_FACILITATOR"]);
   assert.deepEqual(BIOMETRIC_ENROLL_ROLES, ["BARANGAY_FACILITATOR"]);
   assert.deepEqual(BIOMETRIC_REENROLL_ROLES, ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"]);
-  assert.deepEqual(BIOMETRIC_VERIFY_ROLES, ["BARANGAY_FACILITATOR"]);
+  assert.deepEqual(BIOMETRIC_VERIFY_ROLES, ["DSWD_STAFF", "BARANGAY_FACILITATOR"]);
   assert.deepEqual(BIOMETRIC_DELETE_ROLES, ["SYSTEM_ADMIN"]);
   assert.doesNotThrow(() => assertBiometricEnrollAllowed({ role: "BARANGAY_FACILITATOR" }));
   assert.throws(() => assertBiometricEnrollAllowed({ role: "DSWD_STAFF" }), (error) => error.code === "FORBIDDEN");
   assert.throws(() => assertBiometricEnrollAllowed({ role: "SYSTEM_ADMIN" }), (error) => error.code === "FORBIDDEN");
   assert.doesNotThrow(() => assertBiometricReenrollAllowed({ role: "SYSTEM_ADMIN" }));
+  assert.doesNotThrow(() => assertBiometricVerifyAllowed({ role: "DSWD_STAFF" }));
   assert.throws(() => assertBiometricVerifyAllowed({ role: "SYSTEM_ADMIN" }), (error) => error.code === "FORBIDDEN");
   assert.throws(() => assertBiometricDeleteAllowed({ role: "DSWD_STAFF" }), (error) => error.code === "FORBIDDEN");
 });
@@ -269,17 +271,24 @@ test("DeepFace ArcFace output is normalized and requires exactly one face", () =
   );
 });
 
-test("remote biometric processing requests ArcFace anti-spoofing and matches locally", async () => {
+test("remote biometric processing allows CPU warm-up and retains ArcFace anti-spoofing", async (t) => {
   const previous = {
     fetch: globalThis.fetch,
     mode: env.biometricProcessorMode,
     url: env.biometricServiceUrl,
     key: env.biometricServiceApiKey,
+    timeout: env.biometricRequestTimeoutMs,
   };
   const rawEmbedding = Array.from({ length: 512 }, (_, index) => index - 256);
   env.biometricProcessorMode = "REMOTE";
   env.biometricServiceUrl = "http://biometric-ai.test";
   env.biometricServiceApiKey = "test-biometric-token-with-32-characters";
+  env.biometricRequestTimeoutMs = 90_000;
+  const timeouts = [];
+  t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+    timeouts.push(milliseconds);
+    return new AbortController().signal;
+  });
   globalThis.fetch = async (url, options) => {
     assert.equal(url, "http://biometric-ai.test/represent");
     assert.equal(options.headers.authorization, `Bearer ${env.biometricServiceApiKey}`);
@@ -295,11 +304,13 @@ test("remote biometric processing requests ArcFace anti-spoofing and matches loc
     assert.equal(enrollment.processor, "REMOTE_DEEPFACE_ARCFACE");
     assert.equal(enrollment.livenessPassed, true);
     assert.equal(verification.matchPassed, true);
+    assert.deepEqual(timeouts, [90_000, 90_000]);
   } finally {
     globalThis.fetch = previous.fetch;
     env.biometricProcessorMode = previous.mode;
     env.biometricServiceUrl = previous.url;
     env.biometricServiceApiKey = previous.key;
+    env.biometricRequestTimeoutMs = previous.timeout;
   }
 });
 
@@ -328,6 +339,19 @@ test("remote processor returns clear spoof and outage outcomes", async () => {
       processBiometricEnrollment(jpegCapture("live-capture-service-outage")),
       (error) => error.code === "BIOMETRIC_SERVICE_UNAVAILABLE" && error.statusCode === 503,
     );
+    globalThis.fetch = async () => { throw new DOMException("Model warm-up exceeded the request timeout", "TimeoutError") };
+    await assert.rejects(
+      processBiometricEnrollment(jpegCapture("cold-start")),
+      (error) => error.code === "BIOMETRIC_SERVICE_UNAVAILABLE" && /took too long/.test(error.message),
+    );
+    for (const status of [401, 403, 429]) {
+      globalThis.fetch = async () => Response.json({ error: "Processor request rejected" }, { status });
+      await assert.rejects(
+        processBiometricEnrollment(jpegCapture(`service-response-${status}`)),
+        (error) => error.statusCode === 503 && error.code === "BIOMETRIC_SERVICE_UNAVAILABLE"
+          && (status === 429 ? /busy/.test(error.message) : /authentication/.test(error.message)),
+      );
+    }
   } finally {
     globalThis.fetch = previous.fetch;
     env.biometricProcessorMode = previous.mode;

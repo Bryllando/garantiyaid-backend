@@ -8,13 +8,17 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test",
-    "dev": "node --watch src/server.js",
+    "dev": "node --watch --watch-preserve-output src/server.js",
     "start": "node src/server.js",
     "worker:notifications": "node src/workers/notification.worker.js",
     "biometric:ai:up": "docker compose -f docker-compose.biometric.yml up -d",
     "biometric:ai:down": "docker compose -f docker-compose.biometric.yml down",
     "biometric:ai:logs": "docker compose -f docker-compose.biometric.yml logs -f biometric-ai",
     "verify:workflow": "node scripts/verify-program-enrollment-workflow.js",
+    "verify:integrated": "node scripts/verify-integrated-workflow.js",
+    "verify:pilot": "node scripts/verify-integrated-workflow.js --pilot",
+    "pilot:preflight": "node scripts/pilot-preflight.js",
+    "pilot:backup": "node scripts/pilot-backup.js",
     "verify:distribution": "npm run verify:distribution:setup && npm run verify:distribution:slots && npm run verify:distribution:allocations && npm run verify:distribution:schedules && npm run verify:distribution:claims && npm run verify:wallet && npm run verify:biometric:simulated",
     "verify:distribution:setup": "node scripts/verify-distribution-setup.js",
     "verify:distribution:slots": "node scripts/verify-distribution-slots.js",
@@ -65,6 +69,6 @@
     "socket.io-client": "^4.8.1"
   },
   "overrides": {
-    "fast-uri": "3.1.6"
+    "fast-uri": "3.1.9"
   }
 }

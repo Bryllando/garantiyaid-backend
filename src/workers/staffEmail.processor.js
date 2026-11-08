@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import prisma from "../lib/prisma.js";
 import { env } from "../config/env.js";
 import { gmailApiProvider } from "../modules/staffNotifications/gmailApi.provider.js";
+import { brevoApiProvider } from "../modules/staffNotifications/brevoApi.provider.js";
+
+const emailProviders = { GMAIL_API: gmailApiProvider, BREVO_API: brevoApiProvider };
 
 export class RetryableStaffEmailError extends Error {
   constructor(code) {
-    super("Gmail reported a retryable delivery failure.");
+    super("The email service reported a retryable delivery failure.");
     this.name = "RetryableStaffEmailError";
     this.code = code;
   }
@@ -124,7 +127,7 @@ export async function markExhaustedStaffEmailJob(
 
 export async function processStaffEmailJob(
   job,
-  { database = prisma, provider = gmailApiProvider, now = new Date() } = {},
+  { database = prisma, provider, now = new Date() } = {},
 ) {
   const notificationId = job.data?.notificationId;
   if (typeof notificationId !== "string") {
@@ -133,13 +136,19 @@ export async function processStaffEmailJob(
   const notification = await acquireStaffEmail(notificationId, database, now);
   if (!notification) return { outcome: "SKIPPED" };
 
+  const emailProvider = provider ?? emailProviders[notification.emailProviderMode];
+  if (!emailProvider) {
+    await recordFailure(notification, "EMAIL_PROVIDER_UNAVAILABLE", database, now);
+    return { outcome: "FAILED", errorCode: "EMAIL_PROVIDER_UNAVAILABLE" };
+  }
+
   const targetPath = staffEmailDeliveryTargetPath(notification, job.data?.deliveryTargetPath);
   if (notification.notificationType === "SECURITY_PASSWORD_RESET_REQUESTED" && !targetPath) {
     await recordFailure(notification, "PASSWORD_RESET_LINK_UNAVAILABLE", database, now);
     return { outcome: "FAILED", errorCode: "PASSWORD_RESET_LINK_UNAVAILABLE" };
   }
 
-  const result = await provider.send({
+  const result = await emailProvider.send({
     notificationId,
     recipient: notification.emailRecipient,
     recipientName: notification.user.fullName,

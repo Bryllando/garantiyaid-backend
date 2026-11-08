@@ -1,4 +1,4 @@
-import { PrismaPg } from "@prisma/adapter-pg";
+import { TransactionPrismaPg } from "./transactionPgAdapter.js";
 import generatedPrismaClient from "../generated/prisma/index.js";
 import { env } from "../config/env.js";
 
@@ -9,7 +9,7 @@ if (!env.databaseUrl) {
 }
 
 const globalForPrisma = globalThis;
-const adapter = new PrismaPg({ connectionString: env.databaseUrl });
+const adapter = new TransactionPrismaPg({ connectionString: env.databaseUrl });
 
 const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter });
 

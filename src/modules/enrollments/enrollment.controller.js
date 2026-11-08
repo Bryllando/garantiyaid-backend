@@ -54,7 +54,7 @@ export const submitEnrollment = asyncHandler(async (req, res) => {
 
   const documents = await prisma.beneficiaryDocument.findMany({
     where: { beneficiaryId: beneficiary.beneficiaryId },
-    select: { documentType: true, reviewStatus: true },
+    select: { documentType: true, documentName: true, reviewStatus: true },
   });
   assertRequiredDocuments(program, documents);
 

@@ -33,6 +33,7 @@ function receiptClaim(overrides = {}) {
     qrVerified: false,
     signatureVerified: true,
     claimedAt: new Date("2026-08-30T02:30:00.000Z"),
+    verifiedAt: new Date("2026-08-30T02:25:00.000Z"),
     updatedAt: new Date("2026-08-30T02:25:00.000Z"),
     beneficiary: {
       beneficiaryId: reviewerId,
@@ -139,6 +140,18 @@ test("receipt is immutable evidence metadata without raw face or signature image
   assert.match(generateDisputeReference(new Date("2026-08-30T00:00:00.000Z")), /^GYA-DSP-20260830-[A-F0-9]{12}$/);
 });
 
+test("receipt verification time remains stable after release and review; historical unknowns stay unknown", () => {
+  const claim = receiptClaim();
+  const original = buildClaimReceiptSnapshot(claim);
+  claim.updatedAt = new Date("2026-11-03T05:00:00Z");
+  claim.releasedAt = new Date("2026-11-03T04:00:00Z");
+  claim.isDuplicateFlag = true;
+  assert.equal(buildClaimReceiptSnapshot(claim).claim.verifiedAt, original.claim.verifiedAt);
+  assert.equal(original.claim.verifiedAt, claim.verifiedAt.toISOString());
+  assert.equal(buildClaimReceiptSnapshot(receiptClaim({ verifiedAt: null })).claim.verifiedAt, null);
+  assert.equal(buildClaimReceiptSnapshot(receiptClaim({ verifiedAt: undefined })).claim.verifiedAt, null);
+});
+
 test("disputes enforce role separation and reversal-first remediation", () => {
   assert.deepEqual(CLAIM_DISPUTE_FILE_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF", "BARANGAY_FACILITATOR"]);
   assert.deepEqual(CLAIM_DISPUTE_REVIEW_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
@@ -171,4 +184,20 @@ test("disputes enforce role separation and reversal-first remediation", () => {
     claim: { claimStatus: "VOIDED" },
   }), "COMPLETE_REMEDIATION", reviewerId, "Credit reversed and beneficiary informed.");
   assert.equal(remediated.disputeData.outcome, "BENEFICIARY_REMEDIATION");
+});
+
+test("independent confirmation clears a duplicate hold without verifying or releasing assistance", () => {
+  const updatedAt = new Date("2026-11-03T00:00:00Z");
+  for (const claimStatus of ["PENDING", "VERIFIED", "CLAIMED"]) {
+    const claim = { claimStatus, isDuplicateFlag: true, updatedAt };
+    assert.doesNotThrow(() => assertDisputeCanBeFiled(claim, 0));
+    const current = dispute({ status: "UNDER_REVIEW", assignedTo: { userId: reviewerId }, claim });
+    assert.throws(() => disputeReviewUpdate(current, "CONFIRM_CLAIM", filerId, "Checked original evidence."), (error) => error.code === "INDEPENDENT_REVIEW_REQUIRED");
+    assert.throws(() => disputeReviewUpdate(current, "CONFIRM_CLAIM", "other-reviewer", "Checked original evidence."), (error) => error.code === "DISPUTE_REVIEWER_MISMATCH");
+    const result = disputeReviewUpdate(current, "CONFIRM_CLAIM", reviewerId, "Checked original evidence and duplicate scan.");
+    assert.deepEqual(result.claimData, { isDuplicateFlag: false });
+    assert.equal(result.claimExpectedStatus, claimStatus);
+    assert.equal(result.disputeData.outcome, "CLAIM_CONFIRMED");
+  }
+  assert.throws(() => assertDisputeCanBeFiled({ claimStatus: "PENDING", isDuplicateFlag: false }, 0), (error) => error.code === "CLAIM_NOT_DISPUTABLE");
 });

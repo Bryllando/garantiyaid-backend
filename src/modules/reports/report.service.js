@@ -1,3 +1,4 @@
+import { distributionReconciliation } from "../distributions/distributionReconciliation.service.js";
 import prisma from "../../lib/prisma.js";
 import {
   PHILIPPINE_TIME_ZONE,
@@ -51,6 +52,9 @@ export const DISTRIBUTION_EXPORT_COLUMNS = Object.freeze([
   { key: "released_by_name", label: "released_by_name" },
   { key: "release_evidence_type", label: "release_evidence_type" },
   { key: "release_evidence_reference", label: "release_evidence_reference" },
+  { key: "released_package_name", label: "released_package_name" },
+  { key: "released_package_unit", label: "released_package_unit" },
+  { key: "released_quantity", label: "released_quantity" },
   { key: "benefit_credit_status", label: "benefit_credit_status" },
   { key: "benefit_credit_reference", label: "benefit_credit_reference" },
   { key: "credited_amount_php", label: "credited_amount_php" },
@@ -99,7 +103,9 @@ export async function generateDistributionSummaryReport(
     staffUser,
     database,
   );
-  return reportEnvelope("DISTRIBUTION_SUMMARY", distributionId, summary);
+  const physicalPackage = summary.distribution.deliveryMode === "PHYSICAL_GOODS"
+    ? (await distributionReconciliation(summary.distribution, database)).physicalPackage : null;
+  return reportEnvelope("DISTRIBUTION_SUMMARY", distributionId, { ...summary, physicalPackage });
 }
 
 export async function generateClaimStatusReport(
@@ -132,6 +138,9 @@ export async function generateClaimStatusReport(
         releasedAt: true,
         releaseEvidenceType: true,
         releaseEvidenceReference: true,
+        releasedPackageName: true,
+        releasedPackageUnit: true,
+        releasedQuantity: true,
         isDuplicateFlag: true,
         claimedAt: true,
         createdAt: true,
@@ -200,6 +209,9 @@ export async function generateClaimStatusReport(
     releasedBy: claim.releasedBy,
     releaseEvidenceType: claim.releaseEvidenceType,
     releaseEvidenceReference: claim.releaseEvidenceReference,
+    releasedPackageName: claim.releasedPackageName,
+    releasedPackageUnit: claim.releasedPackageUnit,
+    releasedQuantity: claim.releasedQuantity,
     duplicateFlag: claim.isDuplicateFlag,
     claimedAt: formatPhilippineTimestamp(claim.claimedAt),
     recordedAt: formatPhilippineTimestamp(claim.createdAt),
@@ -446,6 +458,9 @@ function allocationExportRow({
     released_by_name: claim?.releasedBy?.fullName ?? "",
     release_evidence_type: claim?.releaseEvidenceType ?? "",
     release_evidence_reference: claim?.releaseEvidenceReference ?? "",
+    released_package_name: claim?.releasedPackageName ?? "",
+    released_package_unit: claim?.releasedPackageUnit ?? "",
+    released_quantity: claim?.releasedQuantity ?? "",
     benefit_credit_status: distribution.deliveryMode === "PHYSICAL_GOODS"
       ? "NOT_APPLICABLE"
       : credit?.status ?? "NOT_CREDITED",
@@ -510,6 +525,9 @@ export async function generateDistributionCsvExport(
         releasedAt: true,
         releaseEvidenceType: true,
         releaseEvidenceReference: true,
+        releasedPackageName: true,
+        releasedPackageUnit: true,
+        releasedQuantity: true,
         claimedAt: true,
         releasedBy: {
           select: { employeeId: true, fullName: true },

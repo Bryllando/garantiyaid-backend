@@ -21,7 +21,7 @@ const securityMessages = {
   }),
   PASSWORD_RESET_REQUESTED: () => ({
     title: "Reset your GarantiyAid staff password",
-    message: `A password reset was requested for your staff account. Use the secure link below within ${env.passwordResetTokenMinutes} minutes. If you did not request this, you can ignore this message and keep your current password.`,
+    message: `A password reset was requested for your staff account.\n\nUse the button below to choose a new password. This link can be used once and expires in ${env.passwordResetTokenMinutes} minutes.\n\nIf you did not request this, ignore this email. Your current password will stay the same.`,
     targetPath: "/login",
   }),
   PASSWORD_RESET_COMPLETED: () => ({
@@ -58,7 +58,7 @@ const securityMessages = {
 
 export function emailDeliveryConfiguration() {
   return {
-    configured: env.emailProviderMode === "GMAIL_API",
+    configured: ["GMAIL_API", "BREVO_API"].includes(env.emailProviderMode),
     provider: env.emailProviderMode,
   };
 }

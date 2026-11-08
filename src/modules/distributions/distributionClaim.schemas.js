@@ -79,6 +79,7 @@ export const markPhysicalClaimReleasedSchema = z.object({
     z.string().trim().min(3).max(1000).optional(),
   ),
   beneficiaryAcknowledged: z.literal(true),
+  releasedQuantity: z.number().int().min(1).max(10000).optional(),
 }).strict();
 
 export const qrEligibleScheduleListQuerySchema = z.object({

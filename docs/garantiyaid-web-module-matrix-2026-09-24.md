@@ -1,5 +1,7 @@
 # GarantiyAid staff web module completion matrix
 
+**Historical snapshot (September 2026).** Permissions and acceptance coverage have since changed. See the [current technical role matrix and government procedure draft](government-procedure.md), [staff workflow](../../garantiyaid-frontend/docs/staff-workflow.md), and [integrated acceptance guide](integrated-acceptance.md) for the implementation as of 5 November 2026. Office approval remains pending.
+
 Reviewed 24 September 2026 and updated 25 September after the physical-release HTTP check, against the workspace `reference/LIST-OF-MODULES.pdf`, the capstone manuscript, current staff routes/pages, Prisma schema, and local automated checks. This replaces the status assessment in the workspace `output/garantiyaid-web-module-audit.md` dated 16–17 September. The source PDF has 68 feature rows in nine groups. Four rows belong solely to beneficiary self-service and remain outside the current web scope. “Implemented” means the staff code path exists and relevant automated checks pass; it is not a claim that the deployed service passed UAT.
 
 The agreed staff duties are narrower than some role ticks in the original PDF: DSWD manages programs and approves enrollment, administrators manage events, facilitators submit enrollment and manage schedules in their assigned barangay. The manuscript module table should be reconciled to this permission matrix before defense; silently broadening access to match every older tick would weaken separation of duties.

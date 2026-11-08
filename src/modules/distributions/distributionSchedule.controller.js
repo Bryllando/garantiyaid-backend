@@ -11,7 +11,7 @@ import {
   assertDistributionScheduleManageAllowed,
 } from "./distribution.policy.js";
 import { idempotencyKeySchema } from "./distributionAllocation.schemas.js";
-import { distributionSelect, distributionToResponse } from "./distribution.service.js";
+import { assertPhysicalPackageReady, distributionSelect, distributionToResponse } from "./distribution.service.js";
 import {
   assertDistributionSlotCoverage,
   distributionSlotCoversBeneficiary,
@@ -540,7 +540,7 @@ export const listDistributionSchedules = asyncHandler(async (req, res) => {
       where: matchingWhere,
       select: {
         ...distributionScheduleSelect,
-        claim: { select: { claimStatus: true, releaseMethod: true } },
+        claim: { select: { claimId: true, claimStatus: true, releaseMethod: true } },
       },
       orderBy: [
         { slot: { slotStart: "asc" } },
@@ -748,6 +748,7 @@ export const openDistribution = asyncHandler(async (req, res) => {
       tx,
     );
     assertDistributionSchedulesManageable(distribution);
+    assertPhysicalPackageReady(distribution);
     const readiness = await distributionOpeningReadiness(distributionId, tx);
     const transition = await tx.distribution.updateMany({
       where: { distributionId, status: "DRAFT" },

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { claimListQuerySchema } from "../distributions/distributionClaim.schemas.js";
 
 export const SIMULATED_TRANSACTION_TYPES = Object.freeze([
   "BENEFIT_CREDIT",
@@ -81,7 +82,4 @@ export const distributionTransactionListQuerySchema = walletTransactionListQuery
   claimId: z.uuid().optional(),
 }).strict();
 
-export const creditableClaimListQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
-}).strict();
+export const creditableClaimListQuerySchema = claimListQuerySchema.omit({ status: true });

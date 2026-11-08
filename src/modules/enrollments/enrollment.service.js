@@ -29,6 +29,7 @@ export const enrollmentSelect = {
     select: {
       ...beneficiarySelect,
       documents: {
+        where: { reviewStatus: { not: "REMOVED" } },
         select: beneficiaryDocumentSelect,
         orderBy: { createdAt: "desc" },
       },
@@ -81,13 +82,14 @@ export function assertRequiredDocuments(program, documents, { acceptedOnly = fal
   const allowedReviewStatuses = acceptedOnly
     ? new Set(["ACCEPTED"])
     : new Set(["SUBMITTED", "ACCEPTED"]);
-  const availableTypes = new Set(
-    documents
-      .filter((document) => allowedReviewStatuses.has(document.reviewStatus))
-      .map((document) => document.documentType),
-  );
+  const available = documents.filter(document => allowedReviewStatuses.has(document.reviewStatus));
+  const names = program.otherRequiredDocumentNames?.length ? program.otherRequiredDocumentNames
+    : program.otherRequiredDocumentName ? [program.otherRequiredDocumentName] : [];
+  const normalize = value => value?.trim().toLowerCase().replace(/\s+/g, " ");
+  const missingOtherDocumentNames = program.requiredDocumentTypes.includes("OTHER")
+    ? names.filter(name => !available.some(document => document.documentType === "OTHER" && normalize(document.documentName) === normalize(name))) : [];
   const missingDocumentTypes = program.requiredDocumentTypes.filter(
-    (documentType) => !availableTypes.has(documentType),
+    documentType => documentType === "OTHER" && names.length ? missingOtherDocumentNames.length > 0 : !available.some(document => document.documentType === documentType),
   );
 
   if (missingDocumentTypes.length > 0) {
@@ -98,8 +100,8 @@ export function assertRequiredDocuments(program, documents, { acceptedOnly = fal
         ? "DSWD must accept every program-required beneficiary document before enrollment approval."
         : "Upload submitted or accepted documents for every program-required type before enrollment submission.",
       acceptedOnly
-        ? { unacceptedDocumentTypes: missingDocumentTypes }
-        : { missingDocumentTypes },
+        ? { unacceptedDocumentTypes: missingDocumentTypes, ...(missingOtherDocumentNames.length ? { missingOtherDocumentNames } : {}) }
+        : { missingDocumentTypes, ...(missingOtherDocumentNames.length ? { missingOtherDocumentNames } : {}) },
     );
   }
 }

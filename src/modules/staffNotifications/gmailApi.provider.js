@@ -1,4 +1,5 @@
 import { env } from "../../config/env.js";
+import { renderStaffEmail } from "./staffEmail.template.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
@@ -6,15 +7,6 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function cleanHeader(value) {
   return String(value).replace(/[\r\n]+/g, " ").trim();
-}
-
-function html(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 function encodedHeader(value) {
@@ -84,21 +76,8 @@ export function createGmailApiProvider({
           return failedResult("GMAIL_TOKEN", tokenResponse.status, token);
         }
 
-        const safeSubject = cleanHeader(subject);
-        const safeTargetPath = targetPath?.startsWith("/") && !targetPath.startsWith("//")
-          ? targetPath
-          : "/login";
-        const appUrl = new URL(publicAppUrl);
-        const requestedUrl = new URL(safeTargetPath, `${publicAppUrl}/`);
-        const actionUrl = (requestedUrl.origin === appUrl.origin ? requestedUrl : new URL('/login', appUrl)).toString();
-        const actionLabel = safeTargetPath.startsWith("/reset-password?token=") ? "Reset staff password"
-          : safeTargetPath === "/account?section=password" ? "Review password settings"
-          : safeTargetPath === "/account?section=authenticator" ? "Review authenticator settings"
-            : "Sign in to GarantiyAid";
-        const eventTime = occurredAt ? `${new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Manila" }).format(new Date(occurredAt))} PHT` : null;
-        const safeName = html(recipientName || "Staff member");
-        const safeMessage = html(message);
-        const safeActionUrl = html(actionUrl);
+        const content = renderStaffEmail({ subject, message, targetPath, recipientName, occurredAt }, publicAppUrl);
+        const safeSubject = content.subject;
         const boundary = `garantiyaid-${notificationId.replaceAll("-", "")}`;
         const raw = [
           `From: ${encodedHeader(senderName)} <${senderEmail}>`,
@@ -114,21 +93,12 @@ export function createGmailApiProvider({
           'Content-Type: text/plain; charset="UTF-8"',
           "Content-Transfer-Encoding: base64",
           "",
-          encodedBody([
-            `Hello ${recipientName || "Staff member"},`,
-            "",
-            message,
-            "",
-            ...(eventTime ? [`Event time: ${eventTime}`, ""] : []),
-            ...(targetPath !== null ? [`${actionLabel}: ${actionUrl}`, ""] : []),
-            "",
-            "Never share your password, verification codes, or recovery codes.",
-          ].join("\r\n")),
+          encodedBody(content.textContent),
           `--${boundary}`,
           'Content-Type: text/html; charset="UTF-8"',
           "Content-Transfer-Encoding: base64",
           "",
-          encodedBody(`<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;background:#f3f7fb;font-family:Arial,sans-serif;color:#14243b"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f7fb;padding:24px 12px"><tr><td align="center"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#fff;border:1px solid #d9e3ef;border-radius:16px;overflow:hidden"><tr><td style="background:#0b2d52;padding:24px 28px;color:#fff"><div style="font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#b9d7ff">GarantiyAid</div><h1 style="margin:8px 0 0;font-size:22px;line-height:1.35;font-weight:700">${html(safeSubject)}</h1></td></tr><tr><td style="padding:28px"><p style="margin:0 0 16px;font-size:16px;line-height:1.6">Hello ${safeName},</p><p style="margin:0;font-size:16px;line-height:1.7;color:#44566c;white-space:pre-line;overflow-wrap:break-word">${safeMessage}</p>${eventTime ? `<p style="margin:18px 0 0;font-size:13px;line-height:1.6;color:#64748b">Event time: ${html(eventTime)}</p>` : ""}${targetPath !== null ? `<p style="margin:24px 0"><a href="${safeActionUrl}" style="display:inline-block;background:#245aa5;color:#fff;text-decoration:none;font-size:16px;line-height:1.4;font-weight:700;padding:13px 20px;border-radius:6px">${actionLabel}</a></p>` : ""}<div style="border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;margin-top:24px;padding:14px 16px;font-size:13px;line-height:1.6;color:#334155"><strong>Security reminder:</strong> Never share your password, verification codes, or recovery codes.</div></td></tr><tr><td style="border-top:1px solid #e2e8f0;padding:18px 28px;font-size:12px;line-height:1.6;color:#64748b">Automated account security notice from the GarantiyAid Staff Operations Portal.</td></tr></table></td></tr></table></body></html>`),
+          encodedBody(content.htmlContent),
           `--${boundary}--`,
         ].join("\r\n");
 

@@ -19,6 +19,7 @@ import notificationRoutes, {
 import chatbotRoutes from "../modules/chatbot/chatbot.routes.js";
 import staffNotificationRoutes from "../modules/staffNotifications/staffNotification.routes.js";
 import biometricDuplicateRoutes from "../modules/biometrics/biometricDuplicate.routes.js";
+import burialRoutes from "../modules/burial/burial.routes.js";
 
 const apiRoutes = Router();
 
@@ -31,6 +32,7 @@ apiRoutes.use("/biometric-duplicate-cases", biometricDuplicateRoutes);
 apiRoutes.use("/programs/:programId/enrollments", programEnrollmentRoutes);
 apiRoutes.use("/programs", programRoutes);
 apiRoutes.use("/enrollments", enrollmentRoutes);
+apiRoutes.use("/burial-referrals", burialRoutes);
 apiRoutes.use("/users", userRoutes);
 apiRoutes.use("/audit-logs", auditLogRoutes);
 apiRoutes.use("/notifications", notificationRoutes);

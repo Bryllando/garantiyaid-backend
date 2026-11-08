@@ -6,6 +6,7 @@ export const beneficiaryDocumentMetadataSchema = z.object({
     (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
     z.enum(BENEFICIARY_DOCUMENT_TYPES),
   ),
+  documentName: z.string().trim().min(1).max(150).nullable().optional(),
 }).strict();
 
 export const beneficiaryDocumentListParamsSchema = z.object({

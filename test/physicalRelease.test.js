@@ -10,6 +10,7 @@ import {
 } from "../src/modules/distributions/distribution.policy.js";
 import {
   assertPhysicalClaimReleasable,
+  physicalReleasePackage,
 } from "../src/modules/distributions/distributionClaim.service.js";
 import {
   buildClaimReceiptSnapshot,
@@ -76,6 +77,7 @@ test("only the assigned facilitator role can use physical release", () => {
 });
 
 test("physical release requires the configured verification and unsettled lifecycle", () => {
+  assert.throws(() => assertPhysicalClaimReleasable(releasableClaim({ isDuplicateFlag: true }), physicalDistribution), (error) => error.code === "CLAIM_DUPLICATE_REVIEW_REQUIRED");
   assert.doesNotThrow(() => assertPhysicalClaimReleasable(
     releasableClaim(),
     physicalDistribution,
@@ -203,4 +205,19 @@ test("physical receipt snapshot includes release method, actor, time, and eviden
   assert.equal(snapshot.assistance.releasedBy.employeeId, "BF-001");
   assert.equal(snapshot.assistance.releasedAt, releasedAt.toISOString());
   assert.equal(snapshot.assistance.evidence.reference, "LOG-12-ROW-4");
+});
+
+
+test("package handover must match the frozen event and older releases remain unknown", () => {
+  const event = { packageName: 'Family food pack', packageUnit: 'pack', packageQuantity: 2 };
+  assert.deepEqual(physicalReleasePackage(event, 2), { releasedPackageName: 'Family food pack', releasedPackageUnit: 'pack', releasedQuantity: 2 });
+  for (const quantity of [undefined, null, 0, 1, 3]) {
+    assert.throws(() => physicalReleasePackage(event, quantity), error => error.code === 'PHYSICAL_RELEASE_QUANTITY_MISMATCH');
+  }
+  assert.deepEqual(physicalReleasePackage({}, undefined), {});
+  assert.throws(() => physicalReleasePackage({}, 2), error => error.code === 'PHYSICAL_PACKAGE_NOT_CONFIGURED');
+  const evidence = { evidenceType: 'OFFICIAL_RELEASE_LOG', evidenceReference: 'LOG-P3-R12', beneficiaryAcknowledged: true };
+  for (const quantity of [0, -1, 1.5, 10001, '2']) {
+    assert.equal(markPhysicalClaimReleasedSchema.safeParse({ ...evidence, releasedQuantity: quantity }).success, false);
+  }
 });

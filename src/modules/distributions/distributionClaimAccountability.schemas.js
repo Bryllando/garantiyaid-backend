@@ -53,8 +53,17 @@ export const claimDisputeListQuerySchema = z.object({
 
 export const reviewClaimDisputeSchema = z.object({
   action: normalizedEnum(CLAIM_DISPUTE_REVIEW_ACTIONS),
+  expectedUpdatedAt: z.iso.datetime(),
+  expectedClaimUpdatedAt: z.iso.datetime().optional(),
   reviewNotes: z.string().trim().min(20).max(2000).optional(),
 }).strict().superRefine((value, context) => {
+  if (value.action !== "START_REVIEW" && !value.expectedClaimUpdatedAt) {
+    context.addIssue({
+      code: "custom",
+      path: ["expectedClaimUpdatedAt"],
+      message: "Reload the claim evidence before recording a decision.",
+    });
+  }
   if (value.action !== "START_REVIEW" && !value.reviewNotes) {
     context.addIssue({
       code: "custom",

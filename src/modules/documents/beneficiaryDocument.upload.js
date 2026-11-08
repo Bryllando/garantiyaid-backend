@@ -2,11 +2,11 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import multer from "multer";
+import { env } from "../../config/env.js";
 import { BENEFICIARY_DOCUMENT_MAX_BYTES } from "./beneficiaryDocument.constants.js";
 
 export const beneficiaryDocumentUploadDirectory = path.resolve(
-  process.cwd(),
-  "uploads",
+  env.uploadRoot,
   "beneficiary-documents",
 );
 

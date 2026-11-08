@@ -20,6 +20,7 @@ import {
 } from "./distribution.service.js";
 import { assertDistributionScheduleFieldsUnlocked } from "./distributionSlot.service.js";
 import { assertDistributionAllocationFieldsUnlocked } from "./distributionAllocation.service.js";
+import { distributionReconciliation } from "./distributionReconciliation.service.js";
 import { publishDistributionUpdated } from "../../realtime/publishers.js";
 import { prepareAssistantApproval, executeAssistantApproval } from "../../utils/assistantApproval.js";
 
@@ -137,6 +138,7 @@ export const listDistributions = asyncHandler(async (req, res) => {
   const {
     page,
     pageSize,
+    search,
     programId,
     barangayId,
     status,
@@ -145,6 +147,10 @@ export const listDistributions = asyncHandler(async (req, res) => {
   } = req.validatedQuery;
   const scopedBarangayId = resolveDistributionListBarangay(req.staffUser, barangayId);
   const where = {
+    ...(search ? { OR: [
+      { title: { contains: search, mode: "insensitive" } },
+      { location: { contains: search, mode: "insensitive" } },
+    ] } : {}),
     ...(programId ? { programId } : {}),
     ...(scopedBarangayId ? { barangayId: scopedBarangayId } : {}),
     ...(status ? { status } : {}),
@@ -380,4 +386,38 @@ export const cancelDistribution = asyncHandler(async (req, res) => {
     success: true,
     data: { distribution: distributionToResponse(distribution) },
   });
+});
+
+export const closeDistribution = asyncHandler(async (req, res) => {
+  assertDistributionManageAllowed(req.staffUser);
+  const { distributionId } = req.validatedParams;
+  const changed = await runDistributionTransaction(async (tx) => {
+    const distribution = await getDistributionOrThrow(distributionId, req.staffUser, tx);
+    // A lost response can be retried without rewriting the original closure evidence.
+    if (distribution.status === "CLOSED") return false;
+    assertDistributionTransition(distribution, "CLOSED");
+    const now = new Date();
+    const reconciliation = await distributionReconciliation(distribution, tx, now);
+    if (!reconciliation.readyToClose) {
+      throw new AppError(409, "DISTRIBUTION_NOT_RECONCILED", "Refresh event review and resolve the listed findings before closing.", { reconciliation });
+    }
+    const transition = await tx.distribution.updateMany({
+      where: { distributionId, status: "OPEN" }, data: { status: "CLOSED" },
+    });
+    if (transition.count !== 1) throw new AppError(409, "DISTRIBUTION_STATUS_CHANGED", "The event changed while closing. Refresh and review its current status.");
+    const missed = await tx.schedule.updateMany({
+      where: { distributionId, status: "SCHEDULED", claim: null, slot: { slotEnd: { lte: now } } },
+      data: { status: "MISSED" },
+    });
+    const slots = await tx.distributionSlot.updateMany({ where: { distributionId, slotStatus: { not: "CLOSED" } }, data: { slotStatus: "CLOSED" } });
+    const credentials = await tx.qrToken.updateMany({ where: { distributionId, qrStatus: "ACTIVE" }, data: { qrStatus: "REVOKED" } });
+    await tx.auditLog.create({ data: {
+      userId: req.auth.userId, action: "DISTRIBUTION_CLOSED", entityAffected: "DISTRIBUTION", recordId: distributionId, ipAddress: clientIpAddress(req),
+      details: { previousStatus: "OPEN", status: "CLOSED", notes: req.validatedBody.notes, missedScheduleCount: missed.count, closedSlotCount: slots.count, revokedCredentialCount: credentials.count, reconciliation },
+    } });
+    return true;
+  });
+  const distribution = await getDistributionOrThrow(distributionId, req.staffUser);
+  if (changed) await publishDistributionUpdated(distribution, "CLOSED");
+  return res.status(200).json({ success: true, data: { distribution: distributionToResponse(distribution) } });
 });

@@ -15,8 +15,20 @@ import {
 
 const barangayId = "11111111-1111-4111-8111-111111111111";
 
-test("administrators and facilitators submit, administrators and DSWD review, and all staff roles can read enrollments", () => {
-  assert.deepEqual(ENROLLMENT_SUBMIT_ROLES, ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"]);
+test('each named Other requirement needs its own submitted and accepted document', () => {
+  const program = { requiredDocumentTypes: ['OTHER'], otherRequiredDocumentNames: ['Request letter', 'Certificate of indigency'] };
+  const docs = [{ documentType: 'OTHER', documentName: ' request LETTER ', reviewStatus: 'ACCEPTED' }];
+  assert.throws(() => assertRequiredDocuments(program, docs), error => error.details.missingOtherDocumentNames[0] === 'Certificate of indigency');
+  docs.push({ documentType: 'OTHER', documentName: 'Certificate of indigency', reviewStatus: 'SUBMITTED' });
+  assert.doesNotThrow(() => assertRequiredDocuments(program, docs));
+  assert.throws(() => assertRequiredDocuments(program, docs, { acceptedOnly: true }), error => error.code === 'REQUIRED_DOCUMENTS_NOT_ACCEPTED');
+  docs[1].reviewStatus = 'ACCEPTED';
+  assert.doesNotThrow(() => assertRequiredDocuments(program, docs, { acceptedOnly: true }));
+  assert.throws(() => assertRequiredDocuments(program, [{ documentType: 'OTHER', reviewStatus: 'ACCEPTED' }]), error => error.details.missingOtherDocumentNames.length === 2);
+});
+
+test("all staff submit, administrators and DSWD review, and all staff roles can read enrollments", () => {
+  assert.deepEqual(ENROLLMENT_SUBMIT_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF", "BARANGAY_FACILITATOR"]);
   assert.deepEqual(ENROLLMENT_REVIEW_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
   assert.deepEqual(ENROLLMENT_READ_ROLES, [
     "SYSTEM_ADMIN",

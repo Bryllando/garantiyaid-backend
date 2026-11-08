@@ -38,6 +38,8 @@ export function logCompletedRequest(req, res, next) {
 }
 
 export function enforceHttps(req, res, next) {
+  // Internal platform probes carry no staff data and may arrive before TLS termination.
+  if (["GET", "HEAD"].includes(req.method) && ["/api/v1/health", "/api/v1/health/ready"].includes(req.path)) return next();
   if (req.secure) {
     return next();
   }

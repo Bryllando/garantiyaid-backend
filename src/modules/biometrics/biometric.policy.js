@@ -22,6 +22,7 @@ export const BIOMETRIC_REENROLL_ROLES = Object.freeze([
 ]);
 
 export const BIOMETRIC_VERIFY_ROLES = Object.freeze([
+  "DSWD_STAFF",
   "BARANGAY_FACILITATOR",
 ]);
 
@@ -55,7 +56,7 @@ export function assertBiometricReenrollAllowed(staffUser) {
 }
 
 export function assertBiometricVerifyAllowed(staffUser) {
-  assertRole(staffUser, BIOMETRIC_VERIFY_ROLES, "Only assigned Barangay Facilitators may verify biometric claims.");
+  assertRole(staffUser, BIOMETRIC_VERIFY_ROLES, "Only DSWD Staff and assigned Barangay Facilitators may verify biometric claims.");
 }
 
 export function assertBiometricDeleteAllowed(staffUser) {

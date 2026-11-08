@@ -406,6 +406,7 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
           data: {
             claimStatus: "VERIFIED",
             verificationMethod: "QR_AND_BIOMETRIC",
+            verifiedAt: new Date(),
             biometricVerified: true,
             biometricScore: processing.matchScore,
             verifiedById: req.auth.userId,
@@ -431,7 +432,7 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
       if (currentAllocation?.allocationStatus !== "ALLOCATED") {
         throw new AppError(409, "ALLOCATION_NOT_CLAIMABLE", "The beneficiary does not have an active claimable allocation.");
       }
-      completedVerification = currentDistribution.verificationRequirement === "BIOMETRIC";
+      completedVerification = ["BIOMETRIC", "QR_OR_BIOMETRIC"].includes(currentDistribution.verificationRequirement);
       claim = await tx.claim.create({
         data: {
           beneficiaryId,
@@ -440,6 +441,7 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
           verifiedById: req.auth.userId,
           allocationId: currentAllocation.allocationId,
           claimStatus: completedVerification ? "VERIFIED" : "PENDING",
+          verifiedAt: completedVerification ? new Date() : null,
           verificationMethod: currentDistribution.verificationRequirement,
           biometricVerified: true,
           biometricScore: processing.matchScore,
@@ -610,7 +612,7 @@ export const submitClaimSignature = asyncHandler(async (req, res) => {
     });
     const claim = await tx.claim.update({
       where: { claimId },
-      data: { claimStatus: "VERIFIED", signatureVerified: true, verifiedById: req.auth.userId },
+      data: { claimStatus: "VERIFIED", signatureVerified: true, verifiedById: req.auth.userId, verifiedAt: signature.signedAt },
       select: claimMutationSelect,
     });
     await tx.auditLog.create({

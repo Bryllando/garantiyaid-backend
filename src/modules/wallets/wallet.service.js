@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "../../lib/prisma.js";
 import { AppError } from "../../utils/AppError.js";
-import { claimIdentityRequirementSatisfied } from "../distributions/distributionClaim.service.js";
+import { assertClaimNotFlagged, claimIdentityRequirementSatisfied } from "../distributions/distributionClaim.service.js";
 
 export const SIMULATION_DISCLOSURE = Object.freeze({
   simulated: true,
@@ -260,6 +260,7 @@ export function assertWalletActive(wallet) {
 }
 
 export function assertClaimCreditable(claim) {
+  assertClaimNotFlagged(claim);
   if (claim.distribution?.deliveryMode !== "SIMULATED_WALLET") {
     throw new AppError(
       409,

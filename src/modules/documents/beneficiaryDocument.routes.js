@@ -5,6 +5,7 @@ import { validateBody, validateParams } from "../../middleware/validate.js";
 import {
   downloadDocument,
   listDocuments,
+  removeDocument,
   replaceDocument,
   reviewDocument,
   uploadDocument,
@@ -57,6 +58,12 @@ beneficiaryDocumentRoutes.get(
   authorizeRoles(...BENEFICIARY_DOCUMENT_READ_ROLES),
   validateParams(beneficiaryDocumentParamsSchema),
   downloadDocument,
+);
+beneficiaryDocumentRoutes.delete(
+  "/:documentId",
+  authorizeRoles(...BENEFICIARY_DOCUMENT_UPLOAD_ROLES),
+  validateParams(beneficiaryDocumentParamsSchema),
+  removeDocument,
 );
 
 export default beneficiaryDocumentRoutes;

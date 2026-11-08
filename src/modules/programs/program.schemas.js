@@ -47,14 +47,17 @@ const requiredDocumentTypes = z.array(z.enum(BENEFICIARY_DOCUMENT_TYPES)).max(20
 
 const programFields = {
   programName: z.string().trim().min(1).max(150),
-  programCode: z.string().trim().toUpperCase().min(3).max(30).regex(/^[A-Z0-9-]+$/),
-  programType: z.string().trim().toUpperCase().min(2).max(20).regex(/^[A-Z0-9_]+$/),
+  programCode: z.string().trim().toUpperCase().min(3, "Use at least 3 characters for the program code.").max(30, "Use at most 30 characters for the program code.").regex(/^[A-Z0-9-]+$/, "Use letters, numbers, or hyphens in the program code."),
+  programType: z.string().trim().toUpperCase().min(2).max(20, "Use at most 20 characters for the program type.").regex(/^[A-Z0-9_]+$/, "Use letters, numbers, or underscores in the program type; for example CASH_ASSISTANCE."),
   description: optionalText(5000),
   grantAmount: optionalMoney,
   budgetAmount: optionalMoney,
   applicationStartDate: optionalDateOnly,
   applicationEndDate: optionalDateOnly,
   requiredDocumentTypes: requiredDocumentTypes.optional(),
+  otherRequiredDocumentName: optionalText(150),
+  otherRequiredDocumentNames: z.array(z.string().trim().min(1).max(150)).max(20)
+    .refine(values => new Set(values.map(value => value.toLowerCase().replace(/\s+/g, " "))).size === values.length, "Remove duplicate document names.").optional(),
 };
 
 export const createProgramSchema = z.object(programFields).strict();

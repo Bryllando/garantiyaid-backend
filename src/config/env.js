@@ -1,4 +1,5 @@
 import "dotenv/config";
+import path from "node:path";
 import { z } from "zod";
 
 const duration = z.string().regex(/^\d+(?:s|m|h|d)$/, "Use a duration such as 15m or 1h.");
@@ -11,7 +12,7 @@ const optionalTrimmedString = z.preprocess(
   z.string().trim().optional(),
 );
 
-function durationInMilliseconds(value) {
+export function durationInMilliseconds(value) {
   const amount = Number.parseInt(value, 10);
   const unit = value.at(-1);
   const multipliers = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
@@ -23,6 +24,7 @@ const environmentSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   CORS_ORIGIN: z.string().default("http://localhost:5173,http://127.0.0.1:5173"),
   DATABASE_URL: z.string().min(1).optional(),
+  UPLOAD_ROOT: optionalTrimmedString.refine((value) => !value || path.isAbsolute(value), "UPLOAD_ROOT must be an absolute path."),
   JWT_ACCESS_SECRET: z.string().min(32).optional(),
   JWT_ACCESS_EXPIRES_IN: duration.default("15m"),
   JWT_ISSUER: z.string().trim().min(3).max(100).default("garantiyaid-api"),
@@ -49,7 +51,7 @@ const environmentSchema = z.object({
   BIOMETRIC_PROCESSOR_MODE: z.enum(["SIMULATED", "REMOTE"]).default("SIMULATED"),
   BIOMETRIC_SERVICE_URL: z.url().optional(),
   BIOMETRIC_SERVICE_API_KEY: z.string().min(32).optional(),
-  BIOMETRIC_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
+  BIOMETRIC_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(90_000),
   BIOMETRIC_MATCH_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
   BIOMETRIC_LIVENESS_THRESHOLD: z.coerce.number().min(0.5).max(1).default(0.8),
   REDIS_URL: z.string().trim().refine(
@@ -64,7 +66,13 @@ const environmentSchema = z.object({
   NOTIFICATION_MAX_DELAY_DAYS: z.coerce.number().int().min(1).max(90).default(30),
   SMS_PROVIDER_MODE: z.enum(["SIMULATED"]).default("SIMULATED"),
   SMS_SIMULATED_FAILURE_MODE: z.enum(["NONE", "ALWAYS_FAIL"]).default("NONE"),
-  EMAIL_PROVIDER_MODE: z.enum(["DISABLED", "GMAIL_API"]).default("DISABLED"),
+  EMAIL_PROVIDER_MODE: z.enum(["DISABLED", "GMAIL_API", "BREVO_API"]).default("DISABLED"),
+  BREVO_API_KEY: optionalTrimmedString,
+  BREVO_SENDER_EMAIL: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.email().optional(),
+  ),
+  BREVO_SENDER_NAME: z.string().trim().min(1).max(80).default("GarantiyAid"),
   GMAIL_CLIENT_ID: optionalTrimmedString,
   GMAIL_CLIENT_SECRET: optionalTrimmedString,
   GMAIL_REFRESH_TOKEN: optionalTrimmedString,
@@ -99,6 +107,21 @@ const environmentSchema = z.object({
     }
   }
 
+  if (value.EMAIL_PROVIDER_MODE === "BREVO_API") {
+    for (const name of ["BREVO_API_KEY", "BREVO_SENDER_EMAIL"]) {
+      if (!value[name]) {
+        context.addIssue({ code: "custom", path: [name], message: `${name} is required when EMAIL_PROVIDER_MODE is BREVO_API.` });
+      }
+    }
+    if (value.BREVO_API_KEY && /\s/.test(value.BREVO_API_KEY)) {
+      context.addIssue({ code: "custom", path: ["BREVO_API_KEY"], message: "The Brevo API key must not contain whitespace." });
+    }
+  }
+
+  if (value.EMAIL_PROVIDER_MODE !== "DISABLED" && !/^https?:\/\//.test(value.PUBLIC_APP_URL)) {
+    context.addIssue({ code: "custom", path: ["PUBLIC_APP_URL"], message: "The public application URL must use HTTP or HTTPS." });
+  }
+
   if (value.NODE_ENV !== "production") {
     return;
   }
@@ -127,7 +150,7 @@ const environmentSchema = z.object({
     });
   }
 
-  for (const name of ["DATABASE_URL", "JWT_ACCESS_SECRET", "FIELD_ENCRYPTION_KEY"]) {
+  for (const name of ["DATABASE_URL", "JWT_ACCESS_SECRET", "FIELD_ENCRYPTION_KEY", "UPLOAD_ROOT"]) {
     if (!value[name]) {
       context.addIssue({
         code: "custom",
@@ -170,7 +193,7 @@ const environmentSchema = z.object({
     });
   }
 
-  if (value.EMAIL_PROVIDER_MODE === "GMAIL_API" && !value.PUBLIC_APP_URL.startsWith("https://")) {
+  if (value.EMAIL_PROVIDER_MODE !== "DISABLED" && !value.PUBLIC_APP_URL.startsWith("https://")) {
     context.addIssue({
       code: "custom",
       path: ["PUBLIC_APP_URL"],
@@ -196,6 +219,7 @@ export const env = {
     .map((origin) => origin.trim())
     .filter(Boolean),
   databaseUrl: parsedEnvironment.data.DATABASE_URL,
+  uploadRoot: parsedEnvironment.data.UPLOAD_ROOT ?? path.resolve(process.cwd(), "uploads"),
   jwtAccessSecret: parsedEnvironment.data.JWT_ACCESS_SECRET,
   jwtAccessExpiresIn: parsedEnvironment.data.JWT_ACCESS_EXPIRES_IN,
   jwtIssuer: parsedEnvironment.data.JWT_ISSUER,
@@ -235,6 +259,9 @@ export const env = {
   smsProviderMode: parsedEnvironment.data.SMS_PROVIDER_MODE,
   smsSimulatedFailureMode: parsedEnvironment.data.SMS_SIMULATED_FAILURE_MODE,
   emailProviderMode: parsedEnvironment.data.EMAIL_PROVIDER_MODE,
+  brevoApiKey: parsedEnvironment.data.BREVO_API_KEY,
+  brevoSenderEmail: parsedEnvironment.data.BREVO_SENDER_EMAIL,
+  brevoSenderName: parsedEnvironment.data.BREVO_SENDER_NAME,
   gmailClientId: parsedEnvironment.data.GMAIL_CLIENT_ID,
   gmailClientSecret: parsedEnvironment.data.GMAIL_CLIENT_SECRET,
   gmailRefreshToken: parsedEnvironment.data.GMAIL_REFRESH_TOKEN,

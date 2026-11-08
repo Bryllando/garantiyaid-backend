@@ -18,6 +18,7 @@ import {
 } from "../src/modules/distributions/distribution.schemas.js";
 import {
   assertDistributionConfigurationValid,
+  assertPhysicalPackageReady,
   assertDistributionDraft,
   assertDistributionTransition,
   assertActiveDistributionBarangay,
@@ -329,6 +330,7 @@ test("Phase 6 route surface adds simulated credit, transaction monitoring, and r
     }));
 
   assert.deepEqual(routes, [
+    { path: "/:distributionId/close", methods: ["post"] },
     { path: "/", methods: ["get"] },
     { path: "/", methods: ["post"] },
     { path: "/assistant-preview", methods: ["post"] },
@@ -387,4 +389,15 @@ test("Phase 6 route surface adds simulated credit, transaction monitoring, and r
     routes.some((route) => /transaction|wallet|payout/.test(route.path)),
     true,
   );
+});
+
+
+test('opening physical assistance requires a package; configuration cannot mix delivery modes', () => {
+  assert.throws(() => assertPhysicalPackageReady({ deliveryMode: 'PHYSICAL_GOODS' }), error => error.code === 'PHYSICAL_PACKAGE_REQUIRED');
+  assert.doesNotThrow(() => assertPhysicalPackageReady({ deliveryMode: 'SIMULATED_WALLET' }));
+  assert.doesNotThrow(() => assertPhysicalPackageReady({ deliveryMode: 'PHYSICAL_GOODS', packageQuantity: 2 }));
+  const base = validDistribution({ distributionDate: new Date('2100-01-01'), deliveryMode: 'PHYSICAL_GOODS', packageName: 'Food pack', packageUnit: 'pack', packageQuantity: 2 });
+  assert.doesNotThrow(() => assertDistributionConfigurationValid(base));
+  assert.throws(() => assertDistributionConfigurationValid({ ...base, packageUnit: null }), error => error.code === 'INVALID_PHYSICAL_PACKAGE');
+  assert.throws(() => assertDistributionConfigurationValid({ ...base, deliveryMode: 'SIMULATED_WALLET' }), error => error.code === 'INVALID_PHYSICAL_PACKAGE');
 });

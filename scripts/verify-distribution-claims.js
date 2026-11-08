@@ -252,6 +252,7 @@ try {
       barangayId: facilitator.barangayId,
       status: "DRAFT",
       deliveryMode: "PHYSICAL_GOODS",
+      packageName: "Test food pack", packageUnit: "pack", packageQuantity: 1,
     },
   });
   temporaryDistributionIds.push(distribution.distributionId);
@@ -581,6 +582,7 @@ try {
 
   const releaseKey = randomUUID();
   const releaseBody = {
+    releasedQuantity: 1,
     evidenceType: "OFFICIAL_RELEASE_LOG",
     evidenceReference: `TEST-LOG-${suffix}`,
     beneficiaryAcknowledged: true,

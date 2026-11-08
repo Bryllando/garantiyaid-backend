@@ -1,3 +1,4 @@
+import { distributionReconciliation } from "../distributions/distributionReconciliation.service.js";
 import { randomUUID } from "node:crypto";
 import prisma from "../../lib/prisma.js";
 import { env } from "../../config/env.js";
@@ -16,6 +17,7 @@ import {
 } from "../distributions/distribution.policy.js";
 import {
   claimPublicSelect,
+  buildClaimSearchWhere,
   claimToResponse,
   getDistributionClaimParentOrThrow,
 } from "../distributions/distributionClaim.service.js";
@@ -23,7 +25,6 @@ import {
   SIMULATION_DISCLOSURE,
   assertClaimCreditable,
   beneficiaryWalletSelect,
-  claimReconciliationException,
   assertWalletActive,
   generateTransactionReference,
   getWalletOrThrow,
@@ -32,7 +33,6 @@ import {
   transactionMutationSelect,
   transactionPublicSelect,
   transactionRequestHash,
-  transactionSignedAmount,
   transactionToResponse,
   walletMutationSelect,
   walletPublicSelect,
@@ -166,10 +166,6 @@ function cents(value) {
   return Math.round(Number(value ?? 0) * 100);
 }
 
-function money(valueInCents) {
-  return (valueInCents / 100).toFixed(2);
-}
-
 export const createSimulatedWallet = asyncHandler(async (req, res) => {
   assertWalletCreateAllowed(req.staffUser);
   const { beneficiaryId } = req.validatedBody;
@@ -258,7 +254,7 @@ export const listWalletTransactions = asyncHandler(async (req, res) => {
 export const listCreditableClaims = asyncHandler(async (req, res) => {
   assertWalletReadAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
-  const { page, pageSize } = req.validatedQuery;
+  const { page, pageSize, search } = req.validatedQuery;
   const distribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
   if (distribution.deliveryMode !== "SIMULATED_WALLET") {
     throw new AppError(
@@ -277,6 +273,8 @@ export const listCreditableClaims = asyncHandler(async (req, res) => {
   const where = {
     distributionId,
     claimStatus: "VERIFIED",
+    isDuplicateFlag: false,
+    ...(search ? { AND: search.split(/\s+/).map(buildClaimSearchWhere) } : {}),
     transactions: { none: { transactionType: "BENEFIT_CREDIT" } },
     disputes: { none: { status: { in: ["OPEN", "UNDER_REVIEW", "REFERRED"] } } },
   };
@@ -361,6 +359,7 @@ export const creditVerifiedClaim = asyncHandler(async (req, res) => {
         allocationId: true,
         scheduleId: true,
         claimStatus: true,
+        isDuplicateFlag: true,
         verificationMethod: true,
         qrVerified: true,
         biometricVerified: true,
@@ -419,7 +418,7 @@ export const creditVerifiedClaim = asyncHandler(async (req, res) => {
     });
 
     const claimUpdate = await tx.claim.updateMany({
-      where: { claimId, distributionId, claimStatus: "VERIFIED" },
+      where: { claimId, distributionId, claimStatus: "VERIFIED", isDuplicateFlag: false },
       data: {
         claimStatus: "CLAIMED",
         releaseMethod: "SIMULATED_WALLET",
@@ -895,146 +894,9 @@ export const reconcileDistribution = asyncHandler(async (req, res) => {
   assertWalletReadAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
   const distribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
-  const [allocations, claims, distributionTransactions] = await Promise.all([
-    prisma.distributionAllocation.findMany({
-      where: { distributionId },
-      select: { allocationId: true, beneficiaryId: true, amount: true, allocationStatus: true },
-    }),
-    prisma.claim.findMany({
-      where: { distributionId },
-      select: {
-        claimId: true,
-        beneficiaryId: true,
-        claimStatus: true,
-        releaseMethod: true,
-        releasedAt: true,
-        releasedById: true,
-        allocation: { select: { allocationId: true, amount: true, allocationStatus: true } },
-        transactions: {
-          where: { transactionType: { in: ["BENEFIT_CREDIT", "BENEFIT_REVERSAL"] } },
-          select: {
-            transactionId: true,
-            transactionType: true,
-            status: true,
-            amount: true,
-            walletId: true,
-          },
-        },
-      },
-    }),
-    prisma.transaction.findMany({
-      where: { distributionId },
-      select: {
-        transactionId: true,
-        transactionType: true,
-        status: true,
-        amount: true,
-        walletId: true,
-      },
-    }),
-  ]);
-
-  const walletIds = [...new Set(distributionTransactions.map((row) => row.walletId))];
-  const wallets = walletIds.length === 0
-    ? []
-    : await prisma.walletAccount.findMany({
-        where: { walletId: { in: walletIds } },
-        select: {
-          walletId: true,
-          beneficiaryId: true,
-          balance: true,
-          transactions: {
-            where: { status: { in: ["COMPLETED", "REVERSED"] } },
-            select: { transactionType: true, amount: true, status: true },
-          },
-        },
-      });
-
-  const exceptions = [];
-  for (const claim of claims) {
-    const exception = claimReconciliationException(claim, distribution.deliveryMode);
-    if (exception) exceptions.push(exception);
-  }
-  for (const wallet of wallets) {
-    const ledgerBalance = wallet.transactions.reduce(
-      (total, transaction) => total + cents(transactionSignedAmount(transaction)),
-      0,
-    );
-    if (ledgerBalance !== cents(wallet.balance)) {
-      exceptions.push({
-        code: "WALLET_LEDGER_BALANCE_MISMATCH",
-        walletId: wallet.walletId,
-        beneficiaryId: wallet.beneficiaryId,
-        storedBalance: wallet.balance.toString(),
-        calculatedBalance: money(ledgerBalance),
-      });
-    }
-  }
-
-  const grossCredits = distributionTransactions
-    .filter((row) => row.transactionType === "BENEFIT_CREDIT" && ["COMPLETED", "REVERSED"].includes(row.status))
-    .reduce((total, row) => total + cents(row.amount), 0);
-  const reversals = distributionTransactions
-    .filter((row) => row.transactionType === "BENEFIT_REVERSAL" && row.status === "COMPLETED")
-    .reduce((total, row) => total + cents(row.amount), 0);
-  const totalClaimedAmount = claims
-    .filter((claim) => claim.claimStatus === "CLAIMED")
-    .reduce((total, claim) => total + cents(claim.allocation.amount), 0);
-  const expectedWalletCreditedAmount = claims
-    .filter((claim) => (
-      claim.claimStatus === "CLAIMED"
-      && (claim.releaseMethod ?? distribution.deliveryMode) === "SIMULATED_WALLET"
-    ))
-    .reduce((total, claim) => total + cents(claim.allocation.amount), 0);
-  const physicalReleasedClaims = claims.filter((claim) => (
-    claim.claimStatus === "CLAIMED"
-    && (claim.releaseMethod ?? distribution.deliveryMode) === "PHYSICAL_GOODS"
-    && claim.releasedAt
-    && claim.releasedById
-  ));
-  const physicalReleasedAmount = physicalReleasedClaims
-    .reduce((total, claim) => total + cents(claim.allocation.amount), 0);
-  const netCreditedAmount = grossCredits - reversals;
-  const awaitingSettlementCodes = new Set([
-    "VERIFIED_CLAIM_AWAITING_CREDIT",
-    "VERIFIED_PHYSICAL_CLAIM_AWAITING_RELEASE",
-  ]);
-  const hardExceptions = exceptions.filter((row) => !awaitingSettlementCodes.has(row.code));
-
-  return res.status(200).json({
-    success: true,
-    data: {
-      reconciliation: {
-        distributionId,
-        deliveryMode: distribution.deliveryMode,
-        allocationCount: allocations.length,
-        allocatedAmount: money(allocations.reduce((total, row) => total + cents(row.amount), 0)),
-        claimCounts: {
-          VERIFIED: claims.filter((row) => row.claimStatus === "VERIFIED").length,
-          CLAIMED: claims.filter((row) => row.claimStatus === "CLAIMED").length,
-          VOIDED: claims.filter((row) => row.claimStatus === "VOIDED").length,
-        },
-        completedBenefitCreditCount: distributionTransactions.filter(
-          (row) => row.transactionType === "BENEFIT_CREDIT" && row.status === "COMPLETED",
-        ).length,
-        reversedBenefitCreditCount: distributionTransactions.filter(
-          (row) => row.transactionType === "BENEFIT_CREDIT" && row.status === "REVERSED",
-        ).length,
-        grossCreditedAmount: money(grossCredits),
-        reversedAmount: money(reversals),
-        netCreditedAmount: money(netCreditedAmount),
-        expectedClaimedAmount: money(expectedWalletCreditedAmount),
-        expectedWalletCreditedAmount: money(expectedWalletCreditedAmount),
-        totalClaimedAmount: money(totalClaimedAmount),
-        physicalReleasedCount: physicalReleasedClaims.length,
-        physicalReleasedAmount: money(physicalReleasedAmount),
-        ledgerBalanced: hardExceptions.length === 0
-          && netCreditedAmount === expectedWalletCreditedAmount,
-        readyToClose: exceptions.length === 0
-          && netCreditedAmount === expectedWalletCreditedAmount,
-        exceptions,
-      },
-      simulation: SIMULATION_DISCLOSURE,
-    },
-  });
+  const reconciliation = await prisma.$transaction(
+    (tx) => distributionReconciliation(distribution, tx),
+    { isolationLevel: "RepeatableRead" },
+  );
+  return res.status(200).json({ success: true, data: { reconciliation, simulation: SIMULATION_DISCLOSURE } });
 });

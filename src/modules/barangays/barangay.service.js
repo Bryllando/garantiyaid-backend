@@ -12,8 +12,8 @@ export const barangaySelect = {
   updatedAt: true,
 };
 
-export async function getBarangayOrThrow(barangayId) {
-  const barangay = await prisma.barangay.findUnique({
+export async function getBarangayOrThrow(barangayId, database = prisma) {
+  const barangay = await database.barangay.findUnique({
     where: { barangayId },
     select: barangaySelect,
   });
@@ -37,8 +37,20 @@ export async function assertBarangayCanDeactivate(barangayId, update, database =
     throw new AppError(
       409,
       "BARANGAY_HAS_ACTIVE_FACILITATORS",
-      "Reassign or deactivate active Barangay Facilitators before deactivating this barangay.",
+      "Reassign or deactivate active Barangay Facilitators before archiving this barangay.",
       { activeFacilitatorCount },
+    );
+  }
+
+  const unfinishedDistributionCount = await database.distribution.count({
+    where: { barangayId, status: { in: ["DRAFT", "OPEN"] } },
+  });
+  if (unfinishedDistributionCount > 0) {
+    throw new AppError(
+      409,
+      "BARANGAY_HAS_UNFINISHED_DISTRIBUTIONS",
+      "Close or cancel draft/open distribution events before archiving this barangay.",
+      { unfinishedDistributionCount },
     );
   }
 }

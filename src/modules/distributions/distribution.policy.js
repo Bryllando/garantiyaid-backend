@@ -17,6 +17,7 @@ export const QR_TOKEN_MANAGE_ROLES = Object.freeze(["SYSTEM_ADMIN"]);
 
 export const CLAIM_VERIFY_ROLES = Object.freeze([
   "SYSTEM_ADMIN",
+  "DSWD_STAFF",
   "BARANGAY_FACILITATOR",
 ]);
 
@@ -84,7 +85,7 @@ export function assertClaimVerifyAllowed(staffUser) {
     throw new AppError(
       403,
       "FORBIDDEN",
-      "Only System Administrators and assigned Barangay Facilitators may verify QR claims.",
+      "Only authorized Admin, DSWD, and assigned Barangay staff may verify QR claims.",
     );
   }
 }

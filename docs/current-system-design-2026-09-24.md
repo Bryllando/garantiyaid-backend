@@ -1,5 +1,7 @@
 # GarantiyAid staff web system design
 
+**Historical snapshot (September 2026).** Some permissions and workflows below have since changed. For the implementation as of 5 November 2026, use the [current technical role matrix and government procedure draft](government-procedure.md) and [staff workflow](../../garantiyaid-frontend/docs/staff-workflow.md). The old role ticks are not the current authorization specification.
+
 This is the implementation description for the capstone manuscript as of 24 September 2026. It covers the staff web application and public help widget. Beneficiary mobile account, mobile push, real payment rails, and government database integrations are outside this release. The [current module matrix](garantiyaid-web-module-matrix-2026-09-24.md), [field-level dictionary](garantiyaid-data-dictionary-2026-09-24.md), and [test record](consultation-test-and-uat-2026-09-24.md) provide the corresponding completion and evidence details.
 
 ## Roles and authorization

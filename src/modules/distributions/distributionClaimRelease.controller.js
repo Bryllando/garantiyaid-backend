@@ -13,6 +13,7 @@ import {
 import { assertPhysicalReleaseAllowed } from "./distribution.policy.js";
 import {
   assertPhysicalClaimReleasable,
+  physicalReleasePackage,
   claimPublicSelect,
   claimToResponse,
   getDistributionClaimParentOrThrow,
@@ -27,6 +28,7 @@ function releaseResponse(claim) {
         method: claim.releaseMethod,
         releasedAt: claim.releasedAt,
         releasedBy: claim.releasedBy,
+        package: claim.releasedQuantity != null ? { name: claim.releasedPackageName, unit: claim.releasedPackageUnit, quantity: claim.releasedQuantity } : null,
         evidence: {
           type: claim.releaseEvidenceType,
           reference: claim.releaseEvidenceReference,
@@ -111,6 +113,7 @@ export const markPhysicalClaimReleased = asyncHandler(async (req, res) => {
         throw new AppError(404, "CLAIM_NOT_FOUND", "Claim verification record was not found.");
       }
       assertPhysicalClaimReleasable(claim, currentDistribution);
+      const packageRecord = physicalReleasePackage(currentDistribution, evidence.releasedQuantity);
 
       const now = new Date();
       const claimUpdate = await tx.claim.updateMany({
@@ -118,6 +121,7 @@ export const markPhysicalClaimReleased = asyncHandler(async (req, res) => {
           claimId,
           distributionId,
           claimStatus: "VERIFIED",
+          isDuplicateFlag: false,
           releasedAt: null,
         },
         data: {
@@ -128,6 +132,7 @@ export const markPhysicalClaimReleased = asyncHandler(async (req, res) => {
           releaseEvidenceType: evidence.evidenceType,
           releaseEvidenceReference: evidence.evidenceReference,
           releaseNotes: evidence.notes ?? null,
+          ...packageRecord,
           claimedAt: now,
         },
       });
@@ -166,6 +171,7 @@ export const markPhysicalClaimReleased = asyncHandler(async (req, res) => {
             evidenceType: evidence.evidenceType,
             evidenceReference: evidence.evidenceReference,
             beneficiaryAcknowledged: true,
+            ...packageRecord,
             releasedAt: now.toISOString(),
             claimStatus: "CLAIMED",
             allocationStatus: "CLAIMED",

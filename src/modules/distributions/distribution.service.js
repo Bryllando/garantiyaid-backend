@@ -15,6 +15,9 @@ export const distributionSelect = {
   barangayId: true,
   status: true,
   deliveryMode: true,
+  packageName: true,
+  packageUnit: true,
+  packageQuantity: true,
   verificationRequirement: true,
   createdAt: true,
   updatedAt: true,
@@ -73,6 +76,11 @@ export function distributionToResponse(distribution) {
 }
 
 export function assertDistributionConfigurationValid(distribution, now = new Date()) {
+  const packageFields = [distribution.packageName, distribution.packageUnit, distribution.packageQuantity];
+  if (packageFields.some((value) => value != null)
+      && (distribution.deliveryMode !== "PHYSICAL_GOODS" || packageFields.some((value) => value == null))) {
+    throw new AppError(400, "INVALID_PHYSICAL_PACKAGE", "Provide the package name, unit and quantity together for physical assistance only.");
+  }
   if (distribution.distributionDate < currentPhilippineDate(now)) {
     throw new AppError(
       400,
@@ -118,10 +126,16 @@ export function assertDistributionDraft(distribution) {
   }
 }
 
+export function assertPhysicalPackageReady(distribution) {
+  if (distribution.deliveryMode === "PHYSICAL_GOODS" && !distribution.packageQuantity) {
+    throw new AppError(409, "PHYSICAL_PACKAGE_REQUIRED", "Edit the draft and define the assistance package, unit and quantity per beneficiary before opening.");
+  }
+}
+
 export function assertDistributionTransition(distribution, nextStatus) {
   const allowedTransitions = {
     DRAFT: ["OPEN", "CANCELLED"],
-    OPEN: [],
+    OPEN: ["CLOSED"],
     CLOSED: [],
     CANCELLED: [],
   };
@@ -213,8 +227,8 @@ export async function assertNoDistributionOverlap(distribution, database = prism
   }
 }
 
-export async function getDistributionOrThrow(distributionId, staffUser) {
-  const distribution = await prisma.distribution.findFirst({
+export async function getDistributionOrThrow(distributionId, staffUser, database = prisma) {
+  const distribution = await database.distribution.findFirst({
     where: {
       distributionId,
       ...distributionAccessWhere(staffUser),

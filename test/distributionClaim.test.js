@@ -92,7 +92,7 @@ test("QR expiry is derived from the Philippine distribution event end time", () 
   assert.equal(expiresAt.toISOString(), "2099-08-20T01:00:00.000Z");
 });
 
-test("effective token status and lifecycle prevent use of expired, used, or active reissue tokens", () => {
+test("token lifecycle allows replacing a lost active QR but never a used credential", () => {
   const now = new Date("2099-08-20T01:00:00.000Z");
   const future = new Date("2099-08-20T02:00:00.000Z");
   const past = new Date("2099-08-20T00:00:00.000Z");
@@ -106,8 +106,9 @@ test("effective token status and lifecycle prevent use of expired, used, or acti
   );
   assert.doesNotThrow(() => assertQrTokenReissuable({ qrStatus: "REVOKED", expiresAt: future }, now));
   assert.doesNotThrow(() => assertQrTokenReissuable({ qrStatus: "ACTIVE", expiresAt: past }, now));
+  assert.doesNotThrow(() => assertQrTokenReissuable({ qrStatus: "ACTIVE", expiresAt: future }, now));
   assert.throws(
-    () => assertQrTokenReissuable({ qrStatus: "ACTIVE", expiresAt: future }, now),
+    () => assertQrTokenReissuable({ qrStatus: "USED", expiresAt: future }, now),
     (error) => error.code === "QR_TOKEN_NOT_REISSUABLE",
   );
 });
@@ -152,9 +153,9 @@ test("claim verification requires an OPEN event", () => {
   );
 });
 
-test("System Admin manages tokens while Admin and assigned Facilitator verify claims", () => {
+test("System Admin manages tokens while Admin, DSWD and assigned Facilitator verify claims", () => {
   assert.deepEqual(QR_TOKEN_MANAGE_ROLES, ["SYSTEM_ADMIN"]);
-  assert.deepEqual(CLAIM_VERIFY_ROLES, ["SYSTEM_ADMIN", "BARANGAY_FACILITATOR"]);
+  assert.deepEqual(CLAIM_VERIFY_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF", "BARANGAY_FACILITATOR"]);
   assert.doesNotThrow(() => assertQrTokenManageAllowed({ role: "SYSTEM_ADMIN" }));
   assert.throws(
     () => assertQrTokenManageAllowed({ role: "DSWD_STAFF" }),
@@ -162,8 +163,9 @@ test("System Admin manages tokens while Admin and assigned Facilitator verify cl
   );
   assert.doesNotThrow(() => assertClaimVerifyAllowed({ role: "SYSTEM_ADMIN" }));
   assert.doesNotThrow(() => assertClaimVerifyAllowed({ role: "BARANGAY_FACILITATOR" }));
+  assert.doesNotThrow(() => assertClaimVerifyAllowed({ role: "DSWD_STAFF" }));
   assert.throws(
-    () => assertClaimVerifyAllowed({ role: "DSWD_STAFF" }),
+    () => assertClaimVerifyAllowed({ role: "UNKNOWN" }),
     (error) => error.code === "FORBIDDEN",
   );
 });

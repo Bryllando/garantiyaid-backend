@@ -380,6 +380,12 @@ async function remoteRepresentation(file) {
     const body = await response.json().catch(() => null);
     if (!response.ok) {
       const processorMessage = String(body?.error ?? body?.detail ?? "");
+      if ([401, 403].includes(response.status)) {
+        throw new AppError(503, "BIOMETRIC_SERVICE_UNAVAILABLE", "Face service authentication failed. Ask the System Administrator to check the service configuration, then retry.");
+      }
+      if (response.status === 429) {
+        throw new AppError(503, "BIOMETRIC_SERVICE_UNAVAILABLE", "The face service is busy. Wait a moment, then retry with the captured photo.");
+      }
       if (/spoof/i.test(processorMessage)) return null;
       if (response.status >= 400 && response.status < 500) {
         throw new AppError(422, "BIOMETRIC_CAPTURE_REJECTED", "No clear live face was detected. Center one person in even lighting and try again.");
@@ -389,7 +395,9 @@ async function remoteRepresentation(file) {
     return parseDeepFaceRepresentation(body);
   } catch (error) {
     if (error instanceof AppError) throw error;
-    throw new AppError(503, "BIOMETRIC_SERVICE_UNAVAILABLE", "The biometric processor is unavailable.");
+    throw new AppError(503, "BIOMETRIC_SERVICE_UNAVAILABLE", error.name === "TimeoutError"
+      ? "The face service took too long to respond. Wait a moment, then retry with the captured photo."
+      : "The face service is unavailable. Ask the System Administrator to check the biometric service, then retry.");
   }
 }
 

@@ -28,6 +28,7 @@ enum DocumentReviewStatus {
   ACCEPTED
   REJECTED
   SUPERSEDED
+  REMOVED
 }
 
 enum ProgramStatus {
@@ -117,6 +118,7 @@ enum VerificationMethod {
   BIOMETRIC
   MANUAL
   QR_AND_BIOMETRIC
+  QR_OR_BIOMETRIC
   BIOMETRIC_AND_SIGNATURE
 }
 
@@ -226,6 +228,10 @@ model User {
   resolvedChatbotSessions         ChatbotSession[]               @relation("ChatbotResolvedBy")
   chatbotMessages                 ChatbotMessage[]               @relation("ChatbotStaffMessage")
   assistantConversations          StaffAssistantConversation[]
+  createdBurialReferrals          BurialReferral[] @relation("BurialReferralCreator")
+  reviewedBurialReferrals         BurialReferral[] @relation("BurialReferralReviewer")
+  issuedBurialReferrals           BurialReferral[] @relation("BurialReferralIssuer")
+  closedBurialReferrals           BurialReferral[] @relation("BurialReferralCloser")
 
   @@index([archivedAt])
   @@map("users")
@@ -430,6 +436,8 @@ model Program {
   applicationStartDate  DateTime?     @map("application_start_date") @db.Date
   applicationEndDate    DateTime?     @map("application_end_date") @db.Date
   requiredDocumentTypes String[]      @default([]) @map("required_document_types")
+  otherRequiredDocumentName String?   @map("other_required_document_name") @db.VarChar(150)
+  otherRequiredDocumentNames String[] @default([]) @map("other_required_document_names")
   status                ProgramStatus @default(DRAFT)
   createdById           String        @map("created_by") @db.Uuid
   createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -481,6 +489,7 @@ model Beneficiary {
 
   barangay                Barangay                       @relation(fields: [barangayId], references: [barangayId])
   enrollments             Enrollment[]
+  burialReferrals         BurialReferral[]
   documents               BeneficiaryDocument[]
   biometricData           BiometricData?
   biometricConsents       BiometricConsent[]
@@ -525,11 +534,62 @@ model Enrollment {
   @@map("enrollments")
 }
 
+enum BurialReferralStatus {
+  DRAFT
+  IN_REVIEW
+  NEEDS_CORRECTION
+  READY
+  ISSUED
+  CLOSED
+}
+
+model BurialReferral {
+  referralId        String @id @default(uuid()) @map("referral_id") @db.Uuid
+  beneficiaryId     String @map("beneficiary_id") @db.Uuid
+  status            BurialReferralStatus @default(DRAFT)
+  version           Int @default(1)
+  deceasedName      String @map("deceased_name") @db.VarChar(150)
+  deathDate         DateTime @map("death_date") @db.Date
+  relationship      String @db.VarChar(100)
+  purpose           String @db.VarChar(1500)
+  receivingOffice   String @map("receiving_office") @db.VarChar(150)
+  receivingAddress  String @map("receiving_address") @db.VarChar(300)
+  sendingOffice     String @map("sending_office") @db.VarChar(150)
+  signatoryName     String @map("signatory_name") @db.VarChar(150)
+  signatoryPosition String @map("signatory_position") @db.VarChar(150)
+  attachments       Json @default("[]")
+  letterSnapshot    Json? @map("letter_snapshot")
+  letterHash        String? @map("letter_hash") @db.VarChar(64)
+  reviewNote        String? @map("review_note") @db.VarChar(1500)
+  issueReference    String? @map("issue_reference") @db.VarChar(300)
+  responseOutcome   String? @map("response_outcome") @db.VarChar(30)
+  responseReference String? @map("response_reference") @db.VarChar(300)
+  responseNote      String? @map("response_note") @db.VarChar(1500)
+  createdById       String @map("created_by") @db.Uuid
+  reviewedById      String? @map("reviewed_by") @db.Uuid
+  issuedById        String? @map("issued_by") @db.Uuid
+  closedById        String? @map("closed_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  issuedAt          DateTime? @map("issued_at") @db.Timestamptz(6)
+  closedAt          DateTime? @map("closed_at") @db.Timestamptz(6)
+  beneficiary       Beneficiary @relation(fields: [beneficiaryId], references: [beneficiaryId], onDelete: Restrict)
+  createdBy         User @relation("BurialReferralCreator", fields: [createdById], references: [userId], onDelete: Restrict)
+  reviewedBy        User? @relation("BurialReferralReviewer", fields: [reviewedById], references: [userId], onDelete: Restrict)
+  issuedBy          User? @relation("BurialReferralIssuer", fields: [issuedById], references: [userId], onDelete: Restrict)
+  closedBy          User? @relation("BurialReferralCloser", fields: [closedById], references: [userId], onDelete: Restrict)
+  @@index([beneficiaryId, createdAt])
+  @@index([status, createdAt])
+  @@map("burial_referrals")
+}
+
 model BeneficiaryDocument {
   documentId         String               @id @default(uuid()) @map("document_id") @db.Uuid
   beneficiaryId      String               @map("beneficiary_id") @db.Uuid
   uploadedById       String               @map("uploaded_by") @db.Uuid
   documentType       String               @map("doc_type") @db.VarChar(50)
+  documentName       String?              @map("document_name") @db.VarChar(150)
   originalFileName   String               @map("original_file_name") @db.VarChar(255)
   mimeType           String               @map("mime_type") @db.VarChar(100)
   fileSize           Int                  @map("file_size")
@@ -679,6 +739,9 @@ model Distribution {
   barangayId              String                 @map("barangay_id") @db.Uuid
   status                  DistributionStatus     @default(DRAFT)
   deliveryMode            AssistanceDeliveryMode @default(SIMULATED_WALLET) @map("delivery_mode")
+  packageName             String?                @map("package_name") @db.VarChar(150)
+  packageUnit             String?                @map("package_unit") @db.VarChar(30)
+  packageQuantity         Int?                   @map("package_quantity")
   verificationRequirement VerificationMethod     @default(QR) @map("verification_requirement")
   createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -824,6 +887,7 @@ model Claim {
   biometricScore           Decimal?                @map("biometric_score") @db.Decimal(5, 4)
   qrVerified               Boolean                 @default(false) @map("qr_verified")
   signatureVerified        Boolean                 @default(false) @map("signature_verified")
+  verifiedAt               DateTime?               @map("verified_at") @db.Timestamptz(6)
   isDuplicateFlag          Boolean                 @default(false) @map("is_duplicate_flag")
   releaseMethod            AssistanceDeliveryMode? @map("release_method")
   releasedById             String?                 @map("released_by") @db.Uuid
@@ -831,6 +895,9 @@ model Claim {
   releaseEvidenceType      ReleaseEvidenceType?    @map("release_evidence_type")
   releaseEvidenceReference String?                 @map("release_evidence_reference") @db.VarChar(120)
   releaseNotes             String?                 @map("release_notes") @db.VarChar(1000)
+  releasedPackageName      String?                 @map("released_package_name") @db.VarChar(150)
+  releasedPackageUnit      String?                 @map("released_package_unit") @db.VarChar(30)
+  releasedQuantity         Int?                    @map("released_quantity")
   claimedAt                DateTime?               @map("claimed_at") @db.Timestamptz(6)
   createdAt                DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)

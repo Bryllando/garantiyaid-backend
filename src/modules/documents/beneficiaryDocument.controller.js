@@ -28,7 +28,7 @@ async function removeUploadedFile(file) {
   }
 
   try {
-    await unlink(resolveBeneficiaryDocumentPath(path.relative(process.cwd(), file.path)));
+    await unlink(resolveBeneficiaryDocumentPath(`uploads/beneficiary-documents/${path.basename(file.path)}`));
   } catch (error) {
     if (error.code !== "ENOENT") {
       console.error("Unable to clean up rejected beneficiary document upload.", error);
@@ -69,11 +69,12 @@ async function prepareUploadedDocument(req) {
 
   return {
     documentType: metadata.data.documentType,
+    documentName: metadata.data.documentType === "OTHER" ? metadata.data.documentName ?? null : null,
     originalFileName,
     mimeType: detectedMimeType,
     fileSize: contents.length,
     checksum: createHash("sha256").update(contents).digest("hex"),
-    filePath: path.relative(process.cwd(), req.file.path).split(path.sep).join("/"),
+    filePath: `uploads/beneficiary-documents/${path.basename(req.file.path)}`,
   };
 }
 
@@ -205,6 +206,12 @@ export const replaceDocument = asyncHandler(async (req, res) => {
       beneficiaryId: beneficiary.beneficiaryId,
       documentType: uploadedDocument.documentType,
     });
+    if (rejectedDocument.documentType === "OTHER") {
+      if (uploadedDocument.documentName && rejectedDocument.documentName && uploadedDocument.documentName.toLowerCase() !== rejectedDocument.documentName.toLowerCase()) {
+        throw new AppError(409, "DOCUMENT_NAME_MISMATCH", "Replace the same named document; upload a different requirement separately.");
+      }
+      uploadedDocument.documentName ??= rejectedDocument.documentName ?? null;
+    }
 
     const document = await prisma.$transaction(async (tx) => {
       const transition = await tx.beneficiaryDocument.updateMany({
@@ -272,12 +279,47 @@ export const listDocuments = asyncHandler(async (req, res) => {
   );
   assertBeneficiaryDocumentBarangayAccess(req.staffUser, beneficiary.barangayId);
   const documents = await prisma.beneficiaryDocument.findMany({
-    where: { beneficiaryId: beneficiary.beneficiaryId },
+    where: { beneficiaryId: beneficiary.beneficiaryId, reviewStatus: { not: "REMOVED" } },
     select: beneficiaryDocumentSelect,
     orderBy: { createdAt: "desc" },
   });
 
   res.status(200).json({ success: true, data: { documents } });
+});
+
+export const removeDocument = asyncHandler(async (req, res) => {
+  assertBeneficiaryDocumentUploadAllowed(req.staffUser);
+  const beneficiary = await getBeneficiaryOrThrow(req.validatedParams.beneficiaryId, req.staffUser);
+  assertBeneficiaryDocumentBarangayAccess(req.staffUser, beneficiary.barangayId);
+  const { documentId } = req.validatedParams;
+  try {
+    await prisma.$transaction(async (tx) => {
+      const document = await tx.beneficiaryDocument.findFirst({ where: { beneficiaryId: beneficiary.beneficiaryId, documentId } });
+      if (!document) throw new AppError(404, "BENEFICIARY_DOCUMENT_NOT_FOUND", "Beneficiary document was not found.");
+      if (document.reviewStatus === "REMOVED") return;
+      if (!["SUBMITTED", "REJECTED"].includes(document.reviewStatus)) {
+        throw new AppError(409, "DOCUMENT_NOT_REMOVABLE", "Only submitted or rejected uploads can be removed. Accepted and superseded documents are retained for review history.");
+      }
+      const referral = await tx.burialReferral.findFirst({
+        where: { beneficiaryId: beneficiary.beneficiaryId, attachments: { array_contains: [{ documentId }] } },
+        select: { referralId: true },
+      });
+      if (referral) throw new AppError(409, "DOCUMENT_IN_REFERRAL", "This file is attached to a burial referral. Remove it from the editable referral first, or ask the reviewer to return the referral for correction.");
+      const updated = await tx.beneficiaryDocument.updateMany({
+        where: { documentId, beneficiaryId: beneficiary.beneficiaryId, reviewStatus: document.reviewStatus },
+        data: { reviewStatus: "REMOVED" },
+      });
+      if (updated.count !== 1) throw new AppError(409, "DOCUMENT_STATUS_CHANGED", "The document changed during removal. Refresh the record before trying again.");
+      await tx.auditLog.create({ data: {
+        userId: req.auth.userId, action: "BENEFICIARY_DOCUMENT_REMOVED", entityAffected: "BENEFICIARY_DOCUMENT", recordId: documentId,
+        ipAddress: clientIpAddress(req), details: { beneficiaryId: beneficiary.beneficiaryId, previousStatus: document.reviewStatus, reviewStatus: "REMOVED" },
+      } });
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error.code === "P2034") throw new AppError(409, "DOCUMENT_STATUS_CHANGED", "The document or its referral changed during removal. Refresh the record before trying again.");
+    throw error;
+  }
+  res.status(200).json({ success: true, data: { removed: true, documentId } });
 });
 
 export const downloadDocument = asyncHandler(async (req, res, next) => {

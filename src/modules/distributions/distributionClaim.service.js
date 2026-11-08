@@ -74,6 +74,7 @@ export const claimPublicSelect = {
   biometricScore: true,
   qrVerified: true,
   signatureVerified: true,
+  verifiedAt: true,
   isDuplicateFlag: true,
   releaseMethod: true,
   releasedById: true,
@@ -81,6 +82,9 @@ export const claimPublicSelect = {
   releaseEvidenceType: true,
   releaseEvidenceReference: true,
   releaseNotes: true,
+  releasedPackageName: true,
+  releasedPackageUnit: true,
+  releasedQuantity: true,
   claimedAt: true,
   createdAt: true,
   updatedAt: true,
@@ -91,6 +95,9 @@ export const claimPublicSelect = {
       title: true,
       status: true,
       deliveryMode: true,
+      packageName: true,
+      packageUnit: true,
+      packageQuantity: true,
       verificationRequirement: true,
     },
   },
@@ -179,6 +186,7 @@ export const claimMutationSelect = {
   biometricScore: true,
   qrVerified: true,
   signatureVerified: true,
+  verifiedAt: true,
   isDuplicateFlag: true,
   releaseMethod: true,
   releasedById: true,
@@ -242,6 +250,9 @@ export const distributionClaimParentSelect = {
   barangayId: true,
   status: true,
   deliveryMode: true,
+  packageName: true,
+  packageUnit: true,
+  packageQuantity: true,
   verificationRequirement: true,
 };
 
@@ -293,7 +304,7 @@ export function qrClaimPreviewOutcome({ distribution, qrToken, schedule, allocat
   if (!existingClaim && schedule?.status !== "SCHEDULED") return { ok: false, statusCode: 409, code: "SCHEDULE_NOT_CLAIMABLE", message: "The beneficiary does not have an active claimable schedule.", scanResult: "INVALID_SCHEDULE" };
   if (!existingClaim && allocation?.allocationStatus !== "ALLOCATED") return { ok: false, statusCode: 409, code: "ALLOCATION_NOT_CLAIMABLE", message: "The beneficiary does not have an active claimable allocation.", scanResult: "INVALID_ALLOCATION" };
 
-  const verificationCompleteAfterConfirm = distribution.verificationRequirement === "QR" || completesCombinedVerification;
+  const verificationCompleteAfterConfirm = ["QR", "QR_OR_BIOMETRIC"].includes(distribution.verificationRequirement) || completesCombinedVerification;
   return {
     ok: true,
     checksInBeneficiary: schedule?.status === "SCHEDULED",
@@ -355,9 +366,29 @@ export function claimIdentityRequirementSatisfied(claim) {
     QR: claim.qrVerified,
     BIOMETRIC: claim.biometricVerified,
     QR_AND_BIOMETRIC: claim.qrVerified && claim.biometricVerified,
+    QR_OR_BIOMETRIC: claim.qrVerified || claim.biometricVerified,
     BIOMETRIC_AND_SIGNATURE: claim.biometricVerified && claim.signatureVerified,
     MANUAL: false,
   }[verificationMethod] ?? false;
+}
+
+export function assertClaimNotFlagged(claim) {
+  if (claim.isDuplicateFlag) {
+    throw new AppError(409, "CLAIM_DUPLICATE_REVIEW_REQUIRED", "An independent Admin or DSWD reviewer must resolve the duplicate concern before assistance is released or credited.");
+  }
+}
+
+export function physicalReleasePackage(distribution, releasedQuantity) {
+  if (distribution.packageQuantity == null) {
+    if (releasedQuantity != null) {
+      throw new AppError(409, "PHYSICAL_PACKAGE_NOT_CONFIGURED", "This older event has no package definition. Use its original release log; do not infer quantities.");
+    }
+    return {};
+  }
+  if (releasedQuantity !== distribution.packageQuantity) {
+    throw new AppError(409, "PHYSICAL_RELEASE_QUANTITY_MISMATCH", "Record the full configured quantity only after handover. Refer shortages or substitutions to the responsible officer before completing the claim.");
+  }
+  return { releasedPackageName: distribution.packageName, releasedPackageUnit: distribution.packageUnit, releasedQuantity };
 }
 
 export function assertPhysicalClaimReleasable(claim, distribution) {
@@ -382,6 +413,7 @@ export function assertPhysicalClaimReleasable(claim, distribution) {
       "Only an unreleased VERIFIED claim can be marked as physically released.",
     );
   }
+  assertClaimNotFlagged(claim);
   if (claim.disputes?.some((dispute) => ["OPEN", "UNDER_REVIEW", "REFERRED"].includes(dispute.status))) {
     throw new AppError(
       409,
@@ -420,7 +452,7 @@ export function assertPhysicalClaimReleasable(claim, distribution) {
 }
 
 export function assertQrVerificationConfigured(distribution) {
-  if (!["QR", "QR_AND_BIOMETRIC"].includes(distribution.verificationRequirement)) {
+  if (!["QR", "QR_AND_BIOMETRIC", "QR_OR_BIOMETRIC"].includes(distribution.verificationRequirement)) {
     throw new AppError(
       409,
       "QR_NOT_REQUIRED",
@@ -442,7 +474,7 @@ export function assertQrTokenRevocable(qrToken, now = new Date()) {
 
 export function assertQrTokenReissuable(qrToken, now = new Date()) {
   const status = effectiveQrStatus(qrToken, now);
-  if (!["REVOKED", "EXPIRED"].includes(status)) {
+  if (!["ACTIVE", "REVOKED", "EXPIRED"].includes(status)) {
     throw new AppError(
       409,
       "QR_TOKEN_NOT_REISSUABLE",

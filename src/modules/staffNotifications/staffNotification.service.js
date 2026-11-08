@@ -34,7 +34,7 @@ export function maskEmailAddress(email) {
 }
 
 export function emailDeliveryToResponse(notification) {
-  const configured = notification?.emailProviderMode === "GMAIL_API";
+  const configured = ["GMAIL_API", "BREVO_API"].includes(notification?.emailProviderMode);
   return {
     configured,
     provider: notification?.emailProviderMode ?? env.emailProviderMode,
@@ -98,7 +98,7 @@ export async function createStaffNotification(notification, database = prisma) {
     ...(emailRecipient ? {
       emailProviderMode: env.emailProviderMode,
       emailRecipient,
-      emailStatus: env.emailProviderMode === "GMAIL_API" ? "PENDING" : "NOT_REQUESTED",
+      emailStatus: ["GMAIL_API", "BREVO_API"].includes(env.emailProviderMode) ? "PENDING" : "NOT_REQUESTED",
     } : {}),
   };
   if (!data.deduplicationKey) {

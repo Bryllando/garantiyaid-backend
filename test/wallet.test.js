@@ -107,6 +107,7 @@ test("wallet access excludes Barangay Facilitators from financial ledger data", 
 });
 
 test("credit eligibility requires a verified claim, checked-in schedule, active allocation and beneficiary", () => {
+  assert.throws(() => assertClaimCreditable(creditableClaim({ isDuplicateFlag: true })), (error) => error.code === "CLAIM_DUPLICATE_REVIEW_REQUIRED");
   assert.doesNotThrow(() => assertClaimCreditable(creditableClaim()));
   assert.doesNotThrow(() => assertClaimCreditable(creditableClaim({
     qrVerified: false,

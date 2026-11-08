@@ -7,6 +7,7 @@ export const beneficiaryDocumentSelect = {
   documentId: true,
   beneficiaryId: true,
   documentType: true,
+  documentName: true,
   originalFileName: true,
   mimeType: true,
   fileSize: true,
@@ -82,7 +83,7 @@ export function assertBeneficiaryDocumentReplacementTransition(document, {
 
 export async function getBeneficiaryDocumentOrThrow(beneficiaryId, documentId) {
   const document = await prisma.beneficiaryDocument.findFirst({
-    where: { beneficiaryId, documentId },
+    where: { beneficiaryId, documentId, reviewStatus: { not: "REMOVED" } },
     select: {
       ...beneficiaryDocumentSelect,
       filePath: true,
@@ -97,12 +98,9 @@ export async function getBeneficiaryDocumentOrThrow(beneficiaryId, documentId) {
 }
 
 export function resolveBeneficiaryDocumentPath(storedPath) {
-  const resolvedPath = path.resolve(process.cwd(), storedPath);
-  const allowedPrefix = `${beneficiaryDocumentUploadDirectory}${path.sep}`;
-
-  if (!resolvedPath.startsWith(allowedPrefix)) {
+  const match = typeof storedPath === "string" && /^uploads\/beneficiary-documents\/([a-zA-Z0-9][a-zA-Z0-9._-]*)$/.exec(storedPath);
+  if (!match) {
     throw new AppError(500, "INVALID_DOCUMENT_PATH", "Stored beneficiary document path is invalid.");
   }
-
-  return resolvedPath;
+  return path.join(beneficiaryDocumentUploadDirectory, match[1]);
 }

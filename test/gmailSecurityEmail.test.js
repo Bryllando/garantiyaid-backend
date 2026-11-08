@@ -47,7 +47,8 @@ test("Gmail API delivery uses HTTPS, a safe multipart message, and retryable quo
   for (const [, type, encoded] of parts) {
     assert.ok(encoded.split("\r\n").every((line) => line.length <= 76));
     const body = Buffer.from(encoded, "base64").toString("utf8");
-    assert.ok(body.includes(message.replaceAll("\n", "\r\n")));
+    if (type === "plain") assert.ok(body.includes(message.replaceAll("\n", "\r\n")));
+    else for (const paragraph of message.split("\n")) assert.ok(body.includes(paragraph));
     assert.match(body, /Review password settings/);
     assert.match(body, /Event time: .*PHT/);
     assert.match(body, /https:\/\/garantiyaid\.vercel\.app\/account\?section=password/);

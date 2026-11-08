@@ -105,7 +105,7 @@ export function errorHandler(error, req, res, next) {
     console.error({
       requestId: req.requestId,
       method: req.method,
-      path: req.originalUrl,
+      path: req.path,
       errorName: error.name,
       errorCode: error.code,
       ...(process.env.NODE_ENV !== "production" ? { stack: error.stack } : {}),

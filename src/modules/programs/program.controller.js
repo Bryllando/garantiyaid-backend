@@ -10,6 +10,7 @@ import {
   getProgramOrThrow,
   programCriterionSelect,
   programSelect,
+  programDocumentData,
 } from "./program.service.js";
 
 async function runProgramTransaction(operation) {
@@ -28,12 +29,13 @@ async function runProgramTransaction(operation) {
 }
 
 export const createProgram = asyncHandler(async (req, res) => {
-  assertProgramDetailsValid(req.validatedBody);
+  const data = programDocumentData(req.validatedBody);
+  assertProgramDetailsValid(data);
 
   const program = await prisma.$transaction(async (tx) => {
     const createdProgram = await tx.program.create({
       data: {
-        ...req.validatedBody,
+        ...data,
         requiredDocumentTypes: req.validatedBody.requiredDocumentTypes ?? [],
         createdById: req.auth.userId,
       },
@@ -103,11 +105,12 @@ export const updateProgram = asyncHandler(async (req, res) => {
       tx,
     );
     assertProgramDraft(existingProgram);
-    assertProgramDetailsValid({ ...existingProgram, ...req.validatedBody });
+    const data = programDocumentData(req.validatedBody, existingProgram);
+    assertProgramDetailsValid({ ...existingProgram, ...data });
 
     const updatedProgram = await tx.program.update({
       where: { programId: existingProgram.programId },
-      data: req.validatedBody,
+      data,
       select: programSelect,
     });
 
@@ -118,7 +121,7 @@ export const updateProgram = asyncHandler(async (req, res) => {
         entityAffected: "PROGRAM",
         recordId: updatedProgram.programId,
         ipAddress: clientIpAddress(req),
-        details: { changedFields: Object.keys(req.validatedBody) },
+        details: { changedFields: Object.keys(data) },
       },
     });
 

@@ -73,6 +73,16 @@ export const issueClaimReceipt = asyncHandler(async (req, res) => {
       },
     });
     return { receipt, created };
+  }).catch(async (error) => {
+    // A competing upsert can win before this transaction inserts its receipt.
+    if (error.code === "P2002") {
+      const receipt = await prisma.claimReceipt.findFirst({
+        where: { claimId, claim: { distributionId } },
+        select: claimReceiptPublicSelect,
+      });
+      if (receipt) return { receipt, created: false };
+    }
+    throw error;
   });
 
   return res.status(result.created ? 201 : 200).json({
@@ -127,7 +137,7 @@ export const createClaimDispute = asyncHandler(async (req, res) => {
   const dispute = await prisma.$transaction(async (tx) => {
     const claim = await tx.claim.findFirst({
       where: { claimId, distributionId },
-      select: { claimId: true, claimStatus: true },
+      select: { claimId: true, claimStatus: true, isDuplicateFlag: true },
     });
     if (!claim) claimNotFound();
     const activeCount = await tx.claimDispute.count({
@@ -162,7 +172,14 @@ export const createClaimDispute = asyncHandler(async (req, res) => {
       },
     });
     return created;
-  }).catch((error) => {
+  }, { isolationLevel: "Serializable" }).catch((error) => {
+    if (error.code === "P2034") {
+      throw new AppError(
+        409,
+        "CLAIM_DISPUTE_CONCURRENT_CHANGE",
+        "The claim changed while the concern was being filed. Reload the claim and check its current state before retrying.",
+      );
+    }
     if (error.code === "P2002") {
       throw new AppError(
         409,
@@ -223,7 +240,7 @@ export const listClaimDisputes = asyncHandler(async (req, res) => {
 export const reviewClaimDispute = asyncHandler(async (req, res) => {
   assertClaimDisputeReviewAllowed(req.staffUser);
   const { distributionId, disputeId } = req.validatedParams;
-  const { action, reviewNotes } = req.validatedBody;
+  const { action, reviewNotes, expectedUpdatedAt, expectedClaimUpdatedAt } = req.validatedBody;
   await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
 
   const dispute = await prisma.$transaction(async (tx) => {
@@ -234,22 +251,30 @@ export const reviewClaimDispute = asyncHandler(async (req, res) => {
     if (!current) {
       throw new AppError(404, "CLAIM_DISPUTE_NOT_FOUND", "Claim dispute was not found.");
     }
+    if (current.updatedAt.getTime() !== new Date(expectedUpdatedAt).getTime()) {
+      throw new AppError(409, "CLAIM_DISPUTE_CONCURRENT_CHANGE", "This case changed after you opened it. Close the decision form and review the refreshed case before continuing.");
+    }
+    if (expectedClaimUpdatedAt && current.claim.updatedAt.getTime() !== new Date(expectedClaimUpdatedAt).getTime()) {
+      throw new AppError(409, "CLAIM_DISPUTE_CONCURRENT_CHANGE", "The claim evidence changed after you opened this case. Close the decision form and review the refreshed evidence before continuing.");
+    }
     const change = disputeReviewUpdate(current, action, req.auth.userId, reviewNotes);
-    if (change.claimData) {
+    if (action !== "START_REVIEW") {
       const claimUpdate = await tx.claim.updateMany({
         where: {
           claimId: current.claimId,
-          claimStatus: change.claimExpectedStatus ?? "VERIFIED",
+          claimStatus: change.claimExpectedStatus ?? current.claim.claimStatus,
+          updatedAt: new Date(expectedClaimUpdatedAt),
         },
-        data: change.claimData,
+        // Even a decision without claim changes must lock the evidence version until commit.
+        data: change.claimData ?? { updatedAt: new Date(expectedClaimUpdatedAt) },
       });
       if (claimUpdate.count !== 1) {
         throw new AppError(409, "CLAIM_DISPUTE_CONCURRENT_CHANGE", "The claim changed during review. Reload the case.");
       }
-      await tx.auditLog.create({
+      if (change.claimData) await tx.auditLog.create({
         data: {
           userId: req.auth.userId,
-          action: "CLAIM_VOIDED_AFTER_DISPUTE",
+          action: change.claimData.isDuplicateFlag === false ? "CLAIM_DUPLICATE_FLAG_CLEARED_AFTER_REVIEW" : "CLAIM_VOIDED_AFTER_DISPUTE",
           entityAffected: "CLAIM",
           recordId: current.claimId,
           ipAddress: clientIpAddress(req),
@@ -258,7 +283,7 @@ export const reviewClaimDispute = asyncHandler(async (req, res) => {
             distributionId,
             referenceNo: current.referenceNo,
             releaseMethod: current.claim.releaseMethod,
-            walletReversalRequired: current.claim.releaseMethod !== "PHYSICAL_GOODS"
+            walletReversalRequired: change.claimData.claimStatus === "VOIDED" && current.claim.releaseMethod !== "PHYSICAL_GOODS"
               && current.claim.distribution?.deliveryMode !== "PHYSICAL_GOODS",
           },
         },
@@ -267,6 +292,7 @@ export const reviewClaimDispute = asyncHandler(async (req, res) => {
     const disputeUpdate = await tx.claimDispute.updateMany({
       where: {
         disputeId,
+        updatedAt: new Date(expectedUpdatedAt),
         ...(action === "START_REVIEW"
           ? { status: "OPEN", assignedToId: null }
           : { status: { in: ["UNDER_REVIEW", "REFERRED"] }, assignedToId: req.auth.userId }),

@@ -74,6 +74,8 @@ export const schedulableAllocationSelect = {
 };
 
 export const distributionScheduleParentSelect = {
+  deliveryMode: true,
+  packageQuantity: true,
   distributionId: true,
   programId: true,
   barangayId: true,

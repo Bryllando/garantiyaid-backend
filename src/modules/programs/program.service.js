@@ -25,6 +25,8 @@ export const programSelect = {
   applicationStartDate: true,
   applicationEndDate: true,
   requiredDocumentTypes: true,
+  otherRequiredDocumentName: true,
+  otherRequiredDocumentNames: true,
   status: true,
   createdAt: true,
   updatedAt: true,
@@ -66,7 +68,26 @@ export function assertProgramDraft(program) {
   }
 }
 
+export function programDocumentData(input, existing = {}) {
+  const types = input.requiredDocumentTypes ?? existing.requiredDocumentTypes ?? [];
+  if (types.includes("OTHER") && existing.otherRequiredDocumentNames?.length > 1 && !Object.hasOwn(input, "otherRequiredDocumentNames") && Object.hasOwn(input, "otherRequiredDocumentName")) {
+    throw new AppError(409, "PROGRAM_FORM_OUTDATED", "Reload the program form before editing multiple document requirements.");
+  }
+  let names = input.otherRequiredDocumentNames ?? (Object.hasOwn(input, "otherRequiredDocumentName")
+    ? (input.otherRequiredDocumentName ? [input.otherRequiredDocumentName] : [])
+    : existing.otherRequiredDocumentNames?.length ? existing.otherRequiredDocumentNames
+      : existing.otherRequiredDocumentName ? [existing.otherRequiredDocumentName] : []);
+  if (!types.includes("OTHER")) {
+    if (names.length && !input.requiredDocumentTypes) throw new AppError(400, "INVALID_OTHER_DOCUMENT", "Select Other in required documents before naming the document.");
+    names = [];
+  }
+  return { ...input, otherRequiredDocumentNames: names, otherRequiredDocumentName: names[0] ?? null };
+}
+
 export function assertProgramDetailsValid(program) {
+  if (program.otherRequiredDocumentName && !program.requiredDocumentTypes?.includes("OTHER")) {
+    throw new AppError(400, "INVALID_OTHER_DOCUMENT", "Select Other in required documents before naming the document.");
+  }
   if (
     program.applicationStartDate
     && program.applicationEndDate

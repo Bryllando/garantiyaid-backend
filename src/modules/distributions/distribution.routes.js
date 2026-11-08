@@ -5,6 +5,7 @@ import { validateBody, validateParams, validateQuery } from "../../middleware/va
 import { biometricRateLimiter } from "../../middleware/rateLimit.js";
 import {
   cancelDistribution,
+  closeDistribution,
   createDistribution,
   confirmAssistantDistribution,
   getDistribution,
@@ -26,6 +27,7 @@ import {
 } from "./distribution.policy.js";
 import {
   createDistributionSchema,
+  closeDistributionSchema,
   confirmAssistantDistributionSchema,
   distributionIdSchema,
   distributionListQuerySchema,
@@ -145,6 +147,14 @@ import {
 const distributionRoutes = Router();
 
 distributionRoutes.use(authenticateStaff);
+
+distributionRoutes.post(
+  "/:distributionId/close",
+  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(closeDistributionSchema),
+  closeDistribution,
+);
 distributionRoutes.get(
   "/",
   authorizeRoles(...DISTRIBUTION_READ_ROLES),

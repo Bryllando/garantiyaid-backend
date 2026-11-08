@@ -1,12 +1,17 @@
-import { rateLimit } from "express-rate-limit";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { env } from "../config/env.js";
+import { verifyAccessToken } from "../modules/auth/auth.service.js";
 
-function rateLimitHandler(req, res) {
+function rateLimitHandler(req, res, _next, options) {
+  const retryAfterSeconds = Math.max(1, Math.ceil((req.rateLimit.resetTime.getTime() - Date.now()) / 1000));
+  const wait = retryAfterSeconds >= 60 ? `${Math.ceil(retryAfterSeconds / 60)} minute(s)` : `${retryAfterSeconds} second(s)`;
   return res.status(429).json({
     success: false,
     error: {
       code: "RATE_LIMIT_EXCEEDED",
-      message: "Too many requests. Wait before trying again.",
+      message: `Too many requests. Try again in ${wait}.`,
+      retryAfterSeconds,
+      scope: options.identifier,
       requestId: req.requestId,
     },
   });
@@ -20,10 +25,19 @@ const commonOptions = {
   handler: rateLimitHandler,
 };
 
+export function apiRateLimitKey(req) {
+  const [scheme, token] = req.get("authorization")?.split(" ") ?? [];
+  if (scheme === "Bearer" && token) {
+    try { return `staff:${verifyAccessToken(token).sub}`; } catch { /* Invalid credentials still share the client-address limit. */ }
+  }
+  return `ip:${ipKeyGenerator(req.ip)}`;
+}
+
 export const apiRateLimiter = rateLimit({
   ...commonOptions,
   identifier: "garantiyaid-api",
   limit: env.apiRateLimitPer15Minutes,
+  keyGenerator: apiRateLimitKey,
 });
 
 export const authenticationRateLimiter = rateLimit({

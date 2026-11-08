@@ -2,6 +2,8 @@
 
 Last reviewed: 2026-08-12
 
+**Pilot preparation update, 5 November 2026:** use the [deployment guide](pilot-deployment.md), [backup/restore runbook](pilot-recovery.md) and [privacy/operations review](pilot-review.md) for current operational work. Encrypted coordinated backup/recovery, persistent upload-root configuration, readiness checks and query-free exception logging are implemented and locally tested. Infrastructure, malware controls and office/privacy approval remain pending; the historical table below is not a completion certificate.
+
 This is the technical baseline for the current staff API. It is not a legal certification or a substitute for an agency Privacy Impact Assessment, Data Protection Officer review, independent penetration test, or production infrastructure review.
 
 ## Current security model
@@ -123,7 +125,7 @@ The same token must then return `401 INVALID_SESSION` on `GET {{baseUrl}}/auth/m
 ## Reference baseline
 
 - Philippine Data Privacy Act of 2012: https://privacy.gov.ph/data-privacy-act/
-- NPC Circular 16-01, Security of Personal Data in Government Agencies: https://privacy.gov.ph/npc-circular-16-01-security-of-personal-data-in-government-agencies/
+- NPC Circular 2023-06 supersedes Circular 16-01; the official announcement links the updated circular: https://privacy.gov.ph/npc-issues-circulars-to-strengthen-personal-data-protection-in-ph/
 - OWASP ASVS 5.0: https://owasp.org/www-project-application-security-verification-standard/
 - OWASP REST Security Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
 - OWASP Authentication Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html

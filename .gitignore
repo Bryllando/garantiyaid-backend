@@ -5,3 +5,9 @@ node_modules/
 !.env.example
 uploads/
 src/generated/
+# Recovery bundles and decrypted recovery files must stay outside source control.
+backups/
+recovery/
+*.enc
+*.dump
+field-key.json

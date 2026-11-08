@@ -434,7 +434,11 @@ export const reissueQrToken = asyncHandler(async (req, res) => {
     );
     assertDistributionOpenForClaims(distribution);
     assertQrVerificationConfigured(distribution);
-    const qrToken = await getQrTokenOrThrow(distributionId, qrTokenId, tx);
+    const qrToken = await tx.qrToken.findFirst({
+      where: { distributionId, qrTokenId },
+      select: { ...qrTokenPublicSelect, tokenHash: true },
+    });
+    if (!qrToken) throw new AppError(404, "QR_TOKEN_NOT_FOUND", "QR token record was not found.");
     assertQrTokenReissuable(qrToken);
     const schedule = await tx.schedule.findUnique({
       where: {
@@ -488,7 +492,7 @@ export const reissueQrToken = asyncHandler(async (req, res) => {
     }
     const rawToken = generateRawQrToken();
     const update = await tx.qrToken.updateMany({
-      where: { distributionId, qrTokenId, qrStatus: qrToken.qrStatus },
+      where: { distributionId, qrTokenId, qrStatus: qrToken.qrStatus, tokenHash: qrToken.tokenHash },
       data: { tokenHash: hashQrToken(rawToken), qrStatus: "ACTIVE", expiresAt },
     });
     if (update.count !== 1) {
@@ -768,6 +772,7 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
             data: {
               claimStatus: "VERIFIED",
               verificationMethod: "QR_AND_BIOMETRIC",
+              verifiedAt: now,
               qrVerified: true,
               verifiedById: req.auth.userId,
             },
@@ -877,7 +882,7 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
           { scanLogId },
         );
       } else {
-        const verificationComplete = distribution.verificationRequirement === "QR";
+        const verificationComplete = ["QR", "QR_OR_BIOMETRIC"].includes(distribution.verificationRequirement);
         const createdClaim = await tx.claim.create({
           data: {
             beneficiaryId: qrToken.beneficiaryId,
@@ -886,6 +891,7 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
             verifiedById: req.auth.userId,
             allocationId: allocation.allocationId,
             claimStatus: verificationComplete ? "VERIFIED" : "PENDING",
+            verifiedAt: verificationComplete ? now : null,
             verificationMethod: distribution.verificationRequirement,
             biometricVerified: false,
             qrVerified: true,

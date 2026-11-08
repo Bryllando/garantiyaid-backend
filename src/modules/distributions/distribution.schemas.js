@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+export const closeDistributionSchema = z.object({
+  notes: z.string().trim().min(5).max(2000),
+}).strict();
+
 export const DISTRIBUTION_STATUSES = Object.freeze([
   "DRAFT",
   "OPEN",
@@ -11,6 +15,7 @@ export const VERIFICATION_REQUIREMENTS = Object.freeze([
   "QR",
   "BIOMETRIC",
   "QR_AND_BIOMETRIC",
+  "QR_OR_BIOMETRIC",
   "BIOMETRIC_AND_SIGNATURE",
 ]);
 
@@ -54,6 +59,9 @@ const distributionFields = {
   slotDurationMinutes: z.coerce.number().int().min(5).max(720),
   location: z.string().trim().min(1).max(200),
   barangayId: z.uuid(),
+  packageName: z.string().trim().min(1).max(150).nullable().optional(),
+  packageUnit: z.string().trim().min(1).max(30).nullable().optional(),
+  packageQuantity: z.number().int().min(1).max(10000).nullable().optional(),
   deliveryMode: z.preprocess(
     (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
     z.enum(ASSISTANCE_DELIVERY_MODES).default("SIMULATED_WALLET"),
@@ -83,6 +91,10 @@ export const distributionIdSchema = z.object({
 export const distributionListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().trim().max(100).optional(),
+  ),
   programId: z.uuid().optional(),
   barangayId: z.uuid().optional(),
   status: z.preprocess(

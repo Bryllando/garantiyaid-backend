@@ -26,7 +26,7 @@ const prohibitedPatterns = [
   { name: "private key", pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
   { name: "unsafe Prisma raw query", pattern: /\$(?:queryRawUnsafe|executeRawUnsafe)\s*\(/ },
   { name: "dynamic code execution", pattern: /\b(?:eval|Function)\s*\(/ },
-  { name: "operating-system command execution", pattern: /node:(?:child_process|cluster)/ },
+  { name: "operating-system command execution in application code", pattern: /node:(?:child_process|cluster)/, runtimeOnly: true },
 ];
 
 async function filesUnder(directory) {
@@ -55,6 +55,7 @@ for (const file of await filesUnder(root)) {
   const content = await readFile(file, "utf8");
 
   for (const rule of prohibitedPatterns) {
+    if (rule.runtimeOnly && !relativePath.startsWith(`src${path.sep}`)) continue;
     if (rule.pattern.test(content)) {
       findings.push(`${relativePath}: ${rule.name}`);
     }

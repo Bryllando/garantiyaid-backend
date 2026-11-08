@@ -26,8 +26,11 @@ export const claimReceiptSourceSelect = {
   releaseEvidenceType: true,
   releaseEvidenceReference: true,
   releaseNotes: true,
+  releasedPackageName: true,
+  releasedPackageUnit: true,
+  releasedQuantity: true,
   claimedAt: true,
-  updatedAt: true,
+  verifiedAt: true,
   beneficiary: {
     select: {
       beneficiaryId: true,
@@ -139,6 +142,8 @@ export const claimDisputePublicSelect = {
     select: {
       claimId: true,
       claimStatus: true,
+      isDuplicateFlag: true,
+      updatedAt: true,
       verificationMethod: true,
       releaseMethod: true,
       releasedAt: true,
@@ -216,7 +221,7 @@ export function buildClaimReceiptSnapshot(claim) {
       qrVerified: claim.qrVerified,
       biometricVerified: claim.biometricVerified,
       signatureVerified: claim.signatureVerified,
-      verifiedAt: iso(claim.updatedAt),
+      verifiedAt: iso(claim.verifiedAt),
       claimedAt: iso(claim.claimedAt),
     },
     service: {
@@ -234,6 +239,7 @@ export function buildClaimReceiptSnapshot(claim) {
       deliveryMode: claim.releaseMethod ?? claim.distribution.deliveryMode,
       releasedAt: iso(claim.releasedAt),
       releasedBy: claim.releasedBy,
+      package: claim.releasedQuantity != null ? { name: claim.releasedPackageName, unit: claim.releasedPackageUnit, quantity: claim.releasedQuantity } : null,
       evidence: claim.releaseEvidenceType
         ? {
             type: claim.releaseEvidenceType,
@@ -327,11 +333,11 @@ export function buildDisputeSearchWhere(search) {
 }
 
 export function assertDisputeCanBeFiled(claim, activeCount) {
-  if (!["VERIFIED", "CLAIMED", "VOIDED"].includes(claim?.claimStatus)) {
+  if (!["VERIFIED", "CLAIMED", "VOIDED"].includes(claim?.claimStatus) && !(claim?.claimStatus === "PENDING" && claim.isDuplicateFlag)) {
     throw new AppError(
       409,
       "CLAIM_NOT_DISPUTABLE",
-      "Only a verified, claimed, or voided claim may be disputed.",
+      "Only a verified, claimed, voided, or duplicate-flagged pending claim may be disputed.",
     );
   }
   if (activeCount > 0) {
@@ -386,6 +392,10 @@ export function disputeReviewUpdate(dispute, action, userId, reviewNotes, now = 
   }
   if (action === "CONFIRM_CLAIM") {
     return {
+      ...(dispute.claim.isDuplicateFlag ? {
+        claimData: { isDuplicateFlag: false },
+        claimExpectedStatus: dispute.claim.claimStatus,
+      } : {}),
       disputeData: {
         status: "RESOLVED",
         outcome: "CLAIM_CONFIRMED",

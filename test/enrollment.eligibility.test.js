@@ -113,7 +113,7 @@ test("a required failure blocks approval while an optional failure stays visible
 });
 
 test("only accepted documents satisfy a document criterion", async (t) => {
-  for (const reviewStatus of ["SUBMITTED", "REJECTED", "SUPERSEDED"]) {
+  for (const reviewStatus of ["SUBMITTED", "REJECTED", "SUPERSEDED", "REMOVED"]) {
     await t.test(reviewStatus, () => {
       const result = evaluateEnrollmentEligibility(enrollment([
         criterion({
