@@ -20,11 +20,14 @@ import chatbotRoutes from "../modules/chatbot/chatbot.routes.js";
 import staffNotificationRoutes from "../modules/staffNotifications/staffNotification.routes.js";
 import biometricDuplicateRoutes from "../modules/biometrics/biometricDuplicate.routes.js";
 import burialRoutes from "../modules/burial/burial.routes.js";
+import { mobileAccountRoutes, staffMobileAccountRoutes } from "../modules/beneficiaries/mobileAccount.routes.js";
 
 const apiRoutes = Router();
 
 apiRoutes.use(healthRoutes);
 apiRoutes.use("/auth", authRoutes);
+apiRoutes.use("/mobile", mobileAccountRoutes);
+apiRoutes.use("/mobile-account-requests", staffMobileAccountRoutes);
 apiRoutes.use("/barangays", barangayRoutes);
 apiRoutes.use("/beneficiaries/:beneficiaryId/documents", beneficiaryDocumentRoutes);
 apiRoutes.use("/beneficiaries", beneficiaryRoutes);

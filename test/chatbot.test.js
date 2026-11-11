@@ -333,6 +333,27 @@ test("multi-turn processing stores deterministic order, controlled bot answers, 
   assert.deepEqual(history.pagination, { page: 1, pageSize: 20, total: 4, totalPages: 1 });
 });
 
+test("public process explanations persist as controlled text and never bypass session ownership or personal-data escalation", async () => {
+  const database = inMemoryChatbotDatabase();
+  const now = new Date("2099-01-01T00:00:00.000Z");
+  const created = await createGenericChatbotSession({ language: "en" }, database, now);
+  const request = { sessionId, token: created.sessionToken, messageText: "Can you explain the application steps?", ipAddress: "127.0.0.1" };
+  let externalCalls = 0;
+  const external = async () => { externalCalls++; return null; };
+  await assert.rejects(processGenericChatbotTurn({ ...request, token: "wrong-session-token" }, database, now, external));
+  const result = await processGenericChatbotTurn(request, database, now, external);
+  assert.match(result.botMessage.messageText, /^General process: Application steps\n\n/);
+  assert.equal(result.personalDataAccessed, false);
+  assert.equal(result.externalAiUsed, false);
+  assert.equal(externalCalls, 0);
+  const history = await listGenericChatbotMessages(sessionId, created.sessionToken, { page: 1, pageSize: 20 }, database);
+  assert.equal(history.messages[1].messageText, result.botMessage.messageText);
+  const personal = await processGenericChatbotTurn({ ...request, messageText: "When is my schedule?" }, database, now, external);
+  assert.equal(personal.escalatedNow, true);
+  assert.equal(personal.personalDataAccessed, false);
+  assert.doesNotMatch(personal.botMessage.messageText, /^General process:/);
+});
+
 test("safe intents may use external AI wording without forwarding the raw user message", async () => {
   const database = inMemoryChatbotDatabase();
   const created = await createGenericChatbotSession(

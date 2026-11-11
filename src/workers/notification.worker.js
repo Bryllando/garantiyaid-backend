@@ -22,7 +22,7 @@ const worker = new Worker(
 );
 
 worker.on("ready", () => {
-  console.log(`Notification worker ready for queue ${env.notificationQueueName}.`);
+  console.log(`Notification worker ready for queue ${env.notificationQueueName} (SMS: ${env.smsProviderMode}).`);
 });
 worker.on("failed", (job, error) => {
   console.warn({
@@ -30,7 +30,7 @@ worker.on("failed", (job, error) => {
     jobType: job?.name,
     notificationId: job?.data?.notificationId,
     attemptsMade: job?.attemptsMade,
-    errorCode: error.code ?? "SIMULATED_PROVIDER_FAILURE",
+    errorCode: error.code ?? "NOTIFICATION_PROCESSING_FAILED",
   });
   const attemptsAllowed = Number(job?.opts?.attempts ?? env.notificationMaxAttempts);
   if (job?.data?.notificationId && job.attemptsMade >= attemptsAllowed) {

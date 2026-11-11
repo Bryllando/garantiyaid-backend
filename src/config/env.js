@@ -29,6 +29,9 @@ const environmentSchema = z.object({
   JWT_ACCESS_EXPIRES_IN: duration.default("15m"),
   JWT_ISSUER: z.string().trim().min(3).max(100).default("garantiyaid-api"),
   JWT_AUDIENCE: z.string().trim().min(3).max(100).default("garantiyaid-staff"),
+  MOBILE_AUTH_PUBLIC_KEY: optionalTrimmedString,
+  MOBILE_AUTH_ISSUER: z.string().trim().min(3).max(200).default("garantiyaid-mobile"),
+  MOBILE_AUTH_AUDIENCE: z.string().trim().min(3).max(100).default("garantiyaid-beneficiary-api"),
   FIELD_ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   ENFORCE_HTTPS: z.enum(["true", "false"]).default("false"),
@@ -64,8 +67,11 @@ const environmentSchema = z.object({
   NOTIFICATION_BACKOFF_MS: z.coerce.number().int().min(100).max(60_000).default(1_000),
   NOTIFICATION_BATCH_MAX_SIZE: z.coerce.number().int().min(1).max(500).default(100),
   NOTIFICATION_MAX_DELAY_DAYS: z.coerce.number().int().min(1).max(90).default(30),
-  SMS_PROVIDER_MODE: z.enum(["SIMULATED"]).default("SIMULATED"),
+  SMS_PROVIDER_MODE: z.enum(["SIMULATED", "SIMGATE"]).default("SIMULATED"),
   SMS_SIMULATED_FAILURE_MODE: z.enum(["NONE", "ALWAYS_FAIL"]).default("NONE"),
+  SIMGATE_API_KEY: optionalTrimmedString,
+  SIMGATE_DEVICE_ID: optionalTrimmedString,
+  SMS_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(15_000),
   EMAIL_PROVIDER_MODE: z.enum(["DISABLED", "GMAIL_API", "BREVO_API"]).default("DISABLED"),
   BREVO_API_KEY: optionalTrimmedString,
   BREVO_SENDER_EMAIL: z.preprocess(
@@ -93,6 +99,14 @@ const environmentSchema = z.object({
       path: ["CORS_ORIGIN"],
       message: "List explicit trusted origins; wildcard origins are not allowed.",
     });
+  }
+
+  if (value.SMS_PROVIDER_MODE === "SIMGATE") {
+    for (const name of ["SIMGATE_API_KEY", "SIMGATE_DEVICE_ID"]) {
+      if (!value[name] || /\s/.test(value[name])) {
+        context.addIssue({ code: "custom", path: [name], message: `${name} is required without whitespace when SMS_PROVIDER_MODE is SIMGATE.` });
+      }
+    }
   }
 
   if (value.EMAIL_PROVIDER_MODE === "GMAIL_API") {
@@ -224,6 +238,9 @@ export const env = {
   jwtAccessExpiresIn: parsedEnvironment.data.JWT_ACCESS_EXPIRES_IN,
   jwtIssuer: parsedEnvironment.data.JWT_ISSUER,
   jwtAudience: parsedEnvironment.data.JWT_AUDIENCE,
+  mobileAuthPublicKey: parsedEnvironment.data.MOBILE_AUTH_PUBLIC_KEY?.replaceAll("\\n", "\n"),
+  mobileAuthIssuer: parsedEnvironment.data.MOBILE_AUTH_ISSUER,
+  mobileAuthAudience: parsedEnvironment.data.MOBILE_AUTH_AUDIENCE,
   fieldEncryptionKey: parsedEnvironment.data.FIELD_ENCRYPTION_KEY,
   trustProxyHops: parsedEnvironment.data.TRUST_PROXY_HOPS,
   enforceHttps: parsedEnvironment.data.ENFORCE_HTTPS === "true",
@@ -258,6 +275,9 @@ export const env = {
   notificationMaxDelayDays: parsedEnvironment.data.NOTIFICATION_MAX_DELAY_DAYS,
   smsProviderMode: parsedEnvironment.data.SMS_PROVIDER_MODE,
   smsSimulatedFailureMode: parsedEnvironment.data.SMS_SIMULATED_FAILURE_MODE,
+  simgateApiKey: parsedEnvironment.data.SIMGATE_API_KEY,
+  simgateDeviceId: parsedEnvironment.data.SIMGATE_DEVICE_ID,
+  smsRequestTimeoutMs: parsedEnvironment.data.SMS_REQUEST_TIMEOUT_MS,
   emailProviderMode: parsedEnvironment.data.EMAIL_PROVIDER_MODE,
   brevoApiKey: parsedEnvironment.data.BREVO_API_KEY,
   brevoSenderEmail: parsedEnvironment.data.BREVO_SENDER_EMAIL,

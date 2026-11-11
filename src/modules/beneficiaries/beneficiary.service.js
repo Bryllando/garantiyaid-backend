@@ -18,6 +18,7 @@ export const beneficiarySelect = {
   status: true,
   createdAt: true,
   updatedAt: true,
+  mobileAccount: { select: { status: true, reviewedAt: true } },
   barangay: {
     select: {
       barangayId: true,
@@ -52,13 +53,7 @@ export async function assertNoPotentialDuplicateBeneficiary({
   lastName,
   birthDate,
   barangayId,
-  email,
-  philsysNumber,
 }) {
-  if (email || philsysNumber) {
-    return;
-  }
-
   const duplicate = await prisma.beneficiary.findFirst({
     where: {
       ...(beneficiaryId ? { beneficiaryId: { not: beneficiaryId } } : {}),

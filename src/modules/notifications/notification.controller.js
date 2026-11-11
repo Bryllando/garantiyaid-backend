@@ -35,6 +35,8 @@ import {
 } from "./notification.service.js";
 import { normalizePhilippineMobileNumber } from "./simulatedSms.provider.js";
 
+const simulatedSmsOnly = env.smsProviderMode === "SIMULATED";
+
 async function assertFilterScope(staffUser, filters) {
   if (staffUser.role !== "BARANGAY_FACILITATOR") return;
   const lookups = [];
@@ -82,7 +84,7 @@ async function notificationListResponse(req, filters) {
   return {
     notifications: notifications.map(notificationToResponse),
     pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
-    simulatedSmsOnly: true,
+    simulatedSmsOnly, smsProviderMode: env.smsProviderMode,
   };
 }
 
@@ -132,7 +134,7 @@ export const summarizeNotifications = asyncHandler(async (req, res) => {
       byStatus: asCounts(byStatus, "status"),
       byType: asCounts(byType, "notificationType"),
       byChannel: asCounts(byChannel, "channel"),
-      simulatedSmsOnly: true,
+      simulatedSmsOnly, smsProviderMode: env.smsProviderMode,
     },
   });
 });
@@ -191,7 +193,7 @@ async function enqueueRows(req, operation, schedules, options = {}) {
       503,
       "NOTIFICATION_QUEUE_UNAVAILABLE",
       "The notification row was recorded, but Redis queueing is unavailable. Retry with the same Idempotency-Key.",
-      { recordedNotificationCount: notifications.length, simulated: true, realSmsSent: false },
+      { recordedNotificationCount: notifications.length, simulated: simulatedSmsOnly, realSmsSent: false },
     );
   }
 
@@ -201,9 +203,11 @@ async function enqueueRows(req, operation, schedules, options = {}) {
       notifications: notifications.map(notificationToResponse),
       queuedCount: pending.length,
       deduplicatedCount: notifications.length - newlyCreated.length,
-      simulated: true,
+      simulated: simulatedSmsOnly,
       realSmsSent: false,
-      message: "Notifications were queued for simulated SMS processing; no real SMS has been sent.",
+      message: simulatedSmsOnly
+        ? "Notifications were queued for simulated SMS processing; no real SMS has been sent."
+        : "Notifications were queued for SimGate. Gateway acceptance does not confirm delivery to the receiving phone.",
     },
   };
   const responseStatus = 202;
@@ -229,7 +233,7 @@ async function enqueueRows(req, operation, schedules, options = {}) {
             assistant: true,
             serviceArea: req.validatedBody.serviceArea ?? null,
           } : {}),
-          simulated: true,
+          simulated: simulatedSmsOnly,
           realSmsSent: false,
         },
       },
@@ -239,7 +243,7 @@ async function enqueueRows(req, operation, schedules, options = {}) {
   await Promise.all(pending.map((notification) => publishNotificationLifecycle(
     "notification.queued",
     notification,
-    { status: "PENDING", simulated: true, realSmsSent: false },
+    { status: "PENDING", simulated: notification.simulated, realSmsSent: false },
   )));
   return { responseStatus, responseBody };
 }
@@ -306,7 +310,7 @@ export const previewAssistantDistributionReminder = asyncHandler(async (req, res
     data: {
       ...preview,
       ...approval,
-      simulatedSmsOnly: true,
+      simulatedSmsOnly, smsProviderMode: env.smsProviderMode,
       claimAuthorizationDisclosure: "An SMS notice is not proof of eligibility. Claim authorization still requires the official schedule and identity verification.",
     },
   });
@@ -350,12 +354,12 @@ export const enqueueAssistantDistributionReminder = asyncHandler(async (req, res
     await tx.auditLog.create({ data: {
       userId: req.auth.userId, action: "NOTIFICATION_BATCH_ENQUEUED", entityAffected: "DISTRIBUTION",
       recordId: req.validatedParams.distributionId, ipAddress: clientIpAddress(req),
-      details: { assistant: true, approvalId, requestedCount: rows.length, simulated: true, realSmsSent: false },
+      details: { assistant: true, approvalId, requestedCount: rows.length, simulated: simulatedSmsOnly, realSmsSent: false },
     } });
     return { responseStatus: 202, responseBody: { success: true, data: {
       notifications: notifications.map(notificationToResponse), queuedCount: notifications.filter((row) => row.status === "PENDING").length,
       deduplicatedCount: notifications.length - newlyCreated.length,
-      simulated: true, realSmsSent: false,
+      simulated: simulatedSmsOnly, realSmsSent: false,
     } } };
   });
   const pending = await prisma.notification.findMany({ where: {
@@ -366,7 +370,7 @@ export const enqueueAssistantDistributionReminder = asyncHandler(async (req, res
   } catch {
     throw new AppError(503, "NOTIFICATION_QUEUE_UNAVAILABLE", "The reminders were recorded. Retry this same approval to finish queueing without creating duplicates.");
   }
-  if (!result.replayed) await Promise.all(pending.map((notification) => publishNotificationLifecycle("notification.queued", notification, { status: "PENDING", simulated: true, realSmsSent: false })));
+  if (!result.replayed) await Promise.all(pending.map((notification) => publishNotificationLifecycle("notification.queued", notification, { status: "PENDING", simulated: notification.simulated, realSmsSent: false })));
   res.set("Idempotency-Replayed", String(result.replayed));
   return res.status(result.responseStatus).json(result.responseBody);
 });
@@ -409,7 +413,8 @@ export const previewScheduleNotification = asyncHandler(async (req, res) => {
       previewHash: scheduleNotificationPreviewHash(row, schedule.beneficiary.contactNumber),
       recipientMasked: maskRecipient(schedule.beneficiary.contactNumber),
       recipientAvailable: Boolean(normalizePhilippineMobileNumber(schedule.beneficiary.contactNumber)),
-      simulated: true,
+      providerMode: row.providerMode,
+      simulated: simulatedSmsOnly,
       realSmsSent: false,
     },
   });
@@ -495,9 +500,11 @@ export const retryNotification = asyncHandler(async (req, res) => {
     success: true,
     data: {
       notification: notificationToResponse(updated),
-      simulated: true,
+      simulated: notification.simulated,
       realSmsSent: false,
-      message: "The failed notification was queued for another simulated attempt.",
+      message: notification.simulated
+        ? "The failed notification was queued for another simulated attempt."
+        : "The failed SMS was queued for another SimGate attempt; recipient delivery is unconfirmed.",
     },
   };
   const responseStatus = 202;
@@ -511,7 +518,7 @@ export const retryNotification = asyncHandler(async (req, res) => {
         ipAddress: clientIpAddress(req),
         details: {
           notificationType: updated.notificationType,
-          simulated: true,
+          simulated: notification.simulated,
           realSmsSent: false,
         },
       },
@@ -521,7 +528,7 @@ export const retryNotification = asyncHandler(async (req, res) => {
   await publishNotificationLifecycle("notification.queued", updated, {
     status: "PENDING",
     reason: "MANUAL_RETRY",
-    simulated: true,
+    simulated: notification.simulated,
     realSmsSent: false,
   });
   return sendIdempotentResponse(res, { responseStatus, responseBody }, false);

@@ -8,6 +8,7 @@ import prisma from "../../lib/prisma.js";
 import { AppError } from "../../utils/AppError.js";
 import { generateExternalChatbotAnswer } from "./chatbot.ai.js";
 import { classifyChatbotIntent } from "./chatbot.intent.js";
+import { processExplanation } from "./chatbot.process-explanations.js";
 import {
   controlledChatbotAnswer,
   escalationReasonForIntent,
@@ -356,8 +357,11 @@ export async function processGenericChatbotTurn(
   const classification = classifyChatbotIntent(safeUserMessage.messageText);
   const answerSession = await getOwnedSessionOrThrow(sessionId, token, database);
   const localizedAnswer = controlledChatbotAnswer(classification.intent, answerSession.language ?? "en");
+  const explanation = processExplanation({ intent: classification.intent, messageText: safeUserMessage.messageText, language: localizedAnswer.language, publicChat: true });
+  if (explanation) localizedAnswer.messageText = explanation.messageText;
   const externalAnswer = !chatbotSessionExpired(answerSession, now)
     && !["RESOLVED", "ENDED"].includes(answerSession.status)
+    && !explanation
     ? await externalAnswerGenerator({
       intent: classification.intent,
       language: localizedAnswer.language,

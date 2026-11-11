@@ -1,6 +1,7 @@
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { env } from "../config/env.js";
 import { verifyAccessToken } from "../modules/auth/auth.service.js";
+import { verifyMobileAccessToken } from "../modules/beneficiaries/mobileAccount.auth.js";
 
 function rateLimitHandler(req, res, _next, options) {
   const retryAfterSeconds = Math.max(1, Math.ceil((req.rateLimit.resetTime.getTime() - Date.now()) / 1000));
@@ -29,6 +30,10 @@ export function apiRateLimitKey(req) {
   const [scheme, token] = req.get("authorization")?.split(" ") ?? [];
   if (scheme === "Bearer" && token) {
     try { return `staff:${verifyAccessToken(token).sub}`; } catch { /* Invalid credentials still share the client-address limit. */ }
+    try {
+      const identity = verifyMobileAccessToken(token);
+      return `mobile:${identity.issuer}:${identity.subject}`;
+    } catch { /* Only signed mobile identities receive an individual quota. */ }
   }
   return `ip:${ipKeyGenerator(req.ip)}`;
 }

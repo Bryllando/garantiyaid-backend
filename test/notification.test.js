@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import app from "../src/app.js";
 import prisma from "../src/lib/prisma.js";
+import { env } from "../src/config/env.js";
 import { enqueueAssistantDistributionReminder } from "../src/modules/notifications/notification.controller.js";
 import {
   distributionNotificationRoutes,
@@ -352,7 +353,8 @@ test("notification rows are server-rendered, deduplicated, delayed safely, and l
     now,
   });
   assert.equal(row.channel, "SMS");
-  assert.equal(row.providerMode, "SIMULATED");
+  assert.equal(row.providerMode, env.smsProviderMode);
+  assert.equal(row.simulated, env.smsProviderMode === "SIMULATED");
   assert.equal(row.scheduledFor.toISOString(), sendAt.toISOString());
   assert.equal(row.deduplicationKey.length, 64);
   assert.equal(row.message.includes("09171234567"), false);
@@ -520,15 +522,17 @@ test("queue health is safe and reports a controlled unavailable state", async ()
     queue: {
       waitUntilReady: async () => "PONG",
       getJobCounts: async () => ({ waiting: 1, active: 0, delayed: 2, failed: 0 }),
+      getWorkers: async () => [],
     },
   });
   assert.equal(ready.status, "ready");
+  assert.equal(ready.workerCount, 0);
   assert.equal(Object.hasOwn(ready, "redisUrl"), false);
   const unavailable = await notificationQueueHealth({
     queue: { waitUntilReady: async () => { throw new Error("offline"); } },
   });
   assert.deepEqual({ status: unavailable.status, simulatedSmsOnly: unavailable.simulatedSmsOnly }, {
-    status: "unavailable", simulatedSmsOnly: true,
+    status: "unavailable", simulatedSmsOnly: env.smsProviderMode === "SIMULATED",
   });
   assert.equal(JSON.stringify(unavailable).includes("offline"), false);
 });
@@ -682,6 +686,91 @@ test("worker concurrency guard allows only one simulated provider call", async (
   assert.equal(providerCalls, 1);
   assert.deepEqual(results.map((value) => value.outcome).sort(), ["SENT_SIMULATED", "SKIPPED"]);
   assert.equal(state.notification.status, "SENT");
+});
+
+test("SimGate worker preserves old simulation records and prevents uncertain/crashed sends from repeating", async () => {
+  const previousMode = env.smsProviderMode;
+  env.smsProviderMode = "SIMGATE";
+  try {
+    const job = { data: { notificationId }, attemptsMade: 0, opts: { attempts: 3 } };
+    let calls = 0;
+    const provider = { send: async () => { calls++; return { success: true, simulated: false, providerReference: "simgate-test-id" }; } };
+    const accepted = workerDatabase();
+    Object.assign(accepted.state.notification, { providerMode: "SIMGATE", simulated: false });
+    const result = await processNotificationJob(job, { database: accepted.database, provider, publishLifecycle: ignoreNotificationLifecycle });
+    assert.equal(result.outcome, "SMS_GATEWAY_ACCEPTED");
+    assert.equal(result.realSmsSent, false);
+    assert.equal(accepted.state.audits[0].action, "SMS_GATEWAY_ACCEPTED");
+    await processNotificationJob(job, { database: accepted.database, provider, publishLifecycle: ignoreNotificationLifecycle });
+    assert.equal(calls, 1);
+
+    const uncertain = workerDatabase();
+    Object.assign(uncertain.state.notification, { providerMode: "SIMGATE", simulated: false, lastErrorCode: "SIMGATE_SEND_STARTED" });
+    const stopped = await processNotificationJob(job, { database: uncertain.database, provider, publishLifecycle: ignoreNotificationLifecycle });
+    assert.equal(stopped.errorCode, "SIMGATE_DELIVERY_UNCONFIRMED");
+    assert.equal(calls, 1);
+    assert.throws(() => assertNotificationRetryable(uncertain.state.notification), { code: "SMS_DELIVERY_UNCONFIRMED" });
+
+    const crashed = workerDatabase();
+    Object.assign(crashed.state.notification, { providerMode: "SIMGATE", simulated: false,
+      lastErrorCode: "SIMGATE_SEND_STARTED", processingToken: "old-worker", processingStartedAt: new Date() });
+    await processNotificationJob(job, { database: crashed.database, provider, publishLifecycle: ignoreNotificationLifecycle });
+    assert.equal(crashed.state.notification.status, "FAILED");
+    assert.equal(crashed.state.notification.lastErrorCode, "SIMGATE_DELIVERY_UNCONFIRMED");
+    assert.equal(calls, 1);
+
+    const legacy = workerDatabase();
+    const simulated = await processNotificationJob(job, { database: legacy.database, publishLifecycle: ignoreNotificationLifecycle });
+    assert.equal(simulated.outcome, "SENT_SIMULATED");
+
+    const disabled = workerDatabase();
+    Object.assign(disabled.state.notification, { providerMode: "SIMGATE", simulated: false });
+    env.smsProviderMode = "SIMULATED";
+    const blocked = await processNotificationJob(job, { database: disabled.database, provider, publishLifecycle: ignoreNotificationLifecycle });
+    assert.equal(blocked.errorCode, "SMS_PROVIDER_DISABLED");
+    assert.equal(calls, 1);
+  } finally { env.smsProviderMode = previousMode; }
+});
+
+test("changing SMS provider invalidates previews and creates a separate live notice without relabelling old rows", () => {
+  const previousMode = env.smsProviderMode;
+  const options = { notificationType: "SCHEDULE_CREATED", initiatedById: userId };
+  try {
+    env.smsProviderMode = "SIMULATED";
+    const simulation = notificationRowFromSchedule(schedule(), options);
+    const simulatedPreview = assistantReminderPreviewFromSchedules([schedule()], { messageTemplate: "Please bring your QR credential.", initiatedById: userId });
+    env.smsProviderMode = "SIMGATE";
+    const live = notificationRowFromSchedule(schedule(), options);
+    assert.equal(live.simulated, false);
+    assert.equal(live.providerMode, "SIMGATE");
+    assert.notEqual(live.deduplicationKey, simulation.deduplicationKey);
+    assert.notEqual(scheduleNotificationPreviewHash(live, "09171234567"), scheduleNotificationPreviewHash(simulation, "09171234567"));
+    assert.notEqual(assistantReminderPreviewFromSchedules([schedule()], { messageTemplate: "Please bring your QR credential.", initiatedById: userId }).previewHash, simulatedPreview.previewHash);
+    const response = notificationToResponse({ ...live, createdAt: new Date() });
+    assert.equal(response.simulationDisclosure, null);
+    assert.match(response.deliveryDisclosure, /not confirmation/);
+  } finally { env.smsProviderMode = previousMode; }
+});
+
+test("a simulated provider result cannot mark a live SMS request as gateway accepted", async () => {
+  const previousMode = env.smsProviderMode;
+  env.smsProviderMode = "SIMGATE";
+  try {
+    const { database, state } = workerDatabase();
+    Object.assign(state.notification, { providerMode: "SIMGATE", simulated: false });
+    const provider = createSimulatedSmsProvider({ failureMode: "NONE" });
+    const result = await processNotificationJob({ data: { notificationId }, attemptsMade: 0, opts: { attempts: 3 } }, {
+      database, provider, publishLifecycle: ignoreNotificationLifecycle,
+    });
+    assert.equal(result.outcome, "FAILED");
+    assert.equal(result.errorCode, "SMS_PROVIDER_RESULT_MISMATCH");
+    assert.equal(state.notification.status, "FAILED");
+    assert.equal(state.notification.sentAt, null);
+    assert.equal(state.notification.providerReference, null);
+    assert.equal(state.scheduleNotificationAt, null);
+    assert.equal(state.audits[0].action, "SMS_NOTIFICATION_FAILED");
+    assert.equal(state.audits.some((row) => row.action === "SMS_GATEWAY_ACCEPTED"), false);
+  } finally { env.smsProviderMode = previousMode; }
 });
 
 test("notification audit and realtime sanitizers remove messages and recipient data", () => {

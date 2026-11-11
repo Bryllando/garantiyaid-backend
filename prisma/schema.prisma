@@ -13,6 +13,12 @@ enum UserRole {
   BARANGAY_FACILITATOR
 }
 
+enum MobileAccountLinkStatus {
+  PENDING
+  LINKED
+  REJECTED
+}
+
 enum EnrollmentStatus {
   PENDING
   FOR_VALIDATION
@@ -222,6 +228,7 @@ model User {
   programImports                  ProgramImportJob[]
   staffImports                    StaffImportJob[]
   beneficiaryImports              BeneficiaryImportJob[]
+  reviewedMobileAccounts          MobileBeneficiaryAccount[]
   initiatedTransactions           Transaction[]                  @relation("TransactionInitiator")
   initiatedNotifications          Notification[]                 @relation("NotificationInitiator")
   assignedChatbotSessions         ChatbotSession[]               @relation("ChatbotAssignedStaff")
@@ -504,8 +511,34 @@ model Beneficiary {
   transactions            Transaction[]
   notifications           Notification[]
   chatbotSessions         ChatbotSession[]
+  mobileAccount           MobileBeneficiaryAccount?
 
   @@map("beneficiaries")
+}
+
+model MobileBeneficiaryAccount {
+  accountId       String                  @id @default(uuid()) @map("account_id") @db.Uuid
+  issuer          String                  @db.VarChar(200)
+  subject         String                  @db.VarChar(200)
+  status          MobileAccountLinkStatus @default(PENDING)
+  revision        Int                     @default(1)
+  firstName       String                  @map("first_name") @db.VarChar(100)
+  middleName      String?                 @map("middle_name") @db.VarChar(100)
+  lastName        String                  @map("last_name") @db.VarChar(100)
+  birthDate       DateTime                @map("birth_date") @db.Date
+  barangayId      String                  @map("barangay_id") @db.Uuid
+  beneficiaryId   String?                 @unique @map("beneficiary_id") @db.Uuid
+  reviewedById    String?                 @map("reviewed_by_id") @db.Uuid
+  reviewNote      String?                 @map("review_note") @db.VarChar(2000)
+  reviewedAt      DateTime?               @map("reviewed_at") @db.Timestamptz(6)
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  beneficiary     Beneficiary?            @relation(fields: [beneficiaryId], references: [beneficiaryId], onDelete: Restrict)
+  reviewedBy      User?                   @relation(fields: [reviewedById], references: [userId], onDelete: Restrict)
+
+  @@unique([issuer, subject])
+  @@index([barangayId, status, createdAt])
+  @@map("mobile_beneficiary_accounts")
 }
 
 model Enrollment {

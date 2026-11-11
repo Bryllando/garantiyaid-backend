@@ -19,7 +19,8 @@ Staff API for Barangay, DSWD and Admin workflows. Local acceptance used Node 24.
 - [Supervised pilot session guide and records](docs/supervised-pilot.md)
 - [Government procedure and role matrix](docs/government-procedure.md)
 - [Staff workflow](../garantiyaid-frontend/docs/staff-workflow.md)
+- [SimGate phone pairing, backend configuration and one-recipient SMS test](docs/simgate-setup.md)
 
 Run `npm test`, `npm run security:static` and `npm run prisma:validate`. `npm run verify:integrated` tests the real API/database/browser with disposable synthetic data. `npm run verify:pilot` adds outage and encrypted recovery checks. `npm run pilot:preflight` reports deployment configuration failures without printing secrets; development settings are expected to fail production gates.
 
-SMS and wallet settlement remain simulated. Local checks do not establish official approval, real camera/scanner accuracy or production readiness.
+SMS defaults to simulation; an explicitly configured SimGate gateway can send real texts through a dedicated Android/SIM. Wallet settlement remains simulated. Local checks do not establish official approval, real SMS delivery, camera/scanner accuracy or production readiness.

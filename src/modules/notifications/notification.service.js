@@ -69,7 +69,9 @@ export const notificationDeliverySelect = {
   message: true,
   notificationType: true,
   status: true,
+  providerMode: true,
   simulated: true,
+  lastErrorCode: true,
   processingToken: true,
   beneficiary: { select: { contactNumber: true, barangayId: true } },
 };
@@ -150,7 +152,10 @@ export function notificationToResponse(notification) {
     failedAt: philippineTimestamp(notification.failedAt),
     createdAt: philippineTimestamp(notification.createdAt),
     updatedAt: philippineTimestamp(notification.updatedAt),
-    simulationDisclosure: "Simulation only; no real SMS was sent.",
+    simulationDisclosure: notification.simulated ? "Simulation only; no real SMS was sent." : null,
+    deliveryDisclosure: notification.simulated
+      ? "Simulation only; no real SMS was sent."
+      : "SimGate acceptance is not confirmation of delivery to the recipient. Check the gateway and receiving phone.",
   };
 }
 
@@ -172,12 +177,13 @@ export function buildNotificationWhere(filters, barangayId) {
   };
 }
 
-export function notificationDeduplicationKey({ scheduleId, notificationType, message, scheduledFor }) {
+export function notificationDeduplicationKey({ scheduleId, notificationType, message, scheduledFor, providerMode = env.smsProviderMode }) {
   return createHash("sha256").update(JSON.stringify({
     scheduleId,
     notificationType,
     message,
     scheduledFor: scheduledFor?.toISOString() ?? null,
+    ...(providerMode !== "SIMULATED" ? { providerMode } : {}),
   })).digest("hex");
 }
 
@@ -187,6 +193,7 @@ export function scheduleNotificationPreviewHash(row, contactNumber) {
     notificationType: row.notificationType,
     message: row.message,
     recipient: normalizePhilippineMobileNumber(contactNumber),
+    providerMode: row.providerMode,
   })).digest("hex");
 }
 
@@ -266,8 +273,8 @@ export function notificationRowFromSchedule(
     message,
     notificationType,
     status: "PENDING",
-    providerMode: "SIMULATED",
-    simulated: true,
+    providerMode: env.smsProviderMode,
+    simulated: env.smsProviderMode === "SIMULATED",
     scheduledFor,
     deduplicationKey: notificationDeduplicationKey({
       scheduleId: schedule.scheduleId,
@@ -324,6 +331,7 @@ export function assistantReminderPreviewFromSchedules(
       slotEnd: deliverable[index].slot.slotEnd,
       sessionLabel: deliverable[index].slot.sessionLabel,
       message: row.message,
+      providerMode: row.providerMode,
     })))).digest("hex"),
     recipientCount: deliverable.length,
     excludedCount: invalidContactCount + completedClaimCount,
@@ -406,5 +414,8 @@ export async function acquirePendingNotification(notificationId, database = pris
 export function assertNotificationRetryable(notification) {
   if (notification.status !== "FAILED") {
     throw new AppError(409, "NOTIFICATION_NOT_RETRYABLE", "Only a failed notification may be manually retried.");
+  }
+  if (!notification.simulated && ["SIMGATE_SEND_STARTED", "SIMGATE_DELIVERY_UNCONFIRMED"].includes(notification.lastErrorCode)) {
+    throw new AppError(409, "SMS_DELIVERY_UNCONFIRMED", "SimGate may already have accepted this SMS. Check its dashboard and the receiving phone before sending a new notice; retry is blocked to prevent duplicates.");
   }
 }

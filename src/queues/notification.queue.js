@@ -2,6 +2,7 @@ import { Queue } from "bullmq";
 import { env } from "../config/env.js";
 import { createRedisConnection, closeRedisConnection } from "../lib/redis.js";
 
+// Keep the existing job name so already-queued notices remain consumable; each row stores its provider.
 export const NOTIFICATION_JOB_NAME = "send-simulated-sms";
 export const STAFF_EMAIL_JOB_NAME = "send-staff-security-email";
 
@@ -87,7 +88,10 @@ export async function enqueueStaffEmailJobs(
 export async function notificationQueueHealth({ queue = getNotificationQueue() } = {}) {
   try {
     await queue.waitUntilReady();
-    const counts = await queue.getJobCounts("waiting", "active", "delayed", "failed");
+    const [counts, workers] = await Promise.all([
+      queue.getJobCounts("waiting", "active", "delayed", "failed"),
+      queue.getWorkers(),
+    ]);
     return {
       status: "ready",
       queueName: env.notificationQueueName,
@@ -95,7 +99,9 @@ export async function notificationQueueHealth({ queue = getNotificationQueue() }
       jobTypes: [NOTIFICATION_JOB_NAME, STAFF_EMAIL_JOB_NAME],
       emailProviderMode: env.emailProviderMode,
       counts,
-      simulatedSmsOnly: true,
+      workerCount: workers.length,
+      smsProviderMode: env.smsProviderMode,
+      simulatedSmsOnly: env.smsProviderMode === "SIMULATED",
     };
   } catch {
     return {
@@ -104,7 +110,8 @@ export async function notificationQueueHealth({ queue = getNotificationQueue() }
       jobType: NOTIFICATION_JOB_NAME,
       jobTypes: [NOTIFICATION_JOB_NAME, STAFF_EMAIL_JOB_NAME],
       emailProviderMode: env.emailProviderMode,
-      simulatedSmsOnly: true,
+      smsProviderMode: env.smsProviderMode,
+      simulatedSmsOnly: env.smsProviderMode === "SIMULATED",
     };
   }
 }

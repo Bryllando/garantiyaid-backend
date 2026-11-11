@@ -38,7 +38,7 @@ Set these in the backend service's protected variables, never in frontend variab
 | `REDIS_URL` | Protected Redis connection; verified encrypted transport where available/required by the approved design |
 | `BIOMETRIC_PROCESSOR_MODE` | `REMOTE` in production; authenticated HTTPS endpoint/key and accepted calibration are required |
 | `EMAIL_PROVIDER_MODE` | Approved configured provider, or `DISABLED` with an agreed account-recovery procedure; test delivery before staff onboarding |
-| `SMS_PROVIDER_MODE` | `SIMULATED`; no real SMS delivery is implemented |
+| `SMS_PROVIDER_MODE` | `SIMULATED` by default; optional `SIMGATE` with backend-only credentials and a dedicated Android/SIM. See [SimGate setup](simgate-setup.md). |
 
 The worker needs production-valid configuration but does not read document files; provide its absolute storage setting without mounting or copying beneficiary documents there. Keep `MIGRATION_DATABASE_URL` only in the controlled migration job/operator context. That job also receives the runtime URL to verify it is targeting the same endpoint/database with a different role. Do not retain migration or backup keys on the public API service. Railway pre-deploy commands inherit their service's variables, so do not use them as a substitute for separating credential access.
 

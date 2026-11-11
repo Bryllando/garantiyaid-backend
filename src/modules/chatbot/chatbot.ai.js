@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import { env } from "../../config/env.js";
+import { staffWorkflowGuidance } from "./staff-workflow-guidance.js";
+import { processExplanation } from "./chatbot.process-explanations.js";
 
 export const OPENROUTER_CHATBOT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 export const OPENROUTER_FALLBACK_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
@@ -19,22 +21,22 @@ const SAFE_EXTERNAL_INTENTS = new Set([
 const STAFF_GUIDANCE = Object.freeze({
   en: Object.freeze({
     GREETING: "Hello! I am ready to answer general GarantiyAid operations questions and guide you to reviewed staff workflows.",
-    SCHEDULE: "Review schedules within your authorized workspace. Only System Administrators may create official distribution events.",
-    DELIVERY: "Open SMS delivery to review queued, sent, and failed notification records within your authorized scope.",
+    SCHEDULE: "Only System Administrators create distribution drafts and manage Sessions → Allocate → Schedule → Open in Distribution events. Readiness checks capacity, allocations and appointments; opening locks setup. Approval is not scheduling. A cancelled appointment must be reviewed and reactivated through Queue and schedules by authorized staff; generating schedules does not reactivate it or create a duplicate. DSWD review schedules in Live monitoring; Barangay staff use Queue & schedules within their barangay. This chat has not looked up or changed any appointment.",
+    DELIVERY: "Open SMS delivery to inspect the exact notification and its error within your authorized scope. Queued means awaiting processing. Gateway accepted does not confirm arrival on a recipient’s phone. A simulated send is not a real SMS. Check the validated contact, provider error and gateway phone before an authorized retry; do not repeatedly resend or claim delivery from the label. This chat has not checked a delivery record or sent a message.",
     BENEFICIARY: "Use authorized beneficiary records to review Barangay, Sitio or Purok, and validated contact information for controlled recipient selection.",
     HELP: "I can guide you to schedules, delivery records, beneficiary records, or the reviewed reminder and distribution-draft workflows.",
   }),
   fil: Object.freeze({
     GREETING: "Kumusta! Handa akong sumagot sa pangkalahatang tanong tungkol sa GarantiyAid operations at gabayan ka sa reviewed staff workflows.",
-    SCHEDULE: "Suriin ang schedules sa iyong awtorisadong workspace. System Administrator lamang ang makakagawa ng opisyal na distribution event.",
-    DELIVERY: "Buksan ang SMS delivery para makita ang queued, sent, at failed notification records sa iyong awtorisadong scope.",
+    SCHEDULE: "System Administrator lamang ang gumagawa ng distribution draft at namamahala ng Sessions → Allocate → Schedule → Open sa Distribution events. Sinusuri ang capacity, allocations at appointments bago mag-open; locked na ang setup pagkatapos. Magkaiba ang approved at scheduled. I-review at i-reactivate ang cancelled appointment sa Queue and schedules gamit ang awtorisadong access; hindi ito awtomatikong naaayos ng schedule generation. DSWD: Live monitoring. Barangay: Queue & schedules sa sariling barangay. Walang appointment na tiningnan o binago ng chat na ito.",
+    DELIVERY: "Buksan ang SMS delivery at suriin ang tamang notification at error sa iyong scope. Ang queued ay naghihintay pa. Hindi patunay ng pagdating sa phone ang gateway accepted. Hindi totoong SMS ang simulated send. Suriin ang validated contact, provider error at gateway phone bago ang awtorisadong retry. Huwag paulit-ulit magpadala. Walang delivery record na tiningnan o mensaheng ipinadala ang chat na ito.",
     BENEFICIARY: "Gamitin ang awtorisadong beneficiary records para suriin ang Barangay, Sitio o Purok, at validated contact information para sa kontroladong recipient selection.",
     HELP: "Maaari kitang gabayan sa schedules, delivery records, beneficiary records, at reviewed reminder o distribution-draft workflows.",
   }),
   ceb: Object.freeze({
     GREETING: "Oo, motubag ko. Maayong adlaw! Pangutan-a ko bahin sa GarantiyAid operations ug reviewed staff workflows.",
-    SCHEDULE: "Ribyuha ang schedules sulod sa imong awtorisadong workspace. System Administrator ra ang makahimo og opisyal nga distribution event.",
-    DELIVERY: "Ablihi ang SMS delivery aron makita ang queued, sent, ug failed notification records sulod sa imong awtorisadong scope.",
+    SCHEDULE: "System Administrator ra ang maghimo og distribution draft ug modumala sa Sessions → Allocate → Schedule → Open sa Distribution events. Susiha ang capacity, allocations ug appointments una mo-open; locked na ang setup pagkahuman. Lahi ang approved ug scheduled. Ribyuha ug i-reactivate ang cancelled appointment sa Queue and schedules pinaagi sa awtorisadong staff; dili kini ayohon sa schedule generation o himoon og duplicate. DSWD: Live monitoring. Barangay: Queue & schedules sa kaugalingong barangay. Walay appointment nga gitan-aw o giusab niining chat.",
+    DELIVERY: "Ablihi ang SMS delivery ug susiha ang tukmang notification ug error sulod sa imong scope. Ang queued naghulat pa. Dili pamatuod nga naabot sa phone ang gateway accepted. Dili tinuod nga SMS ang simulated send. Susiha ang validated contact, provider error ug gateway phone una ang awtorisadong retry. Ayaw balik-balika og send. Walay delivery record nga gitan-aw o mensahe nga gipadala niining chat.",
     BENEFICIARY: "Gamita ang awtorisadong beneficiary records sa pagribyu sa Barangay, Sitio o Purok, ug validated contact information para sa kontroladong recipient selection.",
     HELP: "Makatabang ko sa schedules, delivery records, beneficiary records, ug reviewed reminder o distribution-draft workflows.",
   }),
@@ -124,6 +126,11 @@ export async function generateStaffAssistantAnswer({
   history = [],
   staffRole,
 }, options = {}) {
+  const workflowAnswer = processExplanation({ intent, language, messageText, history })?.messageText ?? staffWorkflowGuidance(intent, language);
+  if (workflowAnswer) {
+    options.signal?.throwIfAborted();
+    return { messageText: workflowAnswer, externalAiUsed: false, externalAiModel: null, inputProcessedExternally: false };
+  }
   const selectedLanguage = Object.hasOwn(STAFF_GUIDANCE, language) ? language : "en";
   const safeIntent = Object.hasOwn(STAFF_GUIDANCE[selectedLanguage], intent) ? intent : "HELP";
   const approvedAnswer = STAFF_GUIDANCE[selectedLanguage][safeIntent];

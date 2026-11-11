@@ -14,6 +14,7 @@ const run = cleanupRun || randomUUID().slice(0, 8);
 process.env.NODE_ENV = "test";
 process.env.NOTIFICATION_QUEUE_NAME = `assistant-verify-${run}`;
 process.env.SMS_SIMULATED_FAILURE_MODE = "NONE";
+process.env.SMS_PROVIDER_MODE = "SIMULATED";
 const { default: prisma } = await import("../src/lib/prisma.js");
 const { default: app } = await import("../src/app.js");
 const { issueAccessToken } = await import("../src/modules/auth/auth.service.js");

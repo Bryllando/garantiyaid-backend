@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { STAFF_WORKFLOW_GUIDANCE } from "./staff-workflow-guidance.js";
 import { env } from "../../config/env.js";
 import {
   CHATBOT_LANGUAGES,
@@ -94,7 +95,7 @@ export const staffAssistantFeedbackSchema = z.object({
 
 export const staffAssistantMessageSchema = z.object({
   language: language.default("en"),
-  intent: z.enum(["GREETING", "SCHEDULE", "DELIVERY", "BENEFICIARY", "HELP"]),
+  intent: z.enum(["GREETING", "SCHEDULE", "DELIVERY", "BENEFICIARY", "HELP", ...Object.keys(STAFF_WORKFLOW_GUIDANCE)]),
   messageText: messageText.refine((value) => value.length <= 300, "messageText must not exceed 300 characters."),
   history: z.array(z.object({
     role: z.enum(["user", "assistant"]),

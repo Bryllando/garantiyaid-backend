@@ -354,7 +354,7 @@ export const generateDistributionSchedules = asyncHandler(async (req, res) => {
         throw new AppError(
           409,
           "NO_SCHEDULABLE_ALLOCATIONS",
-          "There are no unscheduled active allocations for this distribution event.",
+          "No new allocations need a schedule. To return a cancelled appointment to the queue, use Reactivate in Queue & schedules.",
         );
       }
 
@@ -535,7 +535,7 @@ export const listDistributionSchedules = asyncHandler(async (req, res) => {
     ...(slotId ? { slotId } : {}),
     ...buildScheduleSearchWhere(search),
   };
-  const [schedules, total, statusGroups] = await Promise.all([
+  const [schedules, total, statusGroups, schedulableAllocationCount] = await Promise.all([
     prisma.schedule.findMany({
       where: matchingWhere,
       select: {
@@ -556,6 +556,13 @@ export const listDistributionSchedules = asyncHandler(async (req, res) => {
       where: { distributionId },
       _count: { _all: true },
     }),
+    prisma.distributionAllocation.count({
+      where: {
+        distributionId,
+        allocationStatus: "ALLOCATED",
+        beneficiary: { schedules: { none: { distributionId } } },
+      },
+    }),
   ]);
   const countsByStatus = Object.fromEntries(
     statusGroups.map((group) => [group.status, group._count._all]),
@@ -565,7 +572,7 @@ export const listDistributionSchedules = asyncHandler(async (req, res) => {
     success: true,
     data: {
       schedules: schedules.map(distributionScheduleToResponse),
-      summary: { matchingScheduleCount: total, countsByStatus },
+      summary: { matchingScheduleCount: total, countsByStatus, schedulableAllocationCount },
       pagination: {
         page,
         pageSize,

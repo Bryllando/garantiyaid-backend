@@ -344,7 +344,7 @@ export async function publishNotificationLifecycle(eventName, notification, data
       barangayId,
       notificationType: "SMS_DELIVERY_FAILED",
       title: "SMS delivery needs attention",
-      message: "A simulated beneficiary SMS could not be processed. Review the delivery console for details.",
+      message: "A beneficiary SMS could not be processed. Review the delivery console for details.",
       targetPaths: {
         SYSTEM_ADMIN: "/notifications",
         DSWD_STAFF: "/notifications",

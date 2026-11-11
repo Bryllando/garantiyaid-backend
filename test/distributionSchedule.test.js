@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import prisma from "../src/lib/prisma.js";
+import { listDistributionSchedules } from "../src/modules/distributions/distributionSchedule.controller.js";
 import {
   createDistributionScheduleSchema,
   distributionScheduleListQuerySchema,
@@ -34,6 +36,35 @@ const slotId = "44444444-4444-4444-8444-444444444444";
 const targetSlotId = "55555555-5555-4555-8555-555555555555";
 const scheduleId = "66666666-6666-4666-8666-666666666666";
 const beneficiaryId = "77777777-7777-4777-8777-777777777777";
+
+test("queue summary distinguishes cancelled appointments from allocations needing a first schedule", async (t) => {
+  function stub(target, name, implementation) {
+    const original = target[name];
+    const replacement = t.mock.fn(implementation);
+    target[name] = replacement;
+    t.after(() => { target[name] = original; });
+    return replacement;
+  }
+  stub(prisma.distribution, "findFirst", async () => ({ distributionId, status: "DRAFT" }));
+  stub(prisma.schedule, "findMany", async () => []);
+  stub(prisma.schedule, "count", async () => 1);
+  stub(prisma.schedule, "groupBy", async () => [
+    { status: "SCHEDULED", _count: { _all: 1 } }, { status: "CANCELLED", _count: { _all: 1 } },
+  ]);
+  const allocationCount = stub(prisma.distributionAllocation, "count", async ({ where }) => {
+    assert.deepEqual(where, {
+      distributionId, allocationStatus: "ALLOCATED", beneficiary: { schedules: { none: { distributionId } } },
+    });
+    return 0;
+  });
+  const response = await new Promise((resolve, reject) => listDistributionSchedules({
+    staffUser: { role: "SYSTEM_ADMIN" }, validatedParams: { distributionId },
+    validatedQuery: { page: 1, pageSize: 20, status: "CANCELLED", search: "Alpha" },
+  }, { status() { return this; }, json: resolve }, reject));
+  assert.equal(response.data.summary.schedulableAllocationCount, 0);
+  assert.equal(response.data.summary.countsByStatus.CANCELLED, 1);
+  assert.equal(allocationCount.mock.callCount(), 1);
+});
 
 test("schedule schemas validate manual assignment, generation, filters, and rescheduling", () => {
   assert.deepEqual(createDistributionScheduleSchema.parse({ allocationId, slotId }), {
