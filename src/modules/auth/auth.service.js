@@ -5,6 +5,7 @@ import prisma from "../../lib/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../utils/AppError.js";
 import { STAFF_ROLES, USERNAME_LOGIN_ROLES } from "./auth.constants.js";
+import { assertDevAdminAccount, assertDevAdminRequest, isDeveloperAdmin } from "./devAdmin.policy.js";
 import { decryptTotpSecret, findValidTotpCounter } from "./totp.service.js";
 import {
   createStaffSecurityNotification,
@@ -406,6 +407,10 @@ export async function authenticateStaff(
     take: 2,
   });
   const user = matches.length === 1 ? matches[0] : null;
+  if (isDeveloperAdmin(user)) {
+    assertDevAdminRequest(context.request, env, { requireOrigin: true });
+    assertDevAdminAccount(user);
+  }
   const eligibleUser = staffLoginMethodAllowed(user, identifier) ? user : null;
   const passwordMatches = await bcrypt.compare(
     password,
@@ -448,6 +453,12 @@ export async function authenticateStaff(
 
   if (!eligibleUser.isActive || !STAFF_ROLES.includes(eligibleUser.role)) {
     throw new AppError(403, "ACCOUNT_INACTIVE", "This staff account is not active.");
+  }
+
+  if (isDeveloperAdmin(eligibleUser)) {
+    const safeUser = await prisma.user.findUnique({ where: { userId: eligibleUser.userId }, select: staffUserSelect });
+    assertDevAdminAccount(safeUser);
+    return { user: safeUser, requiresPasswordChange: false, requiresTotp: false, requiresTotpEnrollment: false, authenticationMethod: "LOCAL_DEVELOPER_PASSWORD" };
   }
 
   if (eligibleUser.mustChangePassword) {

@@ -105,6 +105,7 @@ import {
   markPhysicalClaimReleasedSchema,
 } from "./distributionClaim.schemas.js";
 import { markPhysicalClaimReleased } from "./distributionClaimRelease.controller.js";
+import { manualVerificationSchema, verifyManualClaim } from "./distributionManualVerification.controller.js";
 import {
   creditVerifiedClaim,
   listCreditableClaims,
@@ -377,6 +378,14 @@ distributionRoutes.post(
   uploadBiometricCapture,
   validateBody(verifyBiometricClaimSchema),
   verifyBiometricClaim,
+);
+
+distributionRoutes.post(
+  "/:distributionId/claims/verify-manual",
+  authorizeRoles(...BIOMETRIC_VERIFY_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(manualVerificationSchema),
+  verifyManualClaim,
 );
 distributionRoutes.post(
   "/:distributionId/claims/:claimId/signature",

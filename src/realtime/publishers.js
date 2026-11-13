@@ -234,7 +234,7 @@ export async function publishClaimSignatureResult(distributionId, result) {
     }),
     publishRealtimeEvent("dashboard.metrics.updated", {
       distributionId,
-      data: { reason: "CLAIM_SIGNATURE_COMPLETED" },
+      data: { reason: claim.verificationMethod === "MANUAL" && !claim.signatureVerified ? "MANUAL_IDENTITY_REVIEW_RECORDED" : "CLAIM_SIGNATURE_COMPLETED" },
     }),
   ]);
 }

@@ -2,6 +2,8 @@ import prisma from "../lib/prisma.js";
 import { verifyAccessToken, staffUserSelect } from "../modules/auth/auth.service.js";
 import { AppError } from "../utils/AppError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { env } from "../config/env.js";
+import { assertDevAdminAccount, assertDevAdminRequest, isDeveloperAdmin } from "../modules/auth/devAdmin.policy.js";
 
 export const authenticateStaff = asyncHandler(async (req, res, next) => {
   const authorization = req.get("authorization");
@@ -34,6 +36,11 @@ export const authenticateStaff = asyncHandler(async (req, res, next) => {
 
   if (!session) {
     throw new AppError(401, "INVALID_SESSION", "This staff session is invalid or expired.");
+  }
+
+  if (isDeveloperAdmin(user)) {
+    assertDevAdminRequest(req, env);
+    assertDevAdminAccount(user);
   }
 
   req.auth = {

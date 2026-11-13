@@ -7,7 +7,7 @@
   },
   "main": "index.js",
   "scripts": {
-    "test": "node --test",
+    "test": "node --import ./scripts/test-environment.js --test",
     "dev": "node --watch --watch-preserve-output src/server.js",
     "start": "node src/server.js",
     "worker:notifications": "node src/workers/notification.worker.js",
@@ -38,6 +38,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "prisma:seed": "node prisma/seed.js",
+    "dev:admin:setup": "node scripts/setup-dev-admin.js",
     "security:static": "node scripts/security-static-check.js",
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "security:check": "npm run security:static && npm run test && npm run prisma:validate && npm run security:audit"

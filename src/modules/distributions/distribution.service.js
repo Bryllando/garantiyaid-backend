@@ -19,6 +19,7 @@ export const distributionSelect = {
   packageUnit: true,
   packageQuantity: true,
   verificationRequirement: true,
+  manualVerificationBasis: true,
   createdAt: true,
   updatedAt: true,
   program: {
@@ -76,6 +77,10 @@ export function distributionToResponse(distribution) {
 }
 
 export function assertDistributionConfigurationValid(distribution, now = new Date()) {
+  if ((distribution.verificationRequirement === "MANUAL" && !distribution.manualVerificationBasis)
+      || (distribution.manualVerificationBasis && ["QR_AND_BIOMETRIC", "BIOMETRIC_AND_SIGNATURE"].includes(distribution.verificationRequirement))) {
+    throw new AppError(400, "INVALID_MANUAL_VERIFICATION_CONFIGURATION", "Manual verification needs an office-approved basis and cannot replace an event's required combined checks.");
+  }
   const packageFields = [distribution.packageName, distribution.packageUnit, distribution.packageQuantity];
   if (packageFields.some((value) => value != null)
       && (distribution.deliveryMode !== "PHYSICAL_GOODS" || packageFields.some((value) => value == null))) {

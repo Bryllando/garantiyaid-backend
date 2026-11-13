@@ -187,6 +187,7 @@ export const login = asyncHandler(async (req, res) => {
   const result = await authenticateStaffCredentials(req.validatedBody, {
     ipAddress,
     requestId: req.requestId,
+    request: req,
   });
 
   if (result.requiresPasswordChange) {

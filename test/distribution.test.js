@@ -365,6 +365,7 @@ test("Phase 6 route surface adds simulated credit, transaction monitoring, and r
       { path: "/:distributionId/claims/preview-qr", methods: ["post"] },
       { path: "/:distributionId/claims/verify-qr", methods: ["post"] },
       { path: "/:distributionId/claims/verify-biometric", methods: ["post"] },
+      { path: "/:distributionId/claims/verify-manual", methods: ["post"] },
       { path: "/:distributionId/claims/:claimId/signature", methods: ["post"] },
       { path: "/:distributionId/claims/:claimId/release", methods: ["post"] },
       { path: "/:distributionId/claims/:claimId/receipt", methods: ["post"] },

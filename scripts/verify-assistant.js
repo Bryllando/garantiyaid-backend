@@ -12,6 +12,7 @@ const cleanupRun = process.argv.find((argument) => argument.startsWith("--cleanu
 if (cleanupRun) assert.match(cleanupRun, /^[a-f0-9]{8}$/, "Cleanup requires one exact verification run ID.");
 const run = cleanupRun || randomUUID().slice(0, 8);
 process.env.NODE_ENV = "test";
+process.env.DEV_QUICK_LOGIN_ENABLED = "false";
 process.env.NOTIFICATION_QUEUE_NAME = `assistant-verify-${run}`;
 process.env.SMS_SIMULATED_FAILURE_MODE = "NONE";
 process.env.SMS_PROVIDER_MODE = "SIMULATED";

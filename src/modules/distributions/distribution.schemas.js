@@ -17,6 +17,7 @@ export const VERIFICATION_REQUIREMENTS = Object.freeze([
   "QR_AND_BIOMETRIC",
   "QR_OR_BIOMETRIC",
   "BIOMETRIC_AND_SIGNATURE",
+  "MANUAL",
 ]);
 
 export const ASSISTANCE_DELIVERY_MODES = Object.freeze([
@@ -62,6 +63,7 @@ const distributionFields = {
   packageName: z.string().trim().min(1).max(150).nullable().optional(),
   packageUnit: z.string().trim().min(1).max(30).nullable().optional(),
   packageQuantity: z.number().int().min(1).max(10000).nullable().optional(),
+  manualVerificationBasis: z.string().trim().min(20).max(1000).nullable().optional(),
   deliveryMode: z.preprocess(
     (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
     z.enum(ASSISTANCE_DELIVERY_MODES).default("SIMULATED_WALLET"),

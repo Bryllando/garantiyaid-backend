@@ -1,6 +1,7 @@
 import "dotenv/config";
 import path from "node:path";
 import { z } from "zod";
+import { devAdminConfigurationError } from "../modules/auth/devAdmin.policy.js";
 
 const duration = z.string().regex(/^\d+(?:s|m|h|d)$/, "Use a duration such as 15m or 1h.");
 const optionalOpenRouterKey = z.preprocess(
@@ -21,6 +22,9 @@ export function durationInMilliseconds(value) {
 
 const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  DEV_QUICK_LOGIN_ENABLED: z.enum(["true", "false"]).default("false"),
+  DEV_ADMIN_DATABASE: optionalTrimmedString,
+  DEV_ADMIN_PASSWORD: optionalTrimmedString,
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   CORS_ORIGIN: z.string().default("http://localhost:5173,http://127.0.0.1:5173"),
   DATABASE_URL: z.string().min(1).optional(),
@@ -92,6 +96,12 @@ const environmentSchema = z.object({
   DISTRIBUTION_REMINDER_LEAD_MINUTES: z.coerce.number().int().min(1).max(10_080).default(1_440),
 }).superRefine((value, context) => {
   const origins = value.CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
+  const devError = devAdminConfigurationError({
+    devQuickLoginEnabled: value.DEV_QUICK_LOGIN_ENABLED === "true", nodeEnv: value.NODE_ENV,
+    databaseUrl: value.DATABASE_URL, devAdminDatabase: value.DEV_ADMIN_DATABASE,
+    corsOrigins: origins, trustProxyHops: value.TRUST_PROXY_HOPS,
+  });
+  if (devError) context.addIssue({ code: "custom", path: ["DEV_QUICK_LOGIN_ENABLED"], message: devError });
 
   if (origins.length === 0 || origins.includes("*")) {
     context.addIssue({
@@ -228,6 +238,9 @@ if (!parsedEnvironment.success) {
 
 export const env = {
   nodeEnv: parsedEnvironment.data.NODE_ENV,
+  devQuickLoginEnabled: parsedEnvironment.data.DEV_QUICK_LOGIN_ENABLED === "true",
+  devAdminDatabase: parsedEnvironment.data.DEV_ADMIN_DATABASE,
+  devAdminPassword: parsedEnvironment.data.DEV_ADMIN_PASSWORD,
   port: parsedEnvironment.data.PORT,
   corsOrigins: parsedEnvironment.data.CORS_ORIGIN.split(",")
     .map((origin) => origin.trim())

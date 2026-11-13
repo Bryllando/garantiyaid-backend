@@ -21,6 +21,7 @@ export const claimReceiptSourceSelect = {
   biometricVerified: true,
   qrVerified: true,
   signatureVerified: true,
+  manualVerification: true,
   releaseMethod: true,
   releasedAt: true,
   releaseEvidenceType: true,
@@ -249,6 +250,7 @@ export function buildClaimReceiptSnapshot(claim) {
         : null,
     },
     verificationEvidence: {
+      manual: claim.manualVerification ?? null,
       verifiedBy: claim.verifiedBy,
       biometric: biometric
         ? {

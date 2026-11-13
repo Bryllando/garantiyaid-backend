@@ -100,7 +100,7 @@ function jpegCapture(seed) {
 }
 
 test("Phase 7 schemas control verification policies, multipart fields, filters, and result values", () => {
-  assert.deepEqual(VERIFICATION_REQUIREMENTS, ["QR", "BIOMETRIC", "QR_AND_BIOMETRIC", "QR_OR_BIOMETRIC", "BIOMETRIC_AND_SIGNATURE"]);
+  assert.deepEqual(VERIFICATION_REQUIREMENTS, ["QR", "BIOMETRIC", "QR_AND_BIOMETRIC", "QR_OR_BIOMETRIC", "BIOMETRIC_AND_SIGNATURE", "MANUAL"]);
   const distribution = createDistributionSchema.parse({
     programId: beneficiaryId,
     title: "Biometric distribution",

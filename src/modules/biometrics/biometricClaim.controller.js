@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import prisma from "../../lib/prisma.js";
+import { manualVerificationAllowed } from "../distributions/manualVerification.service.js";
 import { env } from "../../config/env.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
@@ -229,12 +230,17 @@ function assertSignatureClaimReady(claim, distributionId) {
   if (claim.signatureVerified || claim.signature) {
     throw new AppError(409, "SIGNATURE_ALREADY_RECORDED", "A protected signature is already recorded for this claim.");
   }
+  if (claim.isDuplicateFlag || claim.disputes?.some((item) => ["OPEN", "UNDER_REVIEW", "REFERRED"].includes(item.status))) {
+    throw new AppError(409, "CLAIM_REVIEW_REQUIRED", "Resolve the claim hold before completing acknowledgment.");
+  }
   if (
     claim.claimStatus !== "PENDING"
-    || claim.verificationMethod !== "BIOMETRIC_AND_SIGNATURE"
-    || !claim.biometricVerified
+    || (claim.verificationMethod === "MANUAL"
+      ? !(claim.manualVerification?.confirmed && claim.manualVerification?.verifiedById && claim.manualVerification?.verifiedAt
+        && claim.manualVerification?.basis && claim.manualVerification?.evidenceReference && claim.manualVerification?.notes)
+      : claim.verificationMethod !== "BIOMETRIC_AND_SIGNATURE" || !claim.biometricVerified)
   ) {
-    throw new AppError(409, "CLAIM_NOT_READY_FOR_SIGNATURE", "Complete a successful face verification before collecting the beneficiary signature.");
+    throw new AppError(409, "CLAIM_NOT_READY_FOR_SIGNATURE", "Complete the event's required face check or authorized manual identity review before collecting acknowledgment.");
   }
 }
 
@@ -272,9 +278,9 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
 
   const distribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
   assertDistributionOpenForClaims(distribution);
-  if (distribution.verificationRequirement === "QR") {
+  if (["QR", "MANUAL"].includes(distribution.verificationRequirement)) {
     req.file.buffer.fill(0);
-    throw new AppError(409, "BIOMETRIC_NOT_REQUIRED", "This distribution event is configured for QR verification only.");
+    throw new AppError(409, "BIOMETRIC_NOT_REQUIRED", "This distribution event does not permit biometric verification.");
   }
   const [schedule, allocation, profile] = await Promise.all([
     prisma.schedule.findUnique({
@@ -370,8 +376,8 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
     }
     const currentDistribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser, tx);
     assertDistributionOpenForClaims(currentDistribution);
-    if (currentDistribution.verificationRequirement === "QR") {
-      throw new AppError(409, "BIOMETRIC_NOT_REQUIRED", "This distribution event is configured for QR verification only.");
+    if (["QR", "MANUAL"].includes(currentDistribution.verificationRequirement)) {
+      throw new AppError(409, "BIOMETRIC_NOT_REQUIRED", "This distribution event does not permit biometric verification.");
     }
     const currentProfile = await tx.biometricData.findUnique({
       where: { beneficiaryId },
@@ -538,7 +544,7 @@ export const submitClaimSignature = asyncHandler(async (req, res) => {
 
   const distribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
   assertDistributionOpenForClaims(distribution);
-  if (distribution.verificationRequirement !== "BIOMETRIC_AND_SIGNATURE") {
+  if (distribution.verificationRequirement !== "BIOMETRIC_AND_SIGNATURE" && !manualVerificationAllowed(distribution)) {
     image.fill(0);
     throw new AppError(409, "SIGNATURE_NOT_REQUIRED", "This distribution event is not configured for Face + Signature verification.");
   }
@@ -552,11 +558,19 @@ export const submitClaimSignature = asyncHandler(async (req, res) => {
       verificationMethod: true,
       biometricVerified: true,
       signatureVerified: true,
+      manualVerification: true,
+      isDuplicateFlag: true,
+      disputes: { select: { status: true } },
       beneficiary: { select: { firstName: true, middleName: true, lastName: true } },
       signature: { select: { signatureId: true } },
     },
   });
   assertSignatureClaimReady(pendingClaim, distributionId);
+  if (pendingClaim.verificationMethod === "MANUAL"
+      ? !manualVerificationAllowed(distribution) || pendingClaim.manualVerification.basis !== distribution.manualVerificationBasis
+      : distribution.verificationRequirement !== "BIOMETRIC_AND_SIGNATURE") {
+    throw new AppError(409, "SIGNATURE_REQUIREMENT_CHANGED", "The saved identity review must match the event's permitted acknowledgment workflow.");
+  }
   assertTypedSignatureName(pendingClaim, signatureMethod, typedName);
   const encryptedImage = encryptSignatureImage(image, claimId, pendingClaim.beneficiaryId, distributionId);
   image.fill(0);
@@ -571,7 +585,7 @@ export const submitClaimSignature = asyncHandler(async (req, res) => {
     }
     const currentDistribution = await getDistributionClaimParentOrThrow(distributionId, req.staffUser, tx);
     assertDistributionOpenForClaims(currentDistribution);
-    if (currentDistribution.verificationRequirement !== "BIOMETRIC_AND_SIGNATURE") {
+    if (currentDistribution.verificationRequirement !== "BIOMETRIC_AND_SIGNATURE" && !manualVerificationAllowed(currentDistribution)) {
       throw new AppError(409, "SIGNATURE_NOT_REQUIRED", "This distribution event is not configured for Face + Signature verification.");
     }
     const currentClaim = await tx.claim.findUnique({
@@ -584,11 +598,19 @@ export const submitClaimSignature = asyncHandler(async (req, res) => {
         verificationMethod: true,
         biometricVerified: true,
         signatureVerified: true,
+        manualVerification: true,
+        isDuplicateFlag: true,
+        disputes: { select: { status: true } },
         beneficiary: { select: { firstName: true, middleName: true, lastName: true } },
         signature: { select: { signatureId: true } },
       },
     });
     assertSignatureClaimReady(currentClaim, distributionId);
+    if (currentClaim.verificationMethod === "MANUAL"
+        ? !manualVerificationAllowed(currentDistribution) || currentClaim.manualVerification.basis !== currentDistribution.manualVerificationBasis
+        : currentDistribution.verificationRequirement !== "BIOMETRIC_AND_SIGNATURE") {
+      throw new AppError(409, "SIGNATURE_REQUIREMENT_CHANGED", "The saved identity review must match the event's permitted acknowledgment workflow.");
+    }
     assertTypedSignatureName(currentClaim, signatureMethod, typedName);
     const signature = await tx.claimSignature.create({
       data: {
@@ -618,7 +640,7 @@ export const submitClaimSignature = asyncHandler(async (req, res) => {
     await tx.auditLog.create({
       data: {
         userId: req.auth.userId,
-        action: "CLAIM_VERIFIED_BY_BIOMETRIC_AND_SIGNATURE",
+        action: currentClaim.verificationMethod === "MANUAL" ? "CLAIM_VERIFIED_BY_MANUAL_REVIEW_AND_ACKNOWLEDGMENT" : "CLAIM_VERIFIED_BY_BIOMETRIC_AND_SIGNATURE",
         entityAffected: "CLAIM",
         recordId: claimId,
         ipAddress: clientIpAddress(req),

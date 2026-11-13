@@ -28,7 +28,7 @@ server.on("error", (error) => {
   shutdown("Server error", 1);
 });
 
-server.listen(env.port, () => {
+server.listen({ port: env.port, ...(env.devQuickLoginEnabled ? { host: "127.0.0.1" } : {}) }, () => {
   // A second instance must not process jobs before it can own the API port.
   void startNotificationRealtimeSubscriber();
   stopWorkers.push(startProgramImportWorker(), startStaffImportWorker(), startBeneficiaryImportWorker(), startAssistantHistoryCleanup());

@@ -41,7 +41,7 @@ async function command(executable, args, cwd = workspace) {
   assert.equal(code, 0, `${executable} failed.`);
 }
 Object.assign(process.env, {
-  DATABASE_URL: connection.toString(), NODE_ENV: 'test', ENFORCE_HTTPS: 'false',
+  DATABASE_URL: connection.toString(), NODE_ENV: 'test', ENFORCE_HTTPS: 'false', DEV_QUICK_LOGIN_ENABLED: 'false',
   JWT_ACCESS_SECRET: randomBytes(48).toString('hex'), JWT_ACCESS_EXPIRES_IN: '1h',
   FIELD_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
   UPLOAD_ROOT: resolve(workspace, 'persistent-uploads'),

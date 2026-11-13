@@ -776,6 +776,7 @@ model Distribution {
   packageUnit             String?                @map("package_unit") @db.VarChar(30)
   packageQuantity         Int?                   @map("package_quantity")
   verificationRequirement VerificationMethod     @default(QR) @map("verification_requirement")
+  manualVerificationBasis String?                @map("manual_verification_basis") @db.VarChar(1000)
   createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -920,6 +921,7 @@ model Claim {
   biometricScore           Decimal?                @map("biometric_score") @db.Decimal(5, 4)
   qrVerified               Boolean                 @default(false) @map("qr_verified")
   signatureVerified        Boolean                 @default(false) @map("signature_verified")
+  manualVerification       Json?                   @map("manual_verification")
   verifiedAt               DateTime?               @map("verified_at") @db.Timestamptz(6)
   isDuplicateFlag          Boolean                 @default(false) @map("is_duplicate_flag")
   releaseMethod            AssistanceDeliveryMode? @map("release_method")

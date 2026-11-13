@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 import { env } from "../config/env.js";
 import prisma from "../lib/prisma.js";
 import { verifyAccessToken } from "../modules/auth/auth.service.js";
+import { assertDevAdminAccount, assertDevAdminRequest, isDeveloperAdmin } from "../modules/auth/devAdmin.policy.js";
 
 export const REALTIME_EVENT_NAMES = Object.freeze([
   "distribution.updated",
@@ -122,6 +123,9 @@ export async function authenticateSocketConnection(socket, database = prisma) {
         role: true,
         barangayId: true,
         isActive: true,
+        employeeId: true,
+        username: true,
+        archivedAt: true,
       },
     }),
     database.staffSession.findFirst({
@@ -143,6 +147,10 @@ export async function authenticateSocketConnection(socket, database = prisma) {
     const error = new Error("This facilitator has no assigned barangay.");
     error.data = { code: "BARANGAY_ASSIGNMENT_REQUIRED" };
     throw error;
+  }
+  if (isDeveloperAdmin(user)) {
+    assertDevAdminRequest(socket.request, env);
+    assertDevAdminAccount(user);
   }
   return user;
 }

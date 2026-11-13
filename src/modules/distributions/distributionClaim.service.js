@@ -74,6 +74,7 @@ export const claimPublicSelect = {
   biometricScore: true,
   qrVerified: true,
   signatureVerified: true,
+  manualVerification: true,
   verifiedAt: true,
   isDuplicateFlag: true,
   releaseMethod: true,
@@ -186,6 +187,7 @@ export const claimMutationSelect = {
   biometricScore: true,
   qrVerified: true,
   signatureVerified: true,
+  manualVerification: true,
   verifiedAt: true,
   isDuplicateFlag: true,
   releaseMethod: true,
@@ -244,6 +246,7 @@ export const qrScanLogPublicSelect = {
 };
 
 export const distributionClaimParentSelect = {
+  manualVerificationBasis: true,
   distributionId: true,
   distributionDate: true,
   endTime: true,
@@ -368,7 +371,9 @@ export function claimIdentityRequirementSatisfied(claim) {
     QR_AND_BIOMETRIC: claim.qrVerified && claim.biometricVerified,
     QR_OR_BIOMETRIC: claim.qrVerified || claim.biometricVerified,
     BIOMETRIC_AND_SIGNATURE: claim.biometricVerified && claim.signatureVerified,
-    MANUAL: false,
+    MANUAL: Boolean(claim.manualVerification?.verifiedById && claim.manualVerification?.verifiedAt
+      && claim.manualVerification?.basis && claim.manualVerification?.evidenceReference
+      && claim.manualVerification?.notes && claim.manualVerification.confirmed === true && claim.signatureVerified),
   }[verificationMethod] ?? false;
 }
 
