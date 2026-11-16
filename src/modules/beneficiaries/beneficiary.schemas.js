@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { optionalPhilippineMobileSchema } from "../../lib/philippine-mobile.js";
+import { philippineDate } from "../../lib/philippine-date.js";
 
 const optionalNullableText = (maxLength) => z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? null : value),
@@ -28,7 +29,7 @@ function isValidDateOnly(value) {
 const birthDate = z.string().trim()
   .refine(isValidDateOnly, "Birth date must be a valid date in YYYY-MM-DD format.")
   .refine(
-    (value) => value <= new Date().toISOString().slice(0, 10),
+    (value) => value <= philippineDate(),
     "Birth date cannot be in the future.",
   )
   .transform((value) => new Date(`${value}T00:00:00.000Z`));

@@ -35,7 +35,10 @@ test("new contact details cannot bypass an existing beneficiary identity during 
     assert.equal(query.where.barangayId, barangayId);
     return { beneficiaryId };
   });
-  replace(t, prisma, "$transaction", async () => { assert.fail("A duplicate must not reach a write transaction"); });
+  replace(t, prisma, "$transaction", async (operation, options) => {
+    assert.equal(options.isolationLevel, "Serializable");
+    return operation({ barangay: prisma.barangay, beneficiary: { findFirst: prisma.beneficiary.findFirst, create: () => assert.fail("A duplicate must not be inserted") } });
+  });
   for (const details of [{}, { email: "new@example.test" }, { philsysNumber: "TEST-NEW-ID" }, { email: "new@example.test", philsysNumber: "TEST-NEW-ID" }]) {
     const response = await fetch(origin, {
       method: "POST",
@@ -60,4 +63,19 @@ test("editing a record excludes itself but still checks for another matching ben
   await assertNoPotentialDuplicateBeneficiary(input);
   otherRecordExists = true;
   await assert.rejects(assertNoPotentialDuplicateBeneficiary(input), { code: "POSSIBLE_DUPLICATE_BENEFICIARY" });
+});
+
+test("the duplicate helper reads from the supplied write transaction", async () => {
+  let reads = 0;
+  await assertNoPotentialDuplicateBeneficiary({ ...person, barangayId }, { beneficiary: { findFirst: async () => { reads++; return null; } } });
+  assert.equal(reads, 1);
+});
+
+test("a serialization conflict is a safe refresh response, not an unhandled failure", async t => {
+  replace(t, prisma.user, "findUnique", async () => actor);
+  replace(t, prisma.staffSession, "findFirst", async () => ({ sessionId: "fixture-session" }));
+  replace(t, prisma, "$transaction", async (_operation, options) => { assert.equal(options.isolationLevel, "Serializable"); throw Object.assign(new Error("competing write"), { code: "P2034" }); });
+  const response = await fetch(origin, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${signAccessToken(actor)}` }, body: JSON.stringify(person) });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error.code, "BENEFICIARY_CONCURRENT_CHANGE");
 });

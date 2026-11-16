@@ -33,6 +33,7 @@ import {
   notificationDeduplicationKey,
   notificationPublicSelect,
   notificationRowFromSchedule,
+  notificationDeliveryContextHash,
   scheduleNotificationPreviewHash,
   notificationScheduledFor,
   notificationToResponse,
@@ -454,6 +455,8 @@ test("public notification fields mask recipients and exclude private delivery lo
     createdAt: new Date("2099-08-18T01:00:00Z"),
     updatedAt: new Date("2099-08-18T01:00:00Z"),
     processingToken: "88888888-8888-4888-8888-888888888888",
+    recipientMasked: "*******4567",
+    deliveryContextHash: "private-context-hash",
     beneficiary: { contactNumber: "09171234567", barangayId: barangayA },
     schedule: null,
     distribution: null,
@@ -461,6 +464,7 @@ test("public notification fields mask recipients and exclude private delivery lo
   assert.equal(response.recipientMasked, "*******4567");
   assert.equal(Object.hasOwn(response, "beneficiary"), false);
   assert.equal(Object.hasOwn(response, "processingToken"), false);
+  assert.equal(Object.hasOwn(response, "deliveryContextHash"), false);
   assert.match(response.simulationDisclosure, /no real SMS/i);
   assert.match(response.createdAt, /\+08:00$/);
 });
@@ -538,6 +542,8 @@ test("queue health is safe and reports a controlled unavailable state", async ()
 });
 
 function workerDatabase({ providerRecipient = "09171234567" } = {}) {
+  const appointment = schedule();
+  appointment.beneficiary.contactNumber = providerRecipient;
   const state = {
     notification: {
       notificationId,
@@ -550,12 +556,15 @@ function workerDatabase({ providerRecipient = "09171234567" } = {}) {
       notificationType: "SCHEDULE_CREATED",
       status: "PENDING",
       simulated: true,
+      deliveryContextHash: notificationDeliveryContextHash(appointment, "SCHEDULE_CREATED"),
+      recipientMasked: maskRecipient(providerRecipient),
       processingToken: null,
       processingStartedAt: null,
       attemptCount: 0,
       beneficiary: { contactNumber: providerRecipient, barangayId: barangayA },
     },
     scheduleNotificationAt: null,
+    schedule: appointment,
     audits: [],
   };
   const notification = {
@@ -574,12 +583,71 @@ function workerDatabase({ providerRecipient = "09171234567" } = {}) {
   };
   const database = {
     notification,
-    schedule: { updateMany: async ({ data }) => { state.scheduleNotificationAt = data.notificationAt; return { count: 1 }; } },
+    schedule: { findUnique: async () => state.schedule, updateMany: async ({ data }) => { state.scheduleNotificationAt = data.notificationAt; return { count: 1 }; } },
     auditLog: { create: async ({ data }) => { state.audits.push(data); return data; } },
     $transaction: async (callback) => callback(database),
   };
   return { database, state };
 }
+
+test("worker stops a changed recipient, cancelled/rescheduled event, completed claim or legacy notice before the provider", async () => {
+  for (const change of [
+    state => { state.schedule.beneficiary.contactNumber = "09991234567"; },
+    state => { state.schedule.status = "CANCELLED"; },
+    state => { state.schedule.slot.slotStart = new Date("2099-08-20T02:00:00Z"); },
+    state => { state.schedule.distribution.status = "CLOSED"; },
+    state => { state.schedule.beneficiary.status = "INACTIVE"; },
+    state => { state.schedule.claim = { claimStatus: "CLAIMED" }; },
+    state => { state.schedule.slot.slotEnd = new Date("2000-01-01T00:00:00Z"); },
+    state => { state.notification.deliveryContextHash = null; },
+    state => { state.schedule = null; },
+  ]) {
+    const { database, state } = workerDatabase();
+    state.notification.notificationType = "DISTRIBUTION_REMINDER";
+    state.notification.deliveryContextHash = notificationDeliveryContextHash(state.schedule, "DISTRIBUTION_REMINDER");
+    change(state);
+    let calls = 0;
+    const result = await processNotificationJob({ data: { notificationId }, attemptsMade: 0, opts: { attempts: 3 } }, {
+      database, publishLifecycle: ignoreNotificationLifecycle,
+      provider: { send: async () => { calls++; assert.fail("A stale notice must not reach the provider"); } },
+    });
+    assert.equal(calls, 0);
+    assert.equal(result.outcome, "FAILED");
+    assert.ok(["NOTIFICATION_REVIEW_REQUIRED", "NOTIFICATION_CONTEXT_CHANGED"].includes(result.errorCode));
+    assert.equal(state.notification.status, "FAILED");
+    assert.equal(state.notification.deduplicationKey, null);
+    assert.throws(() => assertNotificationRetryable(state.notification), { code: "NOTIFICATION_REVIEW_REQUIRED" });
+    assert.equal(state.scheduleNotificationAt, null);
+  }
+});
+
+test("opening a draft event is allowed; cancellation notices and unchanged delayed reminders still send", async () => {
+  for (const type of ["DISTRIBUTION_REMINDER", "SCHEDULE_CANCELLED"]) {
+    const { database, state } = workerDatabase();
+    state.schedule.distribution.status = "DRAFT";
+    if (type === "SCHEDULE_CANCELLED") state.schedule.status = "CANCELLED";
+    state.notification.notificationType = type;
+    state.notification.deliveryContextHash = notificationDeliveryContextHash(state.schedule, type);
+    state.schedule.distribution.status = "OPEN";
+    const result = await processNotificationJob({ data: { notificationId }, attemptsMade: 0, opts: { attempts: 1 } }, {
+      database, provider: createSimulatedSmsProvider({ failureMode: "NONE" }), publishLifecycle: ignoreNotificationLifecycle,
+    });
+    assert.equal(result.outcome, "SENT_SIMULATED");
+  }
+});
+
+test("recipient history is immutable and a fresh preview creates a new destination/context key", () => {
+  const current = schedule();
+  const before = notificationRowFromSchedule(current, { notificationType: "SCHEDULE_CREATED", initiatedById: userId });
+  current.beneficiary.contactNumber = "09991239876";
+  const after = notificationRowFromSchedule(current, { notificationType: "SCHEDULE_CREATED", initiatedById: userId });
+  assert.notEqual(before.deliveryContextHash, after.deliveryContextHash);
+  assert.notEqual(before.deduplicationKey, after.deduplicationKey);
+  const history = notificationToResponse({ ...before, beneficiary: current.beneficiary });
+  assert.equal(history.recipientMasked, "*******4567");
+  assert.equal(Object.hasOwn(history, "deliveryContextHash"), false);
+  assert.equal(notificationToResponse({ beneficiary: current.beneficiary }).recipientMasked, null, "Legacy history must not guess an original destination.");
+});
 
 test("worker atomically transitions PENDING to SENT and updates schedule notificationAt", async () => {
   const { database, state } = workerDatabase();

@@ -14,8 +14,8 @@ import {
 } from "./beneficiary.policy.js";
 import { assertBiometricConsentManageAllowed } from "../biometrics/biometric.policy.js";
 
-async function ensureActiveBarangay(barangayId) {
-  const barangay = await prisma.barangay.findUnique({
+async function ensureActiveBarangay(barangayId, database) {
+  const barangay = await database.barangay.findUnique({
     where: { barangayId },
     select: { barangayId: true, isActive: true },
   });
@@ -29,21 +29,26 @@ async function ensureActiveBarangay(barangayId) {
   }
 }
 
+async function writeBeneficiary(operation) {
+  try {
+    return await prisma.$transaction(operation, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error.code === "P2034") throw new AppError(409, "BENEFICIARY_CONCURRENT_CHANGE", "Beneficiary records changed while saving. Search for the existing record before retrying.");
+    throw error;
+  }
+}
+
 export const createBeneficiary = asyncHandler(async (req, res) => {
   const barangayId = resolveBeneficiaryCreateBarangay(
     req.staffUser,
     req.validatedBody.barangayId,
   );
-  await ensureActiveBarangay(barangayId);
-  await assertNoPotentialDuplicateBeneficiary({
-    ...req.validatedBody,
-    barangayId,
-  });
-
-  const beneficiary = await prisma.$transaction(async (tx) => {
+  const beneficiary = await writeBeneficiary(async (tx) => {
+    await ensureActiveBarangay(barangayId, tx);
+    await assertNoPotentialDuplicateBeneficiary({ ...req.validatedBody, barangayId }, tx);
     const createdBeneficiary = await tx.beneficiary.create({
       data: { ...req.validatedBody, barangayId },
-      select: beneficiarySelect,
+      select: { beneficiaryId: true },
     });
 
     await tx.auditLog.create({
@@ -76,8 +81,7 @@ export const listBeneficiaries = asyncHandler(async (req, res) => {
     ...(sitioPurok ? { sitioPurok: { equals: sitioPurok, mode: "insensitive" } } : {}),
     ...(search ? {
       OR: [
-        { firstName: { contains: search, mode: "insensitive" } },
-        { lastName: { contains: search, mode: "insensitive" } },
+        { AND: search.trim().split(/\s+/).map(term => ({ OR: ["firstName", "middleName", "lastName"].map(field => ({ [field]: { contains: term, mode: "insensitive" } })) })) },
         { sitioPurok: { contains: search, mode: "insensitive" } },
         { email: { contains: search, mode: "insensitive" } },
         { philsysNumber: { contains: search, mode: "insensitive" } },
@@ -115,23 +119,11 @@ export const getBeneficiary = asyncHandler(async (req, res) => {
 });
 
 export const updateBeneficiary = asyncHandler(async (req, res) => {
-  const existingBeneficiary = await getBeneficiaryOrThrow(
-    req.validatedParams.beneficiaryId,
-    req.staffUser,
-  );
   assertBeneficiaryUpdateAllowed(req.staffUser, req.validatedBody);
-
-  if (req.validatedBody.barangayId) {
-    await ensureActiveBarangay(req.validatedBody.barangayId);
-  }
-
-  await assertNoPotentialDuplicateBeneficiary({
-    ...existingBeneficiary,
-    ...req.validatedBody,
-    beneficiaryId: existingBeneficiary.beneficiaryId,
-  });
-
-  const beneficiary = await prisma.$transaction(async (tx) => {
+  const beneficiary = await writeBeneficiary(async (tx) => {
+    const existingBeneficiary = await getBeneficiaryOrThrow(req.validatedParams.beneficiaryId, req.staffUser, tx);
+    if (req.validatedBody.barangayId) await ensureActiveBarangay(req.validatedBody.barangayId, tx);
+    await assertNoPotentialDuplicateBeneficiary({ ...existingBeneficiary, ...req.validatedBody, beneficiaryId: existingBeneficiary.beneficiaryId }, tx);
     const updatedBeneficiary = await tx.beneficiary.update({
       where: { beneficiaryId: existingBeneficiary.beneficiaryId },
       data: req.validatedBody,

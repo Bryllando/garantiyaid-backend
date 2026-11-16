@@ -20,6 +20,7 @@ export const notificationPublicSelect = {
   status: true,
   providerMode: true,
   providerReference: true,
+  recipientMasked: true,
   simulated: true,
   attemptCount: true,
   lastErrorCode: true,
@@ -73,11 +74,13 @@ export const notificationDeliverySelect = {
   simulated: true,
   lastErrorCode: true,
   processingToken: true,
+  deliveryContextHash: true,
   beneficiary: { select: { contactNumber: true, barangayId: true } },
 };
 
 export const notificationScheduleContextSelect = {
   scheduleId: true,
+  slotId: true,
   beneficiaryId: true,
   distributionId: true,
   queueNumber: true,
@@ -141,11 +144,11 @@ export function maskRecipient(value) {
 }
 
 export function notificationToResponse(notification) {
-  const { beneficiary, processingToken, ...publicFields } = notification;
+  const { beneficiary, processingToken, deliveryContextHash, ...publicFields } = notification;
   return {
     ...publicFields,
     providerReference: notification.providerReference ?? null,
-    recipientMasked: maskRecipient(beneficiary?.contactNumber),
+    recipientMasked: notification.recipientMasked ?? null,
     barangayId: beneficiary?.barangayId ?? notification.distribution?.barangayId ?? null,
     scheduledFor: philippineTimestamp(notification.scheduledFor),
     sentAt: philippineTimestamp(notification.sentAt),
@@ -177,13 +180,14 @@ export function buildNotificationWhere(filters, barangayId) {
   };
 }
 
-export function notificationDeduplicationKey({ scheduleId, notificationType, message, scheduledFor, providerMode = env.smsProviderMode }) {
+export function notificationDeduplicationKey({ scheduleId, notificationType, message, scheduledFor, providerMode = env.smsProviderMode, deliveryContextHash }) {
   return createHash("sha256").update(JSON.stringify({
     scheduleId,
     notificationType,
     message,
     scheduledFor: scheduledFor?.toISOString() ?? null,
     ...(providerMode !== "SIMULATED" ? { providerMode } : {}),
+    ...(deliveryContextHash ? { deliveryContextHash } : {}),
   })).digest("hex");
 }
 
@@ -194,7 +198,37 @@ export function scheduleNotificationPreviewHash(row, contactNumber) {
     message: row.message,
     recipient: normalizePhilippineMobileNumber(contactNumber),
     providerMode: row.providerMode,
+    deliveryContextHash: row.deliveryContextHash,
   })).digest("hex");
+}
+
+export function notificationDeliveryContextHash(schedule, notificationType) {
+  const { beneficiary, slot, distribution } = schedule;
+  return createHash("sha256").update(JSON.stringify({
+    notificationType, scheduleId: schedule.scheduleId, slotId: schedule.slotId ?? null,
+    beneficiaryId: schedule.beneficiaryId, distributionId: schedule.distributionId,
+    recipient: normalizePhilippineMobileNumber(beneficiary.contactNumber),
+    beneficiaryName: [beneficiary.firstName, beneficiary.middleName, beneficiary.lastName].filter(Boolean).join(" "),
+    barangayId: beneficiary.barangayId, serviceArea: beneficiary.sitioPurok ?? null,
+    queueNumber: schedule.queueNumber,
+    slotStart: new Date(slot.slotStart).toISOString(),
+    slotEnd: slot.slotEnd ? new Date(slot.slotEnd).toISOString() : null,
+    sessionLabel: slot.sessionLabel ?? null, location: slot.location ?? distribution.location,
+    distributionTitle: distribution.title, distributionLocation: distribution.location,
+    distributionBarangayId: distribution.barangayId,
+  })).digest("hex");
+}
+
+export function assertNotificationDeliveryCurrent(notification, schedule, now = new Date()) {
+  if (!notification.deliveryContextHash) throw new AppError(409, "NOTIFICATION_REVIEW_REQUIRED", "This notice has no saved delivery context. Review the current details and queue a new notice.");
+  if (!schedule || schedule.beneficiaryId !== notification.beneficiaryId || schedule.distributionId !== notification.distributionId) {
+    throw new AppError(409, "NOTIFICATION_CONTEXT_CHANGED", "The appointment is no longer available. Review the current details before queueing a new notice.");
+  }
+  assertNotificationLifecycle(schedule, notification.notificationType);
+  if (notification.deliveryContextHash !== notificationDeliveryContextHash(schedule, notification.notificationType)
+    || (notification.notificationType === "DISTRIBUTION_REMINDER" && (schedule.claim?.claimStatus === "CLAIMED" || new Date(schedule.slot.slotEnd) <= now))) {
+    throw new AppError(409, "NOTIFICATION_CONTEXT_CHANGED", "The recipient or appointment changed. Review the current details before queueing a new notice.");
+  }
 }
 
 export function notificationScheduledFor(notificationType, requestedSendAt, slotStart, now = new Date()) {
@@ -264,6 +298,7 @@ export function notificationRowFromSchedule(
   const message = messageTemplate
     ? renderReminderTemplate(messageTemplate, templateContext)
     : renderNotificationTemplate(notificationType, templateContext);
+  const deliveryContextHash = notificationDeliveryContextHash(schedule, notificationType);
   return {
     beneficiaryId: schedule.beneficiaryId,
     scheduleId: schedule.scheduleId,
@@ -275,11 +310,14 @@ export function notificationRowFromSchedule(
     status: "PENDING",
     providerMode: env.smsProviderMode,
     simulated: env.smsProviderMode === "SIMULATED",
+    recipientMasked: maskRecipient(schedule.beneficiary.contactNumber),
+    deliveryContextHash,
     scheduledFor,
     deduplicationKey: notificationDeduplicationKey({
       scheduleId: schedule.scheduleId,
       notificationType,
       message,
+      deliveryContextHash,
       scheduledFor: notificationType === "DISTRIBUTION_REMINDER" ? scheduledFor : null,
     }),
   };
@@ -332,6 +370,7 @@ export function assistantReminderPreviewFromSchedules(
       sessionLabel: deliverable[index].slot.sessionLabel,
       message: row.message,
       providerMode: row.providerMode,
+      deliveryContextHash: row.deliveryContextHash,
     })))).digest("hex"),
     recipientCount: deliverable.length,
     excludedCount: invalidContactCount + completedClaimCount,
@@ -417,5 +456,8 @@ export function assertNotificationRetryable(notification) {
   }
   if (!notification.simulated && ["SIMGATE_SEND_STARTED", "SIMGATE_DELIVERY_UNCONFIRMED"].includes(notification.lastErrorCode)) {
     throw new AppError(409, "SMS_DELIVERY_UNCONFIRMED", "SimGate may already have accepted this SMS. Check its dashboard and the receiving phone before sending a new notice; retry is blocked to prevent duplicates.");
+  }
+  if (["NOTIFICATION_CONTEXT_CHANGED", "NOTIFICATION_REVIEW_REQUIRED"].includes(notification.lastErrorCode)) {
+    throw new AppError(409, "NOTIFICATION_REVIEW_REQUIRED", "Review the current recipients and appointment, then queue a new notice. The old notice cannot be retried.");
   }
 }

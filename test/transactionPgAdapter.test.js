@@ -72,3 +72,16 @@ test("pooled queries and independent transactions keep their concurrency", async
   assert.deepEqual(state.transactions.map(tx => tx.calls), [["first"], ["second"]]);
   await Promise.all([first.commit(), second.commit()]);
 });
+
+test("commit-time serialization conflicts use the same P2034 code as query conflicts", async t => {
+  const state = fixture(t), originalStart = state.database.startTransaction;
+  const conflict = Object.assign(new Error("TransactionWriteConflict"), { cause: { kind: "TransactionWriteConflict" } });
+  state.database.startTransaction = async (...args) => {
+    const transaction = await originalStart(...args);
+    transaction.commit = async () => { throw conflict; };
+    return transaction;
+  };
+  const adapter = await state.adapter.connect(), transaction = await adapter.startTransaction("Serializable");
+  await assert.rejects(transaction.commit(), error => error === conflict && error.code === "P2034");
+  await transaction.rollback();
+});

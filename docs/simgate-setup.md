@@ -35,7 +35,7 @@ SIMGATE_DEVICE_ID=your_paired_device_id
 SMS_REQUEST_TIMEOUT_MS=15000
 ```
 
-Keep these in the backend only. Do not use `VITE_` variables for the API key. No new packages or database migration are needed. Leave the existing email and Redis configuration intact.
+Keep these in the backend only. Do not use `VITE_` variables for the API key. No new packages are needed. Apply the repository migrations and regenerate Prisma before starting updated code: `npm.cmd run prisma:migrate:deploy`, then `npm.cmd run prisma:generate`. The additive `20261117060000_notification_delivery_context` migration saves a delivery-context fingerprint and the original masked recipient. Leave the existing email and Redis configuration intact.
 
 Stop the existing API and notification worker with Ctrl+C, then restart them in separate terminals from the backend folder:
 
@@ -52,6 +52,16 @@ npm run worker:notifications
 ```
 
 Keep Redis, both terminals, the frontend, and the gateway phone running. Do not start a second API on port 4000. The notification worker also processes pending staff emails. Jobs recorded under the old SIMULATED mode stay simulated; enabling SimGate does not convert them into real texts.
+
+## Queued notices and changed details
+
+Each new notice preserves the reviewed recipient/context. Immediately before contacting the SMS provider, the worker checks the current contact, beneficiary, appointment, event and applicable notice type. A cancelled, rescheduled, completed, expired or otherwise changed reminder is stopped and shown as **Review needed**. A valid cancellation notice is still allowed; opening an event from Draft to Open does not invalidate an otherwise unchanged reminder.
+
+For a stopped notice, open **View details**, check the current record, then prepare a fresh message preview and confirm it. **Retry delivery** is unavailable for a stale context. Editing a phone number does not silently redirect a queued notice or change its original recipient in delivery history.
+
+Pending notices created before this migration have no verifiable saved context. They require a new review instead of being sent using guessed details. Historical recipient fields without a saved value show **Not recorded**. Existing messages, provider references and records are retained.
+
+Restart both the existing API and notification-worker terminals after deploying this change. Do not start another backend on port 4000. These checks happen before provider submission; they cannot recall an SMS already accepted by the gateway.
 
 ## 5. Send one notice from GarantiyAid
 

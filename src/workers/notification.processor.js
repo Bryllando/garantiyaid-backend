@@ -3,7 +3,7 @@ import { env } from "../config/env.js";
 import { publishNotificationLifecycleFromWorker } from "../realtime/notification.relay.js";
 import { simulatedSmsProvider } from "../modules/notifications/simulatedSms.provider.js";
 import { simgateSmsProvider } from "../modules/notifications/simgateSms.provider.js";
-import { acquirePendingNotification, notificationDeliverySelect } from "../modules/notifications/notification.service.js";
+import { acquirePendingNotification, notificationDeliverySelect, notificationScheduleContextSelect, assertNotificationDeliveryCurrent } from "../modules/notifications/notification.service.js";
 
 const SCHEDULE_NOTICE_TYPES = new Set([
   "SCHEDULE_CREATED",
@@ -41,6 +41,7 @@ async function recordPermanentFailure(notification, result, database, now, publi
         lastErrorCode: result.errorCode,
         processingToken: null,
         processingStartedAt: null,
+        ...(["NOTIFICATION_CONTEXT_CHANGED", "NOTIFICATION_REVIEW_REQUIRED"].includes(result.errorCode) ? { deduplicationKey: null } : {}),
       },
     });
     if (transition.count !== 1) return false;
@@ -191,6 +192,18 @@ export async function processNotificationJob(
       await recordPermanentFailure(notification, { errorCode: "SMS_PROVIDER_DISABLED" }, database, now, publishLifecycle);
       return { outcome: "FAILED", errorCode: "SMS_PROVIDER_DISABLED", simulated: false, realSmsSent: false };
     }
+  }
+
+  const schedule = notification.scheduleId ? await database.schedule.findUnique({ where: { scheduleId: notification.scheduleId }, select: notificationScheduleContextSelect }) : null;
+  try { assertNotificationDeliveryCurrent(notification, schedule, now); }
+  catch (error) {
+    if (!(error.code?.startsWith("NOTIFICATION_"))) throw error;
+    const errorCode = error.code === "NOTIFICATION_REVIEW_REQUIRED" ? error.code : "NOTIFICATION_CONTEXT_CHANGED";
+    await recordPermanentFailure(notification, { errorCode }, database, now, publishLifecycle);
+    return { outcome: "FAILED", errorCode, simulated: notification.simulated, realSmsSent: false };
+  }
+
+  if (!notification.simulated) {
     // Persist before the external side effect so a crashed/retried job cannot send it twice.
     const started = await database.notification.updateMany({
       where: { notificationId, status: "PENDING", processingToken: notification.processingToken },
@@ -202,7 +215,7 @@ export async function processNotificationJob(
   const selectedProvider = provider ?? (notification.simulated ? simulatedSmsProvider : simgateSmsProvider);
   let result = await selectedProvider.send({
     notificationId: notification.notificationId,
-    recipient: notification.beneficiary.contactNumber,
+    recipient: schedule.beneficiary.contactNumber,
     message: notification.message,
   });
   if (result.success && result.simulated !== notification.simulated) {

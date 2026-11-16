@@ -1072,6 +1072,8 @@ model Notification {
   providerReference   String?             @unique @map("provider_reference") @db.VarChar(80)
   simulated           Boolean             @default(true)
   deduplicationKey    String?             @unique @map("deduplication_key") @db.VarChar(64)
+  recipientMasked    String?             @map("recipient_masked") @db.VarChar(30)
+  deliveryContextHash String?            @map("delivery_context_hash") @db.VarChar(64)
   attemptCount        Int                 @default(0) @map("attempt_count")
   lastErrorCode       String?             @map("last_error_code") @db.VarChar(50)
   scheduledFor        DateTime?           @map("scheduled_for") @db.Timestamptz(6)

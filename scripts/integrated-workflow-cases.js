@@ -50,6 +50,66 @@ export async function runIntegratedCases({ prisma, baseUrl, report }) {
   }
   check('Real password/TOTP authentication and database-backed staff sessions');
 
+  async function competingBeneficiaryWrites(operations) {
+    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+    const lock = await pool.connect();
+    let pending, waiting = 0;
+    try {
+      await lock.query('BEGIN');
+      // Let both duplicate checks finish before either write can acquire its table lock.
+      await lock.query('LOCK TABLE beneficiaries IN SHARE MODE');
+      pending = Promise.all(operations.map(operation => operation()));
+      for (let attempt = 0; attempt < 100 && waiting < operations.length; attempt++) {
+        waiting = Number((await pool.query("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%beneficiaries%' AND (query ILIKE '%INSERT%' OR query ILIKE '%UPDATE%')")).rows[0].count);
+        if (waiting < operations.length) await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    } finally { await lock.query('COMMIT'); lock.release(); await pool.end(); }
+    const results = await pending;
+    assert.equal(waiting, operations.length, 'Both writes must reach the race barrier.');
+    return results;
+  }
+  const registrationInput = { firstName: 'Synthetic Maria Elena', middleName: 'Reyes', lastName: 'Concurrent', birthDate: '1990-01-01', sex: 'FEMALE', address: 'Synthetic identity-race address' };
+  const registrations = await competingBeneficiaryWrites(['barangay', 'barangay2'].map(role => () => post(role, '/beneficiaries', registrationInput, { status: null })));
+  assert.deepEqual(registrations.map(result => result.status).sort(), [201, 409]);
+  assert.equal(await prisma.beneficiary.count({ where: { firstName: registrationInput.firstName, lastName: registrationInput.lastName, birthDate: new Date(registrationInput.birthDate), barangayId: barangays[0].barangayId } }), 1);
+  const registeredPerson = registrations.find(result => result.status === 201).data.beneficiary;
+  await post('barangay', '/beneficiaries', registrationInput, { status: 409, code: 'POSSIBLE_DUPLICATE_BENEFICIARY' });
+  for (const search of ['SYNTHETIC MARIA  ELENA REYES CONCURRENT', 'Reyes Concurrent Maria Elena Synthetic', 'Reyes']) {
+    const matches = (await request('barangay', `/beneficiaries?search=${encodeURIComponent(search)}`)).data.beneficiaries;
+    assert.ok(matches.some(match => match.beneficiaryId === registeredPerson.beneficiaryId), search);
+  }
+  assert.equal((await request('outsider', `/beneficiaries?search=${encodeURIComponent(registrationInput.firstName)}`)).data.pagination.total, 0);
+  check('Concurrent registrations cannot create duplicate people; full-name and middle-name searches retain Barangay scope');
+  const other = (await post('barangay', '/beneficiaries', { ...registrationInput, firstName: 'Synthetic Other', birthDate: '1991-01-01' }, { status: 201 })).data.beneficiary;
+  const editIdentity = { firstName: 'Synthetic Target', middleName: 'Shared', lastName: 'Identity', birthDate: '1980-01-01' };
+  const edits = await competingBeneficiaryWrites([registeredPerson, other].map((record, index) => () => request(['barangay', 'barangay2'][index], `/beneficiaries/${record.beneficiaryId}`, { method: 'PATCH', body: editIdentity, status: null })));
+  assert.deepEqual(edits.map(result => result.status).sort(), [200, 409]);
+  assert.equal(await prisma.beneficiary.count({ where: { ...editIdentity, birthDate: new Date(editIdentity.birthDate), barangayId: barangays[0].barangayId } }), 1);
+  check('Concurrent edits cannot turn separate beneficiary records into the same identity');
+
+  const { previewBeneficiaryImport } = await import('../src/modules/beneficiaries/beneficiaryImport.service.js');
+  const { startBeneficiaryImport, claimBeneficiaryImport, processBeneficiaryImportBatch, resumeBeneficiaryImport } = await import('../src/modules/beneficiaries/beneficiaryImportJob.service.js');
+  const importActor = await prisma.user.findUniqueOrThrow({ where: { userId: staff.barangay.user.userId } });
+  const importPerson = { ...registrationInput, firstName: 'Synthetic Imported Race', barangayId: barangays[0].barangayId };
+  const importRows = [{ sourceRow: 2, ...importPerson }];
+  const importReview = await previewBeneficiaryImport(importActor, importRows);
+  const importJob = await startBeneficiaryImport({ staffUser: importActor, auth: { userId: importActor.userId }, get: () => importReview.approvalId, validatedBody: { rows: importRows, approvalId: importReview.approvalId, confirmed: true }, ip: '127.0.0.1' });
+  const importClaim = await claimBeneficiaryImport();
+  const importRace = await competingBeneficiaryWrites([
+    () => post('barangay2', '/beneficiaries', importPerson, { status: null }),
+    () => processBeneficiaryImportBatch(importClaim),
+  ]);
+  assert.ok([201, 409].includes(importRace[0].status));
+  assert.equal(await prisma.beneficiary.count({ where: { firstName: importPerson.firstName, lastName: importPerson.lastName, barangayId: importPerson.barangayId } }), 1);
+  if ((await prisma.beneficiaryImportJob.findUniqueOrThrow({ where: { importId: importJob.importId } })).status === 'FAILED') {
+    await resumeBeneficiaryImport(importActor, importJob.importId);
+    await processBeneficiaryImportBatch(await claimBeneficiaryImport());
+  }
+  const finishedImport = await prisma.beneficiaryImportJob.findUniqueOrThrow({ where: { importId: importJob.importId } });
+  assert.equal(finishedImport.status, 'COMPLETED');
+  assert.equal(finishedImport.createdCount + finishedImport.failedCount, 1);
+  check('A simultaneous manual registration and import create one person; interrupted import can resume safely');
+
   const program = (await post('dswd', '/programs', { programName: 'Acceptance assistance', programCode: 'ACCEPTANCE-1', programType: 'CASH_ASSISTANCE', grantAmount: 1500, budgetAmount: 150000, requiredDocumentTypes: ['VALID_ID'] }, { status: 201 })).data.program;
   await post('dswd', `/programs/${program.programId}/criteria`, { criterionName: 'Adult applicant', fieldName: 'AGE', operator: 'GREATER_THAN_OR_EQUAL', expectedValue: 18, isRequired: true }, { status: 201 });
   await post('dswd', `/programs/${program.programId}/activate`);
@@ -85,6 +145,36 @@ export async function runIntegratedCases({ prisma, baseUrl, report }) {
   assert.ok(scheduling.every(r => [200, 201, 409].includes(r.status)), JSON.stringify(scheduling));
   assert.equal(await prisma.schedule.count({ where: { distributionId: event.distributionId } }), 1);
   check('Two operators allocate and schedule concurrently without duplicate allocations or queue entries');
+
+  const { notificationScheduleContextSelect, notificationRowFromSchedule, createNotificationRows } = await import('../src/modules/notifications/notification.service.js');
+  const { processNotificationJob } = await import('../src/workers/notification.processor.js');
+  const noticeScheduleId = (await prisma.schedule.findFirstOrThrow({ where: { distributionId: event.distributionId } })).scheduleId;
+  const oldContact = person.beneficiary.contactNumber;
+  await prisma.beneficiary.update({ where: { beneficiaryId: person.beneficiary.beneficiaryId }, data: { contactNumber: '+639171234567' } });
+  const noticeContext = await prisma.schedule.findUniqueOrThrow({ where: { scheduleId: noticeScheduleId }, select: notificationScheduleContextSelect });
+  const noticeNow = new Date();
+  const noticeOptions = { notificationType: 'DISTRIBUTION_REMINDER', sendAt: noticeNow, now: noticeNow, initiatedById: staff.admin.user.userId };
+  const queueNotice = async (context, options = noticeOptions) => (await createNotificationRows([notificationRowFromSchedule(context, options)])).notifications[0];
+  let providerCalls = 0;
+  const deliveryOptions = { database: prisma, publishLifecycle: async () => {}, provider: { send: async () => { providerCalls++; return { success: true, simulated: true, providerReference: `mock-only-${randomUUID()}` }; } } };
+  const dispatch = notification => processNotificationJob({ data: { notificationId: notification.notificationId }, attemptsMade: 0, opts: { attempts: 1 } }, deliveryOptions);
+  const cancelledNotice = await queueNotice(noticeContext);
+  await prisma.schedule.update({ where: { scheduleId: noticeScheduleId }, data: { status: 'CANCELLED' } });
+  assert.equal((await dispatch(cancelledNotice)).errorCode, 'NOTIFICATION_CONTEXT_CHANGED');
+  assert.equal(providerCalls, 0);
+  await prisma.schedule.update({ where: { scheduleId: noticeScheduleId }, data: { status: 'SCHEDULED' } });
+  const refreshedNotice = await queueNotice(noticeContext);
+  assert.notEqual(refreshedNotice.notificationId, cancelledNotice.notificationId);
+  assert.equal((await dispatch(refreshedNotice)).outcome, 'SENT_SIMULATED');
+  const changedContactNotice = await queueNotice(noticeContext, { ...noticeOptions, notificationType: 'SCHEDULE_UPDATED' });
+  await prisma.beneficiary.update({ where: { beneficiaryId: person.beneficiary.beneficiaryId }, data: { contactNumber: '+639991239876' } });
+  assert.equal((await dispatch(changedContactNotice)).errorCode, 'NOTIFICATION_CONTEXT_CHANGED');
+  assert.equal(providerCalls, 1);
+  const history = (await request('admin', `/notifications/${refreshedNotice.notificationId}`)).data.notification;
+  assert.equal(history.recipientMasked, '********4567');
+  assert.equal(Object.hasOwn(history, 'deliveryContextHash'), false);
+  await prisma.beneficiary.update({ where: { beneficiaryId: person.beneficiary.beneficiaryId }, data: { contactNumber: oldContact ?? null } });
+  check('Actual notification rows stop cancelled/changed-contact sends, permit a newly reviewed notice and preserve original recipient history');
   await request('admin', eventPath, { method: 'PATCH', body: { packageName: null, packageUnit: null, packageQuantity: null } });
   await post('admin', `${eventPath}/open`, {}, { status: 409, code: 'PHYSICAL_PACKAGE_REQUIRED' });
   await request('admin', eventPath, { method: 'PATCH', body: { packageName: 'Family food pack', packageUnit: 'pack', packageQuantity: 1.5 }, status: 400 });

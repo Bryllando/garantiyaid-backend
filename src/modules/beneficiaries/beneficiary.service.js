@@ -31,8 +31,8 @@ export const beneficiarySelect = {
   },
 };
 
-export async function getBeneficiaryOrThrow(beneficiaryId, staffUser) {
-  const beneficiary = await prisma.beneficiary.findFirst({
+export async function getBeneficiaryOrThrow(beneficiaryId, staffUser, database = prisma) {
+  const beneficiary = await database.beneficiary.findFirst({
     where: {
       beneficiaryId,
       ...beneficiaryAccessScope(staffUser),
@@ -54,8 +54,8 @@ export async function assertNoPotentialDuplicateBeneficiary({
   lastName,
   birthDate,
   barangayId,
-}) {
-  const duplicate = await prisma.beneficiary.findFirst({
+}, database = prisma) {
+  const duplicate = await database.beneficiary.findFirst({
     where: {
       ...(beneficiaryId ? { beneficiaryId: { not: beneficiaryId } } : {}),
       firstName: { equals: firstName, mode: "insensitive" },

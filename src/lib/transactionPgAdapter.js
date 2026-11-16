@@ -11,7 +11,14 @@ export class TransactionPrismaPg extends PrismaPg {
       for (const method of ["queryRaw", "executeRaw", "commit", "rollback"]) {
         const call = transaction[method].bind(transaction);
         transaction[method] = (...args) => {
-          const result = pending.then(() => call(...args));
+          const result = pending.then(async () => {
+            try { return await call(...args); }
+            catch (error) {
+              // Commit conflicts can bypass Prisma's usual serialization-error mapping.
+              if (error?.cause?.kind === "TransactionWriteConflict") error.code = "P2034";
+              throw error;
+            }
+          });
           pending = result.catch(() => {});
           return result;
         };

@@ -50,6 +50,22 @@ test("birth date must be a real non-future YYYY-MM-DD string", () => {
   assert.equal(createBeneficiarySchema.safeParse(validBeneficiary({ birthDate: "2999-01-01" })).success, false);
 });
 
+test("birth-date validation follows Philippine midnight, morning and year boundaries", t => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-16T16:00:00Z") });
+  for (const [time, today, tomorrow] of [
+    ["2026-11-16T16:00:00Z", "2026-11-17", "2026-11-18"],
+    ["2026-11-16T23:59:00Z", "2026-11-17", "2026-11-18"],
+    ["2026-11-17T00:00:00Z", "2026-11-17", "2026-11-18"],
+    ["2026-11-17T15:59:00Z", "2026-11-17", "2026-11-18"],
+    ["2026-12-31T16:00:00Z", "2027-01-01", "2027-01-02"],
+  ]) {
+    t.mock.timers.setTime(new Date(time).getTime());
+    assert.equal(createBeneficiarySchema.safeParse(validBeneficiary({ birthDate: today })).success, true, time);
+    assert.equal(createBeneficiarySchema.safeParse(validBeneficiary({ birthDate: tomorrow })).success, false, time);
+    assert.equal(updateBeneficiarySchema.safeParse({ birthDate: today }).success, true, time);
+  }
+});
+
 test("sex values fit the approved database field", () => {
   assert.equal(createBeneficiarySchema.safeParse(validBeneficiary({ sex: "unknown" })).success, true);
   assert.equal(createBeneficiarySchema.safeParse(validBeneficiary({ sex: "NOT_SPECIFIED" })).success, false);
