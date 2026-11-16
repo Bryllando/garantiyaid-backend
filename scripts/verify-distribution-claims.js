@@ -343,13 +343,13 @@ try {
 
   const forbiddenGeneration = await request(
     `/distributions/${distribution.distributionId}/qr-tokens/generate`,
-    { method: "POST", token: dswdToken, body: {} },
+    { method: "POST", token: facilitatorToken, body: {} },
   );
-  requireStatus(forbiddenGeneration, 403, "DSWD token-generation protection");
+  requireStatus(forbiddenGeneration, 403, "facilitator token-generation protection");
 
   const generated = await request(
     `/distributions/${distribution.distributionId}/qr-tokens/generate`,
-    { method: "POST", token: adminToken, body: {} },
+    { method: "POST", token: dswdToken, body: {} },
   );
   requireStatus(generated, 201, "batch QR-token generation");
   const generatedTokens = generated.payload.data.qrTokens;

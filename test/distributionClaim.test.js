@@ -31,8 +31,10 @@ import {
 } from "../src/modules/distributions/distributionClaim.service.js";
 import {
   CLAIM_VERIFY_ROLES,
+  QR_TOKEN_ISSUE_ROLES,
   QR_TOKEN_MANAGE_ROLES,
   assertClaimVerifyAllowed,
+  assertQrTokenIssueAllowed,
   assertQrTokenManageAllowed,
 } from "../src/modules/distributions/distribution.policy.js";
 
@@ -153,10 +155,15 @@ test("claim verification requires an OPEN event", () => {
   );
 });
 
-test("System Admin manages tokens while Admin, DSWD and assigned Facilitator verify claims", () => {
+test("Admin and DSWD issue tokens, only Admin replaces/revokes, and assigned staff verify claims", () => {
+  assert.deepEqual(QR_TOKEN_ISSUE_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF"]);
   assert.deepEqual(QR_TOKEN_MANAGE_ROLES, ["SYSTEM_ADMIN"]);
   assert.deepEqual(CLAIM_VERIFY_ROLES, ["SYSTEM_ADMIN", "DSWD_STAFF", "BARANGAY_FACILITATOR"]);
   assert.doesNotThrow(() => assertQrTokenManageAllowed({ role: "SYSTEM_ADMIN" }));
+  for (const role of ["SYSTEM_ADMIN", "DSWD_STAFF"]) assert.doesNotThrow(() => assertQrTokenIssueAllowed({ role }));
+  for (const staff of [null, { role: "BARANGAY_FACILITATOR" }, { role: "BENEFICIARY" }, { role: "UNKNOWN" }]) {
+    assert.throws(() => assertQrTokenIssueAllowed(staff), { code: "FORBIDDEN" });
+  }
   assert.throws(
     () => assertQrTokenManageAllowed({ role: "DSWD_STAFF" }),
     (error) => error.code === "FORBIDDEN",

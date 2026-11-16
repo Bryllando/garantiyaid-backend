@@ -9,6 +9,7 @@ import { idempotencyKeySchema } from "./distributionAllocation.schemas.js";
 import {
   assertClaimVerifyAllowed,
   assertDistributionReadAllowed,
+  assertQrTokenIssueAllowed,
   assertQrTokenManageAllowed,
 } from "./distribution.policy.js";
 import {
@@ -241,7 +242,7 @@ export const listQrEligibleSchedules = asyncHandler(async (req, res) => {
 });
 
 export const generateQrTokens = asyncHandler(async (req, res) => {
-  assertQrTokenManageAllowed(req.staffUser);
+  assertQrTokenIssueAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
   const { scheduleIds } = req.validatedBody;
 

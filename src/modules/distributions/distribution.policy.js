@@ -14,6 +14,7 @@ export const DISTRIBUTION_SCHEDULE_MANAGE_ROLES = Object.freeze([
 ]);
 
 export const QR_TOKEN_MANAGE_ROLES = Object.freeze(["SYSTEM_ADMIN"]);
+export const QR_TOKEN_ISSUE_ROLES = Object.freeze(["SYSTEM_ADMIN", "DSWD_STAFF"]);
 
 export const CLAIM_VERIFY_ROLES = Object.freeze([
   "SYSTEM_ADMIN",
@@ -70,12 +71,18 @@ export function assertDistributionScheduleManageAllowed(staffUser) {
   }
 }
 
+export function assertQrTokenIssueAllowed(staffUser) {
+  if (!staffUser || !QR_TOKEN_ISSUE_ROLES.includes(staffUser.role)) {
+    throw new AppError(403, "FORBIDDEN", "Only System Administrators and DSWD Staff may generate QR tokens.");
+  }
+}
+
 export function assertQrTokenManageAllowed(staffUser) {
   if (!staffUser || !QR_TOKEN_MANAGE_ROLES.includes(staffUser.role)) {
     throw new AppError(
       403,
       "FORBIDDEN",
-      "Only System Administrators may generate, revoke, or reissue QR tokens.",
+      "Only System Administrators may revoke or reissue QR tokens.",
     );
   }
 }

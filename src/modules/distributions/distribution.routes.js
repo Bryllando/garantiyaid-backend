@@ -21,6 +21,7 @@ import {
   CLAIM_DISPUTE_REVIEW_ROLES,
   CLAIM_VERIFY_ROLES,
   PHYSICAL_RELEASE_ROLES,
+  QR_TOKEN_ISSUE_ROLES,
   QR_TOKEN_MANAGE_ROLES,
   WALLET_MANAGE_ROLES,
   WALLET_READ_ROLES,
@@ -326,7 +327,7 @@ distributionRoutes.get(
 );
 distributionRoutes.post(
   "/:distributionId/qr-tokens/generate",
-  authorizeRoles(...QR_TOKEN_MANAGE_ROLES),
+  authorizeRoles(...QR_TOKEN_ISSUE_ROLES),
   validateParams(distributionIdSchema),
   validateBody(generateQrTokensSchema),
   generateQrTokens,

@@ -93,8 +93,18 @@ export async function runIntegratedCases({ prisma, baseUrl, report }) {
   await post('admin', `${eventPath}/open`);
   await request('admin', eventPath, { method: 'PATCH', body: { packageQuantity: 3 }, status: 409 });
   check('Physical package is required before opening, validates whole units, and freezes with the event');
-  const qr = (await post('admin', `${eventPath}/qr-tokens/generate`, {}, { status: 201 })).data;
+  await post('barangay', `${eventPath}/qr-tokens/generate`, {}, { status: 403 });
+  const qr = (await post('dswd', `${eventPath}/qr-tokens/generate`, {}, { status: 201 })).data;
   assert.ok(qr.qrTokens?.length, JSON.stringify(qr));
+  const issued = qr.qrTokens[0];
+  await post('dswd', `${eventPath}/qr-tokens/${issued.qrTokenId}/revoke`, {}, { status: 403 });
+  await post('dswd', `${eventPath}/qr-tokens/${issued.qrTokenId}/reissue`, {}, { status: 403 });
+  await post('dswd', `${eventPath}/open`, {}, { status: 403 });
+  await request('dswd', eventPath, { method: 'PATCH', body: { title: 'Unauthorized change' }, status: 403 });
+  const issuerLog = await prisma.auditLog.findFirstOrThrow({ where: { recordId: issued.qrTokenId, action: 'QR_TOKEN_GENERATED' }, include: { user: true } });
+  assert.equal(issuerLog.user.role, 'DSWD_STAFF');
+  assert.equal(await prisma.claim.count({ where: { distributionId: event.distributionId } }), 0);
+  check('DSWD issues QR cards with an issuer audit; facilitator issuance and DSWD event editing/replacement/revocation remain forbidden');
   const credential = qr.qrTokens[0].token;
   const claim = (await post('barangay', `${eventPath}/claims/verify-qr`, { token: credential }, { status: 201, key: randomUUID() })).data.claim;
   const releaseBody = { releasedQuantity: 2, evidenceType: 'OFFICIAL_RELEASE_LOG', evidenceReference: 'ACCEPTANCE-LOG-01', beneficiaryAcknowledged: true };
@@ -103,6 +113,7 @@ export async function runIntegratedCases({ prisma, baseUrl, report }) {
   }
   await post('outsider', `${eventPath}/claims/${claim.claimId}/release`, releaseBody, { status: 404, key: randomUUID() });
   await post('admin', `${eventPath}/claims/${claim.claimId}/release`, releaseBody, { status: 403, key: randomUUID() });
+  await post('dswd', `${eventPath}/claims/${claim.claimId}/release`, releaseBody, { status: 403, key: randomUUID() });
   check('Wrong-barangay API reads/writes and unauthorized release are denied');
   for (const quantity of [undefined, 1, 3]) {
     await post('barangay', `${eventPath}/claims/${claim.claimId}/release`, { ...releaseBody, releasedQuantity: quantity }, { status: 409, code: 'PHYSICAL_RELEASE_QUANTITY_MISMATCH', key: randomUUID() });
@@ -280,6 +291,32 @@ export async function runIntegratedCases({ prisma, baseUrl, report }) {
   assert.deepEqual(retainedReceipt.snapshot, originalReceipt.snapshot);
   assert.equal(retainedReceipt.evidenceHash, originalReceipt.evidenceHash);
   check('Independent remediation preserves voided handover counts, quantities and issued receipt evidence');
+
+  const copyEvent = await prepareEvent('PHYSICAL_GOODS', 'QR');
+  const copyPath = `/distributions/${copyEvent.distributionId}`;
+  const issuances = await Promise.all(['admin', 'dswd'].map(role => post(role, `${copyPath}/qr-tokens/generate`, {}, { status: null })));
+  assert.deepEqual(issuances.map(result => result.status).sort(), [201, 409]);
+  const copyQr = issuances.find(result => result.status === 201).data.qrTokens[0];
+  assert.equal(await prisma.qrToken.count({ where: { distributionId: copyEvent.distributionId } }), 1);
+  const listed = (await request('dswd', `${copyPath}/qr-tokens`)).data;
+  assert.equal(JSON.stringify(listed).includes(copyQr.token), false);
+  assert.equal(JSON.stringify(listed).includes('tokenHash'), false);
+  await post(null, `${copyPath}/claims/verify-qr`, { token: copyQr.token }, { status: 401, key: randomUUID() });
+  for (const token of [`${copyQr.token}altered`, credential]) {
+    await post('dswd', `${copyPath}/claims/verify-qr`, { token }, { status: 404, code: 'INVALID_QR_TOKEN', key: randomUUID() });
+  }
+  await post('dswd', `${copyPath}/claims/preview-qr`, { token: copyQr.token });
+  assert.equal(await prisma.claim.count({ where: { distributionId: copyEvent.distributionId } }), 0);
+  check('Concurrent Admin/DSWD issuance creates one QR; anonymous, altered and wrong-event credentials cannot create claims, and preview changes no claim');
+  const scans = await Promise.all(['barangay', 'dswd'].map(role => post(role, `${copyPath}/claims/verify-qr`, { token: copyQr.token }, { key: randomUUID(), status: null })));
+  assert.deepEqual(scans.map(result => result.status).sort(), [201, 409]);
+  assert.equal(await prisma.claim.count({ where: { distributionId: copyEvent.distributionId } }), 1);
+  const copyClaim = await prisma.claim.findFirstOrThrow({ where: { distributionId: copyEvent.distributionId } });
+  assert.equal(copyClaim.isDuplicateFlag, true);
+  assert.equal(copyClaim.releasedAt, null);
+  await post('barangay', `${copyPath}/claims/${copyClaim.claimId}/release`, releaseBody, { status: 409, code: 'CLAIM_DUPLICATE_REVIEW_REQUIRED', key: randomUUID() });
+  assert.equal(await prisma.claimReceipt.count({ where: { claimId: copyClaim.claimId } }), 0);
+  check('Simultaneous copied-QR scans create one claim and flag a duplicate; no handover or receipt is recorded and release awaits independent review');
 
   return { staff, barangays, program, request, post, check, draftEvent, approvedPerson, prepareEvent, enrollFace, verifyFace, signaturePerson, signatureEvent, signatureClaim, voidedEvent, completedEvents: [event, combinedEvent] };
 }
