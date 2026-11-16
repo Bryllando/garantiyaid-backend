@@ -7,6 +7,7 @@ import { createBeneficiarySchema } from "./beneficiary.schemas.js";
 import { BENEFICIARY_CREATE_ROLES, resolveBeneficiaryCreateBarangay } from "./beneficiary.policy.js";
 import { encryptImportHandoff } from "../../lib/importEncryption.js";
 import { assertProgramAcceptsEnrollment } from "../enrollments/enrollment.service.js";
+import { isRegisteredServiceArea } from "../barangays/barangay.service.js";
 
 const lower = value => String(value ?? "").trim().toLowerCase();
 const day = value => value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
@@ -21,12 +22,12 @@ export function beneficiaryImportScope(actor) {
 
 export async function validateBeneficiaryImport(rows, actor, database = prisma) {
   beneficiaryImportScope(actor);
-  const checked = rows.map(({ sourceRow, programId, ...input }) => {
+  const checked = rows.map(({ sourceRow, programId, city, ...input }) => {
     let scopeError;
     try { input.barangayId = resolveBeneficiaryCreateBarangay(actor, input.barangayId); }
     catch (error) { scopeError = error.message; }
     const parsed = createBeneficiarySchema.safeParse(input);
-    return { sourceRow, record: parsed.success ? parsed.data : input, ...(programId ? { programId } : {}), issues: [
+    return { sourceRow, record: parsed.success ? parsed.data : input, ...(city ? { city } : {}), ...(programId ? { programId } : {}), warnings: [], issues: [
       ...(parsed.success ? [] : parsed.error.issues.map(issue => `${labels[issue.path[0]] ?? "Record"}: ${issue.message}`)),
       ...(scopeError ? [scopeError] : []),
       ...(programId && !z.uuid().safeParse(programId).success ? ["Choose an existing assistance program."] : []),
@@ -34,7 +35,7 @@ export async function validateBeneficiaryImport(rows, actor, database = prisma) 
   });
   const valid = checked.filter(row => !row.issues.length);
   const barangayIds = [...new Set(checked.map(row => row.record.barangayId).filter(value => z.uuid().safeParse(value).success))];
-  const barangays = await database.barangay.findMany({ where: { barangayId: { in: barangayIds }, isActive: true }, select: { barangayId: true, barangayName: true, city: true } });
+  const barangays = await database.barangay.findMany({ where: { barangayId: { in: barangayIds }, isActive: true }, select: { barangayId: true, barangayName: true, city: true, serviceAreas: true } });
   const activeBarangays = new Map(barangays.map(item => [item.barangayId, item]));
   const programIds = [...new Set(checked.map(row => row.programId).filter(value => z.uuid().safeParse(value).success))];
   const programs = programIds.length ? await database.program.findMany({ where: { programId: { in: programIds } }, select: { programId: true, programName: true, programCode: true, status: true, requiredDocumentTypes: true, applicationStartDate: true, applicationEndDate: true } }) : [];
@@ -64,7 +65,11 @@ export async function validateBeneficiaryImport(rows, actor, database = prisma) 
     }
     const barangay = activeBarangays.get(row.record.barangayId);
     if (!barangay) row.issues.push("Select an existing, active barangay within your access.");
-    else row.barangayLabel = `${barangay.barangayName}, ${barangay.city}`;
+    else {
+      row.barangayLabel = `${barangay.barangayName}, ${barangay.city}`;
+      if (row.city && lower(row.city) !== lower(barangay.city)) row.issues.push("The City does not match the selected barangay. Review the City and Barangay columns.");
+      if (row.record.sitioPurok && !isRegisteredServiceArea(barangay, row.record.sitioPurok)) row.warnings.push("Sitio/Purok text will be retained for staff review. It is not in this barangay's confirmed list.");
+    }
     if (row.programId) {
       const program = programMap.get(row.programId);
       if (!program) row.issues.push("Choose an existing assistance program accepting applications.");

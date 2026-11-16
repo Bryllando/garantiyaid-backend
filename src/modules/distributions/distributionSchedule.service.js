@@ -123,7 +123,7 @@ export function assertAllocationSchedulable(allocation) {
   }
 }
 
-export function assertSlotAvailable(slot, activeScheduleCount) {
+export function assertSlotAvailable(slot, activeScheduleCount, now = new Date()) {
   if (slot.slotStatus !== "AVAILABLE") {
     throw new AppError(
       409,
@@ -131,6 +131,10 @@ export function assertSlotAvailable(slot, activeScheduleCount) {
       "The selected distribution slot is not available.",
       { slotId: slot.slotId, slotStatus: slot.slotStatus },
     );
+  }
+
+  if (slot.slotEnd <= now) {
+    throw new AppError(409, "DISTRIBUTION_SLOT_ENDED", "This appointment time has ended. Choose a later available slot before opening the event.");
   }
 
   if (activeScheduleCount >= slot.capacity) {
@@ -326,7 +330,7 @@ export async function assertBeneficiaryHasNoSchedule(
   }
 }
 
-export async function distributionOpeningReadiness(distributionId, database = prisma) {
+export async function distributionOpeningReadiness(distributionId, database = prisma, now = new Date()) {
   const allocations = await database.distributionAllocation.findMany({
     where: { distributionId, allocationStatus: "ALLOCATED" },
     select: { allocationId: true, beneficiaryId: true },
@@ -353,6 +357,7 @@ export async function distributionOpeningReadiness(distributionId, database = pr
           distributionId: true,
           capacity: true,
           serviceAreas: true,
+          slotEnd: true,
         },
       },
     },
@@ -360,6 +365,9 @@ export async function distributionOpeningReadiness(distributionId, database = pr
   const activeSchedules = schedules.filter((schedule) => (
     OCCUPYING_SCHEDULE_STATUSES.includes(schedule.status)
   ));
+  if (activeSchedules.some(schedule => schedule.slot.slotEnd <= now)) {
+    throw new AppError(409, "DISTRIBUTION_APPOINTMENTS_ENDED", "An assigned appointment has already ended. Reschedule the affected beneficiaries to future slots before opening the event.");
+  }
   const activeScheduledBeneficiaries = new Set(
     activeSchedules.map((schedule) => schedule.beneficiaryId),
   );

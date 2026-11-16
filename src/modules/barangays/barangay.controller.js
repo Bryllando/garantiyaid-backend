@@ -9,6 +9,9 @@ import {
 } from "./barangay.service.js";
 
 export const listBarangays = asyncHandler(async (req, res) => {
+  if (req.auth.role === "BARANGAY_FACILITATOR" && !req.staffUser.barangayId) {
+    throw new AppError(403, "BARANGAY_ASSIGNMENT_REQUIRED", "Ask your System Administrator to assign your staff account to a barangay.");
+  }
   const { activeOnly, search } = req.validatedQuery;
   const where = {
     ...(activeOnly === "true" ? { isActive: true } : {}),

@@ -216,8 +216,9 @@ export const listQrEligibleSchedules = asyncHandler(async (req, res) => {
       ] : []),
     ],
   } : {};
-  const where = { ...qrCandidateWhere(distributionId), ...nameSearch };
-  const [schedules, total] = await Promise.all([
+  const now = new Date();
+  const where = { ...qrCandidateWhere(distributionId, now), ...nameSearch };
+  const [schedules, total, scheduledCount, endedScheduleCount] = await Promise.all([
     prisma.schedule.findMany({
       where,
       select: qrEligibleScheduleSelect,
@@ -226,12 +227,14 @@ export const listQrEligibleSchedules = asyncHandler(async (req, res) => {
       take: pageSize,
     }),
     prisma.schedule.count({ where }),
+    prisma.schedule.count({ where: { distributionId, status: "SCHEDULED" } }),
+    prisma.schedule.count({ where: { distributionId, status: "SCHEDULED", slot: { slotEnd: { lte: now } } } }),
   ]);
   return res.status(200).json({
     success: true,
     data: {
       schedules: schedules.map(qrEligibleScheduleToResponse),
-      summary: { qrEligibleScheduleCount: total },
+      summary: { qrEligibleScheduleCount: total, scheduledCount, endedScheduleCount, checkedAt: now.toISOString() },
       pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
     },
   });

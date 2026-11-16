@@ -7,6 +7,7 @@ export const previewBarangayImportSchema = z.object({
     barangayCode: z.string().max(100).optional(),
     city: z.string().max(300),
     province: z.string().max(300),
+    serviceAreas: z.array(z.string().max(300)).max(200).optional(),
   }).strict()).min(1).max(500).refine(rows => new Set(rows.map(row => row.sourceRow)).size === rows.length, "Source row numbers must be unique."),
 }).strict();
 

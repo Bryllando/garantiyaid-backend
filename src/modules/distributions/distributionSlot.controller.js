@@ -2,6 +2,7 @@ import prisma from "../../lib/prisma.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
+import { isRegisteredServiceArea } from "../barangays/barangay.service.js";
 import {
   assertDistributionManageAllowed,
   assertDistributionReadAllowed,
@@ -108,6 +109,14 @@ export const generateDistributionSlots = asyncHandler(async (req, res) => {
     }
 
     const rows = buildDistributionSlotRows(distribution, sessions ?? capacity);
+    const selectedAreas = [...new Set(rows.flatMap(row => row.serviceAreas))];
+    if (selectedAreas.length) {
+      const barangay = await tx.barangay.findUniqueOrThrow({ where: { barangayId: distribution.barangayId }, select: { serviceAreas: true } });
+      const unregistered = selectedAreas.filter(area => !isRegisteredServiceArea(barangay, area));
+      if (unregistered.length) {
+        throw new AppError(409, "SERVICE_AREA_REVIEW_REQUIRED", "Review and register these Sitios/Puroks under the event's barangay in Administration before creating area-specific sessions.", { serviceAreas: unregistered });
+      }
+    }
     await assertNoSessionSlotConflict(tx, distribution, rows);
     await tx.distributionSlot.createMany({ data: rows });
     const sessionCount = new Set(rows.map((row) => row.sessionId)).size;

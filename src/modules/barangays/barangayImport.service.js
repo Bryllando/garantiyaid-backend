@@ -9,7 +9,7 @@ import { barangaySelect } from "./barangay.service.js";
 const operation = "BARANGAY_IMPORT";
 const lower = value => (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 const locationKey = row => JSON.stringify([row.barangayName, row.city, row.province].map(lower));
-const labels = { barangayName: "Barangay name", barangayCode: "Barangay code", city: "City / Municipality", province: "Province" };
+const labels = { barangayName: "Barangay name", barangayCode: "Barangay code", city: "City / Municipality", province: "Province", serviceAreas: "Sitios / Puroks" };
 
 export async function validateBarangayImport(rows, database = prisma) {
   const existing = await database.barangay.findMany({ select: barangaySelect });

@@ -133,7 +133,7 @@ test("schedule mutations require draft events and allocated beneficiaries", () =
 });
 
 test("slot availability and capacity are both enforced", () => {
-  const slot = { slotId, slotStatus: "AVAILABLE", capacity: 2 };
+  const slot = { slotId, slotStatus: "AVAILABLE", capacity: 2, slotEnd: new Date("2099-08-20T00:30:00Z") };
   assert.doesNotThrow(() => assertSlotAvailable(slot, 1));
   assert.throws(
     () => assertSlotAvailable(slot, 2),
@@ -143,6 +143,15 @@ test("slot availability and capacity are both enforced", () => {
     () => assertSlotAvailable({ ...slot, slotStatus: "CLOSED" }, 0),
     (error) => error.code === "DISTRIBUTION_SLOT_NOT_AVAILABLE",
   );
+});
+
+test("manual scheduling and reactivation reject slots at or after their end time", () => {
+  const slot = { slotId, slotStatus: "AVAILABLE", capacity: 2, slotEnd: new Date("2026-11-16T00:30:00Z") };
+  assert.doesNotThrow(() => assertSlotAvailable(slot, 0, new Date("2026-11-16T00:29:59.999Z")));
+  for (const instant of ["2026-11-16T00:30:00Z", "2026-11-16T06:00:00Z"]) {
+    assert.throws(() => assertSlotAvailable(slot, 0, new Date(instant)),
+      (error) => error.code === "DISTRIBUTION_SLOT_ENDED");
+  }
 });
 
 test("schedule cancel/reactivate and reschedule transitions are controlled", () => {
@@ -213,7 +222,7 @@ test("opening readiness requires every active allocation to have a capacity-safe
         slotId,
         status: "SCHEDULED",
         beneficiary: { sitioPurok: "Sitio Riverside" },
-        slot: { distributionId, capacity: 1, serviceAreas: ["Sitio Riverside"] },
+        slot: { distributionId, capacity: 1, serviceAreas: ["Sitio Riverside"], slotEnd: new Date("2099-08-20T00:30:00Z") },
       }],
     },
   };
@@ -222,6 +231,10 @@ test("opening readiness requires every active allocation to have a capacity-safe
     activeScheduleCount: 1,
     slotCount: 1,
   });
+  await assert.rejects(
+    () => distributionOpeningReadiness(distributionId, database, new Date("2099-08-20T00:30:00Z")),
+    (error) => error.code === "DISTRIBUTION_APPOINTMENTS_ENDED",
+  );
 
   await assert.rejects(
     () => distributionOpeningReadiness(distributionId, {

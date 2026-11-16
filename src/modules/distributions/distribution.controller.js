@@ -11,6 +11,7 @@ import {
   assertActiveDistributionBarangay,
   assertActiveDistributionProgram,
   assertDistributionConfigurationValid,
+  assertDistributionWindowNotEnded,
   assertDistributionDraft,
   assertDistributionTransition,
   assertNoDistributionOverlap,
@@ -18,7 +19,7 @@ import {
   distributionToResponse,
   getDistributionOrThrow,
 } from "./distribution.service.js";
-import { assertDistributionScheduleFieldsUnlocked } from "./distributionSlot.service.js";
+import { assertDistributionScheduleFieldsUnlocked, DISTRIBUTION_SCHEDULE_FIELDS } from "./distributionSlot.service.js";
 import { assertDistributionAllocationFieldsUnlocked } from "./distributionAllocation.service.js";
 import { distributionReconciliation } from "./distributionReconciliation.service.js";
 import { publishDistributionUpdated } from "../../realtime/publishers.js";
@@ -84,6 +85,7 @@ async function insertDistribution(req, tx) {
 export const createDistribution = asyncHandler(async (req, res) => {
   assertDistributionManageAllowed(req.staffUser);
   assertDistributionConfigurationValid(req.validatedBody);
+  assertDistributionWindowNotEnded(req.validatedBody);
   const distributionId = await runDistributionTransaction((tx) => insertDistribution(req, tx));
   const distribution = await prisma.distribution.findUniqueOrThrow({
     where: { distributionId },
@@ -102,6 +104,7 @@ export const confirmAssistantDistribution = asyncHandler(async (req, res) => {
   const { approvalId, confirmed, ...payload } = req.validatedBody;
   const result = await executeAssistantApproval(req, "ASSISTANT_DISTRIBUTION_DRAFT", payload, async (tx) => {
     assertDistributionConfigurationValid(payload);
+    assertDistributionWindowNotEnded(payload);
     const distributionId = await insertDistribution({ ...req, validatedBody: payload, assistantApprovalId: approvalId }, tx);
     const distribution = await tx.distribution.findUniqueOrThrow({ where: { distributionId }, select: distributionSelect });
     return { responseStatus: 201, responseBody: { success: true, data: { distribution: distributionToResponse(distribution) } } };
@@ -114,6 +117,7 @@ export const confirmAssistantDistribution = asyncHandler(async (req, res) => {
 export const previewAssistantDistribution = asyncHandler(async (req, res) => {
   assertDistributionManageAllowed(req.staffUser);
   assertDistributionConfigurationValid(req.validatedBody);
+  assertDistributionWindowNotEnded(req.validatedBody);
   await Promise.all([
     assertActiveDistributionProgram(req.validatedBody.programId),
     assertActiveDistributionBarangay(req.validatedBody.barangayId),
@@ -208,6 +212,10 @@ export const updateDistribution = asyncHandler(async (req, res) => {
   assertDistributionDraft(existingDistribution);
   const nextDistribution = { ...existingDistribution, ...req.validatedBody };
   assertDistributionConfigurationValid(nextDistribution);
+  // Package edits must remain possible when later sessions are still upcoming.
+  if (DISTRIBUTION_SCHEDULE_FIELDS.some(field => Object.hasOwn(req.validatedBody, field))) {
+    assertDistributionWindowNotEnded(nextDistribution);
+  }
 
   const distributionId = await runDistributionTransaction(async (tx) => {
     await assertDistributionScheduleFieldsUnlocked(

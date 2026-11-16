@@ -14,6 +14,10 @@ export const createBarangaySchema = z.object({
   barangayName: z.string().trim().min(1).max(100),
   city: z.string().trim().min(1).max(100),
   province: z.string().trim().min(1).max(100),
+  serviceAreas: z.array(z.string().trim().min(1).max(120)).max(200).refine(
+    areas => new Set(areas.map(area => area.toLocaleLowerCase("en-PH"))).size === areas.length,
+    "List each Sitio or Purok only once within this barangay.",
+  ).optional(),
 });
 
 export const updateBarangaySchema = createBarangaySchema.partial().extend({

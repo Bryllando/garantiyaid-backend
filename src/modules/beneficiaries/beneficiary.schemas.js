@@ -75,6 +75,8 @@ export const beneficiaryListQuerySchema = z.object({
   ),
   barangayId: z.uuid().optional(),
   status: beneficiaryStatus.optional(),
+  city: z.string().trim().min(1).max(100).optional(),
+  sitioPurok: z.string().trim().min(1).max(120).optional(),
 }).strict();
 
 const futureIsoDateTime = z.string().trim()

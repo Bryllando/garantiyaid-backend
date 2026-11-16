@@ -112,7 +112,7 @@ export const submitEnrollment = asyncHandler(async (req, res) => {
 });
 
 export const listEnrollments = asyncHandler(async (req, res) => {
-  const { page, pageSize, status, programId, barangayId, search } = req.validatedQuery;
+  const { page, pageSize, status, programId, barangayId, beneficiaryId, search } = req.validatedQuery;
   if (
     req.staffUser.role === "BARANGAY_FACILITATOR"
     && barangayId
@@ -123,6 +123,7 @@ export const listEnrollments = asyncHandler(async (req, res) => {
 
   const where = {
     ...enrollmentAccessWhere(req.staffUser),
+      ...(beneficiaryId ? { beneficiaryId } : {}),
     ...(status ? { status } : {}),
     ...(programId ? { programId } : {}),
     ...(barangayId && req.staffUser.role !== "BARANGAY_FACILITATOR"

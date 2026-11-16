@@ -7,10 +7,16 @@ export const barangaySelect = {
   barangayName: true,
   city: true,
   province: true,
+  serviceAreas: true,
   isActive: true,
   createdAt: true,
   updatedAt: true,
 };
+
+export function isRegisteredServiceArea(barangay, area) {
+  const name = area?.trim().toLocaleLowerCase("en-PH");
+  return Boolean(name && barangay.serviceAreas?.some(value => value.trim().toLocaleLowerCase("en-PH") === name));
+}
 
 export async function getBarangayOrThrow(barangayId, database = prisma) {
   const barangay = await database.barangay.findUnique({

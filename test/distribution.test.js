@@ -18,6 +18,7 @@ import {
 } from "../src/modules/distributions/distribution.schemas.js";
 import {
   assertDistributionConfigurationValid,
+  assertDistributionWindowNotEnded,
   assertPhysicalPackageReady,
   assertDistributionDraft,
   assertDistributionTransition,
@@ -178,6 +179,7 @@ test("distribution configuration rejects past dates and invalid time ranges", ()
   assert.doesNotThrow(() => assertDistributionConfigurationValid(validDistribution(), now));
   assert.doesNotThrow(() => assertDistributionConfigurationValid(validDistribution({
     distributionDate: new Date("2026-08-12T00:00:00.000Z"),
+    endTime: new Date("1970-01-01T14:00:00.000Z"),
   }), now));
   assert.throws(
     () => assertDistributionConfigurationValid(validDistribution({
@@ -206,6 +208,15 @@ test("distribution configuration rejects past dates and invalid time ranges", ()
     }), now),
     (error) => error.code === "DISTRIBUTION_SLOT_INTERVAL_UNEVEN",
   );
+});
+
+test("same-day distribution windows expire at their exact Philippine end time", () => {
+  const distribution = validDistribution({ distributionDate: new Date("2026-08-12T00:00:00.000Z") });
+  assert.doesNotThrow(() => assertDistributionWindowNotEnded(distribution, new Date("2026-08-12T03:59:59.999Z")));
+  for (const instant of ["2026-08-12T04:00:00.000Z", "2026-08-12T06:30:00.000Z"]) {
+    assert.throws(() => assertDistributionWindowNotEnded(distribution, new Date(instant)),
+      (error) => error.code === "DISTRIBUTION_WINDOW_ENDED");
+  }
 });
 
 test("only draft events are editable and Phase 4 permits open or cancellation transitions", () => {

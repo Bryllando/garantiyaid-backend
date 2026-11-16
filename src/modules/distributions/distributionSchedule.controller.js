@@ -359,7 +359,7 @@ export const generateDistributionSchedules = asyncHandler(async (req, res) => {
       }
 
       const slots = await tx.distributionSlot.findMany({
-        where: { distributionId, slotStatus: "AVAILABLE" },
+        where: { distributionId, slotStatus: "AVAILABLE", slotEnd: { gt: new Date() } },
         select: {
           slotId: true,
           distributionId: true,
@@ -397,7 +397,7 @@ export const generateDistributionSchedules = asyncHandler(async (req, res) => {
         throw new AppError(
           409,
           "INSUFFICIENT_DISTRIBUTION_SLOT_CAPACITY",
-          "Available distribution slots cannot accommodate every requested allocation.",
+          "Available, unexpired service slots cannot accommodate every requested allocation. Add or choose future sessions while the event is still a draft.",
           {
             requestedScheduleCount: allocations.length,
             availableCapacity: totalAvailableCapacity,

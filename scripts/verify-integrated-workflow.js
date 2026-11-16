@@ -14,8 +14,9 @@ const databaseName = `garantiyaid_acceptance_${randomUUID().replaceAll('-', '')}
 assert.match(databaseName, /^garantiyaid_acceptance_[a-f0-9]{32}$/);
 const pilot = process.argv.includes('--pilot');
 const burial = process.argv.includes('--burial');
-assert.ok(!(pilot && burial), 'Run burial and supervised-pilot checks separately.');
-const output = resolve(root, burial ? 'output/burial-referrals' : pilot ? 'output/pilot-acceptance' : 'output/integrated-acceptance');
+const locations = process.argv.includes('--locations');
+assert.ok([pilot, burial, locations].filter(Boolean).length <= 1, 'Run specialized workflow checks separately.');
+const output = resolve(root, locations ? 'output/location-workflow' : burial ? 'output/burial-referrals' : pilot ? 'output/pilot-acceptance' : 'output/integrated-acceptance');
 const workspace = resolve(root, 'tmp', databaseName);
 await mkdir(output, { recursive: true });
 await mkdir(workspace, { recursive: true });
@@ -86,8 +87,15 @@ try {
   } else {
     const { runIntegratedCases } = await import('./integrated-workflow-cases.js');
     const state = await runIntegratedCases({ prisma, baseUrl, report });
-    const { runStaffJourney } = await import('../../garantiyaid-frontend/scripts/integrated-staff-journey.mjs');
-    await runStaffJourney({ ...state, prisma, baseUrl, output, report });
+    if (locations) {
+      const { runLocationCases } = await import('./location-workflow-cases.js');
+      const locationState = await runLocationCases({ ...state, prisma });
+      const { runLocationJourney } = await import('../../garantiyaid-frontend/scripts/verify-location-workflow.mjs');
+      await runLocationJourney({ ...state, ...locationState, prisma, baseUrl, output, report });
+    } else {
+      const { runStaffJourney } = await import('../../garantiyaid-frontend/scripts/integrated-staff-journey.mjs');
+      await runStaffJourney({ ...state, prisma, baseUrl, output, report });
+    }
   }
   if (pilot) {
     const { runPilotRecovery } = await import('./verify-pilot-recovery.js');

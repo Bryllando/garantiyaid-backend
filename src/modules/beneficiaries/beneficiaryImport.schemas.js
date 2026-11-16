@@ -6,6 +6,7 @@ export const beneficiaryImportRowsSchema = z.array(z.object({
   firstName: text(), middleName: text().optional(), lastName: text(),
   birthDate: text(100), sex: text(40), address: text(2000),
   sitioPurok: text().optional(), barangayId: text(100).optional(),
+  city: text(100).optional(),
   contactNumber: text(60).optional(), email: text().optional(), philsysNumber: text(100).optional(),
   programId: text(100).optional(),
 }).strict()).min(1).max(5000).refine(rows => new Set(rows.map(row => row.sourceRow)).size === rows.length, "Source row numbers must be unique.");

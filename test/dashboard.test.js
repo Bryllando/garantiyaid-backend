@@ -159,6 +159,18 @@ test("facilitators are Barangay-scoped and cannot access detailed or global fina
   assert.equal(canViewGlobalFinancialMetrics({ role: "DSWD_STAFF" }), true);
 });
 
+test("an unassigned facilitator cannot read any overview data or select a barangay to bypass assignment", async () => {
+  let reads = 0;
+  const database = new Proxy({}, { get() { reads++; throw new Error("Unexpected database read"); } });
+  for (const filters of [{}, { barangayId: barangayA }]) {
+    await assert.rejects(
+      getDashboardOverview(filters, { role: "BARANGAY_FACILITATOR", barangayId: null }, database),
+      (error) => error.statusCode === 403 && error.code === "BARANGAY_ASSIGNMENT_REQUIRED",
+    );
+  }
+  assert.equal(reads, 0);
+});
+
 test("dashboard and report HTTP endpoints reject unauthenticated requests", async () => {
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");

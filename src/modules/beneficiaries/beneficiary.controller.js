@@ -67,11 +67,13 @@ export const createBeneficiary = asyncHandler(async (req, res) => {
 });
 
 export const listBeneficiaries = asyncHandler(async (req, res) => {
-  const { page, pageSize, search, barangayId, status } = req.validatedQuery;
+  const { page, pageSize, search, barangayId, status, city, sitioPurok } = req.validatedQuery;
   const scopedBarangayId = resolveBeneficiaryListBarangay(req.staffUser, barangayId);
   const where = {
     ...(scopedBarangayId ? { barangayId: scopedBarangayId } : {}),
     ...(status ? { status } : {}),
+    ...(city ? { barangay: { city: { equals: city, mode: "insensitive" } } } : {}),
+    ...(sitioPurok ? { sitioPurok: { equals: sitioPurok, mode: "insensitive" } } : {}),
     ...(search ? {
       OR: [
         { firstName: { contains: search, mode: "insensitive" } },

@@ -26,6 +26,7 @@ export const beneficiarySelect = {
       barangayName: true,
       city: true,
       province: true,
+      serviceAreas: true,
     },
   },
 };

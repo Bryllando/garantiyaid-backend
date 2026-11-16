@@ -38,6 +38,7 @@ export const distributionSelect = {
       barangayName: true,
       city: true,
       province: true,
+      serviceAreas: true,
       isActive: true,
     },
   },
@@ -118,6 +119,13 @@ export function assertDistributionConfigurationValid(distribution, now = new Dat
       "DISTRIBUTION_SLOT_INTERVAL_UNEVEN",
       "Distribution time range must divide evenly by the configured slot duration.",
     );
+  }
+}
+
+export function assertDistributionWindowNotEnded(distribution, now = new Date()) {
+  const endsAt = new Date(`${distribution.distributionDate.toISOString().slice(0, 10)}T${distribution.endTime.toISOString().slice(11, 16)}:00+08:00`);
+  if (endsAt <= now) {
+    throw new AppError(400, "DISTRIBUTION_WINDOW_ENDED", "This service time has already ended in Philippine time. Choose a future date or a later service time before saving the event.");
   }
 }
 
