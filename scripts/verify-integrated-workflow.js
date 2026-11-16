@@ -141,7 +141,7 @@ try {
   if (postgresStarted) await command(pgExecutable('pg_ctl'), ['-D', pgData, '-m', 'fast', '-w', 'stop']);
   assert.equal(workspace, resolve(root, 'tmp', databaseName));
   assert.ok(workspace.startsWith(`${resolve(root, 'tmp')}${process.platform === 'win32' ? '\\' : '/'}`));
-  await rm(workspace, { recursive: true, force: true });
+  await rm(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   report.finishedAt = new Date().toISOString();
   await writeFile(resolve(output, 'results.json'), JSON.stringify(report, null, 2));
 }
