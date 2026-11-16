@@ -8,9 +8,9 @@ import { burialInclude, burialScope, getBurial, assertBurialActionRole, assertBu
 
 export const listBurialReferrals = asyncHandler(async (req, res) => {
   const { page, pageSize, beneficiaryId, status, search } = req.validatedQuery;
-  const where = { ...burialScope(req.staffUser), ...(beneficiaryId ? { beneficiaryId } : {}), ...(status ? { status } : {}), ...(search ? { OR: [
-    { deceasedName: { contains: search, mode: 'insensitive' } }, { beneficiary: { firstName: { contains: search, mode: 'insensitive' } } }, { beneficiary: { lastName: { contains: search, mode: 'insensitive' } } },
-  ] } : {}) };
+  const where = { ...burialScope(req.staffUser), ...(beneficiaryId ? { beneficiaryId } : {}), ...(status ? { status } : {}), ...(search ? { AND: search.split(/\s+/).map(term => ({ OR: [
+    { deceasedName: { contains: term, mode: 'insensitive' } }, ...['firstName', 'middleName', 'lastName'].map(field => ({ beneficiary: { [field]: { contains: term, mode: 'insensitive' } } })),
+  ] })) } : {}) };
   const [referrals, total] = await Promise.all([
     prisma.burialReferral.findMany({ where, select: { referralId: true, status: true, deceasedName: true, receivingOffice: true, createdAt: true, beneficiary: burialInclude.beneficiary }, orderBy: [{ createdAt: 'desc' }, { referralId: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
     prisma.burialReferral.count({ where }),

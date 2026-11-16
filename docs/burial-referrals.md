@@ -6,6 +6,8 @@ The proposed Cebu City scope still has no confirmed partner office, accepted for
 
 ## Staff steps
 
+For a full TEST ONLY run with exact buttons, expected statuses, correction/recovery checks and a blank manual-results checklist, use the [defense rehearsal guide](../../garantiyaid-frontend/docs/burial-referral-rehearsal.md).
+
 1. **Barangay: choose the living applicant.** Open **Beneficiary records**, search for the person requesting assistance, open their record, then choose **Prepare burial referral**. Do not register the deceased as the applicant. Only active applicants in the staff member's assigned barangay are available.
 2. **Barangay: prepare the request.** Enter the deceased person's name, date of death, relationship, purpose, sending office, receiving office/address, and designated signatory. Add the documents for this request using **Existing applicant document** or **Upload and attach**. Each attachment has its own description on the letter. The receiving office sets the actual checklist; the examples are not an automatically complete checklist. Save the draft, then **Submit for review**.
 3. **DSWD reviewer: check the case.** Open **Burial referrals**, choose the request and download/check its files. Accept submitted documents when appropriate. Return the referral with a specific correction note if the details or evidence need work. Barangay edits and resubmits that same case. All listed attachments must be accepted before **Prepare letter for signature**. Confirm the parties, documents, destination and signatory; this clears only the letter for signing.
