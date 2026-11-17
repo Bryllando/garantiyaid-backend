@@ -6,9 +6,9 @@ import { env } from "../src/config/env.js";
 import { submitStaffAssistantMessage } from "../src/modules/chatbot/chatbot.controller.js";
 
 async function testServer(t) {
-  const previousKey = env.openRouterApiKey;
-  env.openRouterApiKey = `sk-or-v1-${"a".repeat(64)}`;
-  t.after(() => { env.openRouterApiKey = previousKey; });
+  const previousKey = env.nvidiaApiKey;
+  env.nvidiaApiKey = `nvapi-${"a".repeat(64)}`;
+  t.after(() => { env.nvidiaApiKey = previousKey; });
   // Controller transport harness; route authentication is covered in chatbot.test.js.
   const app = express();
   app.post("/chat", (req, _res, next) => {
@@ -28,6 +28,10 @@ test("HTTP controller flushes answer text before model completion, redacts input
   const gate = new Promise((resolve) => { finish = resolve; });
   t.after(() => finish());
   t.mock.method(Completions.prototype, "create", async function* (body) {
+    assert.equal(this._client.baseURL, "https://integrate.api.nvidia.com/v1");
+    assert.equal(this._client.apiKey, env.nvidiaApiKey);
+    assert.equal(body.model, "mistralai/mistral-large-4-1t-a52b");
+    assert.equal(body.reasoning_effort, "low");
     assert.doesNotMatch(JSON.stringify(body.messages), /09123456789/);
     yield { choices: [{ delta: { content: "Hello staff." } }] };
     await gate;

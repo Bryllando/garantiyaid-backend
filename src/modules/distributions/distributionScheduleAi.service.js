@@ -1,8 +1,7 @@
-import OpenAI from "openai";
 import { z } from "zod";
 import { env } from "../../config/env.js";
 import { AppError } from "../../utils/AppError.js";
-import { OPENROUTER_CHATBOT_MODEL } from "../chatbot/chatbot.ai.js";
+import { createNvidiaClient, NVIDIA_MODEL } from "../../lib/nvidia.js";
 import { distributionSlotCoversBeneficiary } from "./distributionSlot.service.js";
 
 export const aiScheduleConfirmSchema = z.object({
@@ -83,36 +82,44 @@ export function expandAiSuggestion(problem, raw) {
   return { summary: parsed.data.summary, assignments };
 }
 
-export async function suggestAiSchedule(problem, { client, apiKey = env.openRouterApiKey } = {}) {
-  if (!client && !apiKey) throw new AppError(503, "AI_SCHEDULER_NOT_CONFIGURED", "AI scheduling is unavailable. Configure OPENROUTER_API_KEY on the server; existing scheduling tools remain available.");
-  const provider = client ?? new OpenAI({ apiKey, baseURL: "https://openrouter.ai/api/v1", timeout: 60_000, maxRetries: 0 });
+export async function suggestAiSchedule(problem, { client, apiKey = env.nvidiaApiKey } = {}) {
+  if (!client && !apiKey) throw new AppError(503, "AI_SCHEDULER_NOT_CONFIGURED", "AI scheduling is unavailable. Configure NVIDIA_API_KEY on the server; existing scheduling tools remain available.");
+  const provider = client ?? createNvidiaClient({ apiKey });
   let result;
   try {
     result = await provider.chat.completions.create({
-      model: OPENROUTER_CHATBOT_MODEL,
+      model: NVIDIA_MODEL,
       temperature: 0,
-      max_tokens: 6000,
-      reasoning: { effort: "low", exclude: true },
-      response_format: { type: "json_schema", json_schema: { name: "schedule_draft", strict: true, schema: {
+      max_tokens: 8192,
+      reasoning_effort: "high",
+      tool_choice: { type: "function", function: { name: "propose_schedule" } },
+      tools: [{ type: "function", function: { name: "propose_schedule", description: "Return a draft schedule for staff review. This does not save appointments.", parameters: {
         type: "object", additionalProperties: false, required: ["summary", "assignments"], properties: {
           summary: { type: "string" },
           assignments: { type: "array", items: { type: "object", additionalProperties: false, required: ["groupId", "slotId", "count"], properties: { groupId: { type: "string" }, slotId: { type: "string" }, count: { type: "integer" } } } },
         },
-      } } },
+      } } }],
       messages: [
-        { role: "system", content: "Propose a distribution appointment schedule from anonymous group counts and slots. Assign every member of every group exactly once, using only its eligibleSlotIds. Existing occupied places are fixed. Never exceed slot capacity including occupied places. Prefer lower peak occupancy ratios across available slots, then earlier slots when ratios are equal. Handle groups with fewer eligible slots first. Return aggregated group/slot counts, omit zero counts. Give a short explanation in English of your proposed distribution; do not claim a proven optimum, invent facts or give instructions. JSON only. This is a proposal for staff review, not permission to save." },
+        { role: "system", content: "Propose a distribution appointment schedule from anonymous group counts and slots. Assign every member of every group exactly once, using only its eligibleSlotIds. Existing occupied places are fixed. Never exceed slot capacity including occupied places. Prefer lower peak occupancy ratios across available slots, then earlier slots when ratios are equal. Handle groups with fewer eligible slots first. Return aggregated group/slot counts, omit zero counts. Give a short explanation in English of your proposed distribution; do not claim a proven optimum, invent facts or give instructions. Call propose_schedule exactly once with the complete proposal. This is a proposal for staff review, not permission to save." },
         { role: "user", content: JSON.stringify(problem.input) },
       ],
-    }, { signal: AbortSignal.timeout(60_000) });
+    }, { signal: AbortSignal.timeout(90_000) });
   } catch (error) {
-    if (error.status === 401 || error.status === 403) throw new AppError(503, "AI_SCHEDULER_CREDENTIALS_REJECTED", "The AI service rejected its credentials. Ask the administrator to restore the AI connection. No appointments were saved.");
+    const failure = {
+      401: ["AI_SCHEDULER_CREDENTIALS_REJECTED", "The AI service rejected the server's API key. Ask the administrator to replace the NVIDIA key and restart the backend. No appointments were saved."],
+      402: ["AI_SCHEDULER_CREDITS_REQUIRED", "The AI account or API key has insufficient credits. Ask the administrator to review its balance and spending limit. No appointments were saved."],
+      403: ["AI_SCHEDULER_ACCESS_DENIED", "The AI service blocked this request. Ask the administrator to review the key's permissions and provider restrictions. No appointments were saved."],
+      429: ["AI_SCHEDULER_RATE_LIMITED", "The AI service has reached its request limit. Wait before trying again, or use the existing assignment tools. No appointments were saved."],
+    }[error.status];
+    if (failure) throw new AppError(503, ...failure);
     throw new AppError(503, "AI_SCHEDULER_UNAVAILABLE", "The AI provider is unavailable or timed out. Try again, or use the existing assignment tools. No appointments were saved.");
   }
   const choice = result?.choices?.[0];
   let raw;
   try {
-    if (choice?.finish_reason !== "stop") throw new Error("Incomplete response");
-    raw = JSON.parse(choice.message.content);
+    const calls = choice?.message?.tool_calls;
+    if (!["tool_calls", "stop"].includes(choice?.finish_reason) || calls?.length !== 1 || calls[0].type !== "function" || calls[0].function?.name !== "propose_schedule") throw new Error("Incomplete proposal");
+    raw = JSON.parse(calls[0].function.arguments);
   } catch { throw new AppError(502, "AI_SCHEDULE_INVALID_RESPONSE", "The AI returned an incomplete draft. Try generating again; no appointments were saved."); }
-  return { ...expandAiSuggestion(problem, raw), model: result.model || OPENROUTER_CHATBOT_MODEL };
+  return { ...expandAiSuggestion(problem, raw), model: result.model || NVIDIA_MODEL };
 }

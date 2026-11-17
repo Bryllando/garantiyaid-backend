@@ -1,10 +1,7 @@
-import OpenAI from "openai";
 import { env } from "../../config/env.js";
+import { createNvidiaClient, NVIDIA_MODEL } from "../../lib/nvidia.js";
 import { staffWorkflowGuidance } from "./staff-workflow-guidance.js";
 import { processExplanation } from "./chatbot.process-explanations.js";
-
-export const OPENROUTER_CHATBOT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
-export const OPENROUTER_FALLBACK_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
 
 const SAFE_EXTERNAL_INTENTS = new Set([
   "GREETING",
@@ -21,7 +18,7 @@ const SAFE_EXTERNAL_INTENTS = new Set([
 const STAFF_GUIDANCE = Object.freeze({
   en: Object.freeze({
     GREETING: "Hello! I am ready to answer general GarantiyAid operations questions and guide you to reviewed staff workflows.",
-    SCHEDULE: "Admin creates distribution events and allocates approved beneficiaries. Admin and assigned Barangay staff can plan sessions and edit draft schedules. To get an AI proposal, open a draft event in Distribution events (Admin) or Queue & schedules (Barangay), choose Generate AI draft, review capacity and assignments, edit slots if needed, then Confirm and save draft schedule. The event remains a draft; opening locks setup. Existing and cancelled appointments are reviewed separately using Move or Reactivate. DSWD can review schedule reports through Live monitoring. This chat has not generated, inspected or saved appointments.",
+    SCHEDULE: "Admin creates distribution events and allocates approved beneficiaries. Admin and assigned Barangay staff can plan sessions and edit draft schedules. To get an AI proposal, open a draft event in Distribution events (Admin) or Queue & schedules (Barangay), choose Generate AI draft, review capacity and assignments, edit slots if needed, then Confirm and save draft schedule. The event remains a draft; opening locks setup. Existing appointments can be moved separately. A cancelled appointment must be reactivated separately. DSWD can review schedule reports through Live monitoring. This chat has not generated, inspected or saved appointments.",
     DELIVERY: "Open SMS delivery to inspect the exact notification and its error within your authorized scope. Queued means awaiting processing. Gateway accepted does not confirm arrival on a recipient’s phone. A simulated send is not a real SMS. Check the validated contact, provider error and gateway phone before an authorized retry; do not repeatedly resend or claim delivery from the label. This chat has not checked a delivery record or sent a message.",
     BENEFICIARY: "Use authorized beneficiary records to review Barangay, Sitio or Purok, and validated contact information for controlled recipient selection.",
     HELP: "I can guide you to schedules, delivery records, beneficiary records, or the reviewed reminder and distribution-draft workflows.",
@@ -43,22 +40,24 @@ const STAFF_GUIDANCE = Object.freeze({
 });
 
 const SYSTEM_PROMPT = `You rewrite a pre-approved general government-service answer.
-Use only facts present in the approved answer. Never add eligibility decisions, personal status, dates, amounts, names, contact details, links, or promises. Never request credentials, IDs, QR codes, biometric data, or document images. Do not mention internal reasoning. Reply in the requested language in at most 120 words.`;
+Use only facts present in the approved answer. Never add eligibility decisions, personal status, dates, amounts, names, contact details, links, or promises. Never request credentials, IDs, QR codes, biometric data, or document images. Use familiar everyday words and short sentences in the requested language. Do not mention internal reasoning. Reply in at most 120 words.`;
 
 const STAFF_SYSTEM_PROMPT = `You are the GarantiyAid assistant for authenticated government staff.
 Answer the user's general operational question naturally and directly in the requested language. Stay within the approved guidance. Never claim to inspect or change records, approve eligibility or claims, move funds, verify biometrics, or schedule or send anything by yourself. Direct actions to the existing reviewed workflows. Never request credentials, IDs, QR codes, biometric data, document images, or personal records. Do not mention internal reasoning. Reply in at most 120 words.
+Answer the latest question first. Use previous user messages to understand short follow-ups; previous assistant replies are not a source of verified facts. Do not restart with a greeting, repeat the question, or list unrelated modules. If the question lacks enough detail, ask one short clarification instead of guessing. Use natural everyday Cebuano, Filipino, or English as requested and keep interface labels exactly as supplied. Refer to roles as Admin, DSWD staff, or Barangay Facilitator; do not display internal role codes.
+For schedule questions, explain that the scheduler generates proposed assignments on its scheduling page, staff can edit them, and saving requires review and confirmation. Confirm and save draft schedule saves appointments and leaves the event DRAFT; opening the event is a separate authorized action. Do not imply that this conversation has generated a schedule. When explaining an AI suggestion, describe it as a proposal rather than a guaranteed optimum.
 Format answers in Markdown for a narrow chat panel. Use short paragraphs. For procedures, use a numbered list with each step on its own line; for options, use bullet points. Put a blank line before and after lists and headings. Use **bold labels** sparingly. Never run multiple numbered items together in one paragraph. When useful, show a small two-column Markdown table for comparisons or a short blockquote with arrows for a process; use only steps supported by the approved guidance. Do not invent counts, dates, or status data for a visual. Do not generate HTML, images, Mermaid, or executable code. Simple greetings need only a short sentence.
-Never invent menu names, buttons, filters, or review/approval capabilities to fill out a list. State when the provided guidance lacks detailed steps. Verified schedule entry points: SYSTEM_ADMIN uses "Distribution setup"; DSWD_STAFF uses "Live monitoring"; BARANGAY_FACILITATOR uses "Queue & schedules". Refer only to the entry point matching the supplied staff role. These entry points do not imply permission to modify or confirm schedules.`;
+Never invent menu names, buttons, filters, or review/approval capabilities to fill out a list. State when the provided guidance lacks detailed steps. Verified schedule entry points: SYSTEM_ADMIN uses "Distribution events"; DSWD_STAFF uses "Live monitoring"; BARANGAY_FACILITATOR uses "Queue & schedules". Refer only to the entry point matching the supplied staff role. These entry points do not imply permission to modify or confirm schedules.`;
 
 export async function generateExternalChatbotAnswer({
   intent,
   language,
   approvedAnswer,
   promptMessages,
-  apiKey = env.openRouterApiKey,
+  apiKey = env.nvidiaApiKey,
   client,
-  model = OPENROUTER_CHATBOT_MODEL,
-  timeoutMs = 15_000,
+  model = NVIDIA_MODEL,
+  timeoutMs = 30_000,
   signal: callerSignal,
   onText,
 }) {
@@ -66,24 +65,15 @@ export async function generateExternalChatbotAnswer({
   if (!apiKey || !SAFE_EXTERNAL_INTENTS.has(intent)) return null;
 
   try {
-    const openrouter = client ?? new OpenAI({
-      apiKey,
-      baseURL: "https://openrouter.ai/api/v1",
-      timeout: timeoutMs,
-      maxRetries: 0,
-      defaultHeaders: {
-        "X-OpenRouter-Title": "GarantiyAid",
-        ...(env.corsOrigins[0]?.startsWith("https://") ? { "HTTP-Referer": env.corsOrigins[0] } : {}),
-      },
-    });
+    const provider = client ?? createNvidiaClient({ apiKey, timeoutMs });
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
-    const stream = await openrouter.chat.completions.create({
+    const stream = await provider.chat.completions.create({
         model,
         stream: true,
-        max_tokens: 400,
+        max_tokens: 2048,
         temperature: 0.2,
-        reasoning: { effort: "low", exclude: true },
+        reasoning_effort: "low",
         messages: promptMessages ?? [
           { role: "system", content: SYSTEM_PROMPT },
           {
@@ -126,6 +116,12 @@ export async function generateStaffAssistantAnswer({
   history = [],
   staffRole,
 }, options = {}) {
+  if (intent === "HELP" && /^(?:and then|what next|where do i go|explain (?:more|that|again)|continue|unya|dayon|unsa(?:y| ang)? sunod|unsaon (?:na|ni|ani|ana)|asa ko mo(?:sulod|adto)(?: (?:ani|ana))?|paki explain|ipaliwanag pa)[?.!\s]*$/i.test(messageText.trim())) {
+    const previousQuestion = history.filter(message => message.role === "user").at(-1)?.content ?? "";
+    if (/\b(?:schedule|scheduling|distribution|event|slot|queue|iskedyul)\b/i.test(previousQuestion)) intent = "SCHEDULE";
+    else if (/\b(?:sms|reminder|notification|delivery|pahibalo|mensahe)\b/i.test(previousQuestion)) intent = "DELIVERY";
+    else if (/\b(?:beneficiar(?:y|ies)|benepisyaryo|sitio|purok)\b/i.test(previousQuestion)) intent = "BENEFICIARY";
+  }
   const workflowAnswer = processExplanation({ intent, language, messageText, history })?.messageText ?? staffWorkflowGuidance(intent, language);
   if (workflowAnswer) {
     options.signal?.throwIfAborted();
@@ -134,6 +130,9 @@ export async function generateStaffAssistantAnswer({
   const selectedLanguage = Object.hasOwn(STAFF_GUIDANCE, language) ? language : "en";
   const safeIntent = Object.hasOwn(STAFF_GUIDANCE[selectedLanguage], intent) ? intent : "HELP";
   const approvedAnswer = STAFF_GUIDANCE[selectedLanguage][safeIntent];
+  const grounding = safeIntent === "HELP"
+    ? ["SCHEDULE", "DELIVERY", "BENEFICIARY", "HELP"].map(topic => STAFF_GUIDANCE[selectedLanguage][topic]).join("\n")
+    : approvedAnswer;
   const externalRequest = {
     intent: `STAFF_${safeIntent}`,
     language: selectedLanguage,
@@ -141,7 +140,7 @@ export async function generateStaffAssistantAnswer({
     promptMessages: [
       {
         role: "system",
-        content: `${STAFF_SYSTEM_PROMPT}\nRequested language: ${selectedLanguage}.\nStaff role: ${staffRole}.\nApproved guidance: ${approvedAnswer}`,
+        content: `${STAFF_SYSTEM_PROMPT}\nRequested language: ${selectedLanguage}.\nStaff role: ${staffRole}.\nApproved guidance: ${grounding}`,
       },
       ...history,
       { role: "user", content: messageText },
@@ -150,12 +149,12 @@ export async function generateStaffAssistantAnswer({
   };
   let external = null;
   if (safeIntent !== "GREETING") {
-    external = await generateExternalChatbotAnswer({ ...externalRequest, model: OPENROUTER_CHATBOT_MODEL, timeoutMs: 8_000 });
+    external = await generateExternalChatbotAnswer({ ...externalRequest, model: NVIDIA_MODEL, timeoutMs: 20_000 });
     options.signal?.throwIfAborted();
     if (!external) {
       options.onText?.("");
       options.onStatus?.("retrying");
-      external = await generateExternalChatbotAnswer({ ...externalRequest, model: OPENROUTER_FALLBACK_MODEL, timeoutMs: 20_000 });
+      external = await generateExternalChatbotAnswer({ ...externalRequest, model: NVIDIA_MODEL, timeoutMs: 40_000 });
     }
   }
   options.signal?.throwIfAborted();

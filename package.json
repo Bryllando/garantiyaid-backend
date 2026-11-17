@@ -10,6 +10,7 @@
     "test": "node --import ./scripts/test-environment.js --test",
     "dev": "node --watch --watch-preserve-output src/server.js",
     "start": "node src/server.js",
+    "ai:check": "node scripts/check-ai.js",
     "worker:notifications": "node src/workers/notification.worker.js",
     "biometric:ai:up": "docker compose -f docker-compose.biometric.yml up -d",
     "biometric:ai:down": "docker compose -f docker-compose.biometric.yml down",

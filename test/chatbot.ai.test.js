@@ -4,11 +4,10 @@ import {
   externalChatbotIntentAllowed,
   generateExternalChatbotAnswer,
   generateStaffAssistantAnswer,
-  OPENROUTER_CHATBOT_MODEL,
-  OPENROUTER_FALLBACK_MODEL,
 } from "../src/modules/chatbot/chatbot.ai.js";
+import { NVIDIA_MODEL } from "../src/lib/nvidia.js";
 
-const testApiKey = `sk-or-v1-${"a".repeat(64)}`;
+const testApiKey = `nvapi-${"a".repeat(64)}`;
 
 test("staff streaming clears an interrupted draft before streaming the fallback", async () => {
   const events = [];
@@ -64,10 +63,11 @@ test("a provider EOF or token limit cannot silently finalize a partial answer", 
   }
 });
 
-test("OpenRouter streams only an approved abstract answer and keeps reasoning private", async () => {
+test("NVIDIA streams only an approved abstract answer and keeps reasoning private", async () => {
   let request;
   let requestOptions;
   async function* stream() {
+    yield { choices: [{ delta: { reasoning_content: "PRIVATE REASONING", reasoning: "PRIVATE REASONING" } }] };
     yield { choices: [{ delta: { content: "Approved " } }] };
     yield { choices: [{ delta: { content: "guidance." } }] };
     yield { choices: [{ delta: {}, finish_reason: "stop" }] };
@@ -86,11 +86,12 @@ test("OpenRouter streams only an approved abstract answer and keeps reasoning pr
     },
   });
 
-  assert.deepEqual(result, { messageText: "Approved guidance.", model: OPENROUTER_CHATBOT_MODEL });
-  assert.equal(request.model, OPENROUTER_CHATBOT_MODEL);
+  assert.deepEqual(result, { messageText: "Approved guidance.", model: NVIDIA_MODEL });
+  assert.equal(request.model, NVIDIA_MODEL);
   assert.equal(request.stream, true);
   assert.ok(requestOptions.signal instanceof AbortSignal);
-  assert.deepEqual(request.reasoning, { effort: "low", exclude: true });
+  assert.equal(request.reasoning, undefined);
+  assert.equal(request.reasoning_effort, "low");
   assert.deepEqual(JSON.parse(request.messages[1].content), {
     language: "ceb",
     intent: "DOCUMENT_REQUIREMENTS",
@@ -161,7 +162,7 @@ test("staff guidance uses the current question and bounded conversation context"
   ]);
 });
 
-test("staff guidance returns a controlled reply when OpenRouter times out", async () => {
+test("staff guidance returns a controlled reply when NVIDIA times out", async () => {
   const result = await generateStaffAssistantAnswer({
     intent: "HELP",
     language: "ceb",
@@ -179,10 +180,10 @@ test("staff guidance returns a controlled reply when OpenRouter times out", asyn
   assert.match(result.messageText, /Makatabang ko/);
 });
 
-test("staff guidance uses the faster fallback model when the preferred model is unavailable", async () => {
+test("staff guidance retries the selected NVIDIA model after a failed request", async () => {
   const requestedModels = [];
   async function* stream() {
-    yield { model: "available/free-model", choices: [{ delta: { content: "Natural AI reply." } }] };
+    yield { model: NVIDIA_MODEL, choices: [{ delta: { content: "Natural AI reply." } }] };
     yield { choices: [{ delta: {}, finish_reason: "stop" }] };
   }
   const result = await generateStaffAssistantAnswer({
@@ -194,15 +195,15 @@ test("staff guidance uses the faster fallback model when the preferred model is 
     apiKey: testApiKey,
     client: { chat: { completions: { create: async ({ model }) => {
       requestedModels.push(model);
-      if (model === OPENROUTER_CHATBOT_MODEL) throw new Error("Provider unavailable");
+      if (requestedModels.length === 1) throw new Error("Provider unavailable");
       return stream();
     } } } },
   });
 
-  assert.deepEqual(requestedModels, [OPENROUTER_CHATBOT_MODEL, OPENROUTER_FALLBACK_MODEL]);
+  assert.deepEqual(requestedModels, [NVIDIA_MODEL, NVIDIA_MODEL]);
   assert.equal(result.messageText, "Natural AI reply.");
   assert.equal(result.externalAiUsed, true);
-  assert.equal(result.externalAiModel, "available/free-model");
+  assert.equal(result.externalAiModel, NVIDIA_MODEL);
 });
 
 test("simple staff greetings answer immediately without waiting for the large model", async () => {
@@ -220,4 +221,42 @@ test("simple staff greetings answer immediately without waiting for the large mo
   assert.equal(calls, 0);
   assert.equal(result.externalAiUsed, false);
   assert.match(result.messageText, /motubag ko/);
+});
+
+test("short follow-ups keep the previous user's topic without trusting assistant-invented facts", async () => {
+  for (const [previous, followUp, expected] of [
+    ['Asa ang AI schedule?', 'asa ko mosulod ani?', 'Generate AI draft'],
+    ['Where can I review distribution slots?', 'what next?', 'Generate AI draft'],
+    ['Where can I review SMS delivery?', 'explain more', 'Gateway accepted'],
+    ['Asa ang beneficiary records?', 'unya?', 'Sitio'],
+  ]) {
+    let prompt;
+    const result = await generateStaffAssistantAnswer({ intent: 'HELP', language: 'en', messageText: followUp, staffRole: 'BARANGAY_FACILITATOR', history: [{ role: 'user', content: previous }, { role: 'assistant', content: 'Invented: all claims are already approved.' }] }, {
+      apiKey: testApiKey,
+      client: { chat: { completions: { create: async function* (body) { prompt = body.messages[0].content; yield { choices: [{ delta: { content: 'Grounded follow-up.' }, finish_reason: 'stop' }] }; } } } },
+    });
+    assert.equal(result.externalAiUsed, true);
+    assert.ok(prompt.includes(expected));
+    assert.equal(prompt.includes('Invented:'), false);
+    assert.match(prompt, /previous assistant replies are not a source of verified facts/i);
+    assert.match(prompt, /BARANGAY_FACILITATOR/);
+  }
+  let calls = 0;
+  const fallback = await generateStaffAssistantAnswer({ intent: 'HELP', language: 'en', messageText: 'what next?', history: [{ role: 'assistant', content: 'A schedule was generated.' }] }, { apiKey: '', client: { chat: { completions: { create() { calls++; } } } } });
+  assert.equal(calls, 0);
+  assert.match(fallback.messageText, /I can guide you/);
+});
+
+test("general AI questions receive approved scheduler facts, while an unavailable model returns concise help", async () => {
+  let prompt;
+  const input = { intent: 'HELP', language: 'ceb', messageText: 'Unsa ang AI ani ug unsay akong buhaton?', staffRole: 'SYSTEM_ADMIN' };
+  await generateStaffAssistantAnswer(input, { apiKey: testApiKey, client: { chat: { completions: { create: async function* (body) { prompt = body.messages[0].content; yield { choices: [{ delta: { content: 'Tubag.' }, finish_reason: 'stop' }] }; } } } } });
+  assert.match(prompt, /Generate AI draft/);
+  assert.match(prompt, /Confirm and save draft schedule/);
+  assert.match(prompt, /Requested language: ceb/);
+  assert.match(prompt, /leaves the event DRAFT/);
+  assert.match(prompt, /do not display internal role codes/);
+  const fallback = await generateStaffAssistantAnswer(input, { apiKey: '' });
+  assert.match(fallback.messageText, /^Makatabang ko/);
+  assert.ok(fallback.messageText.length < 250);
 });
