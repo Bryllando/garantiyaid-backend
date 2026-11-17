@@ -6,6 +6,7 @@ import { isRegisteredServiceArea } from "../barangays/barangay.service.js";
 import {
   assertDistributionManageAllowed,
   assertDistributionReadAllowed,
+  assertDistributionScheduleManageAllowed,
 } from "./distribution.policy.js";
 import {
   assertDistributionSlotsManageable,
@@ -85,7 +86,7 @@ async function assertNoSessionSlotConflict(database, distribution, rows) {
 }
 
 export const generateDistributionSlots = asyncHandler(async (req, res) => {
-  assertDistributionManageAllowed(req.staffUser);
+  assertDistributionScheduleManageAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
   const { capacity, sessions } = req.validatedBody;
 
@@ -212,7 +213,7 @@ export const getDistributionSlot = asyncHandler(async (req, res) => {
 });
 
 export const updateDistributionSlot = asyncHandler(async (req, res) => {
-  assertDistributionManageAllowed(req.staffUser);
+  assertDistributionScheduleManageAllowed(req.staffUser);
   const { distributionId, slotId } = req.validatedParams;
   const { capacity } = req.validatedBody;
 

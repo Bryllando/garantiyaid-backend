@@ -360,6 +360,8 @@ test("Phase 6 route surface adds simulated credit, transaction monitoring, and r
     { path: "/:distributionId/allocations/:allocationId/reactivate", methods: ["post"] },
     { path: "/:distributionId/schedulable-allocations", methods: ["get"] },
     { path: "/:distributionId/schedules/generate", methods: ["post"] },
+    { path: "/:distributionId/schedules/ai-draft", methods: ["post"] },
+    { path: "/:distributionId/schedules/ai-confirm", methods: ["post"] },
     { path: "/:distributionId/schedules", methods: ["post"] },
     { path: "/:distributionId/schedules", methods: ["get"] },
     { path: "/:distributionId/schedules/:scheduleId", methods: ["get"] },

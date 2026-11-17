@@ -2,7 +2,10 @@ import { Router } from "express";
 import { authenticateStaff } from "../../middleware/authenticate.js";
 import { authorizeRoles } from "../../middleware/authorize.js";
 import { validateBody, validateParams, validateQuery } from "../../middleware/validate.js";
-import { biometricRateLimiter } from "../../middleware/rateLimit.js";
+import { biometricRateLimiter, chatbotRateLimiter } from "../../middleware/rateLimit.js";
+import { z } from "zod";
+import { previewAiDistributionSchedule, confirmAiDistributionSchedule } from "./distributionScheduleAi.controller.js";
+import { aiScheduleConfirmSchema } from "./distributionScheduleAi.service.js";
 import {
   cancelDistribution,
   closeDistribution,
@@ -190,7 +193,7 @@ distributionRoutes.get(
 );
 distributionRoutes.post(
   "/:distributionId/slots/generate",
-  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  authorizeRoles(...DISTRIBUTION_SCHEDULE_MANAGE_ROLES),
   validateParams(distributionIdSchema),
   validateBody(generateDistributionSlotsSchema),
   generateDistributionSlots,
@@ -203,7 +206,7 @@ distributionRoutes.get(
 );
 distributionRoutes.patch(
   "/:distributionId/slots/:slotId",
-  authorizeRoles(...DISTRIBUTION_MANAGE_ROLES),
+  authorizeRoles(...DISTRIBUTION_SCHEDULE_MANAGE_ROLES),
   validateParams(distributionSlotParamsSchema),
   validateBody(updateDistributionSlotSchema),
   updateDistributionSlot,
@@ -272,6 +275,22 @@ distributionRoutes.post(
   validateParams(distributionIdSchema),
   validateBody(generateDistributionSchedulesSchema),
   generateDistributionSchedules,
+);
+
+distributionRoutes.post(
+  "/:distributionId/schedules/ai-draft",
+  authorizeRoles(...DISTRIBUTION_SCHEDULE_MANAGE_ROLES),
+  chatbotRateLimiter,
+  validateParams(distributionIdSchema),
+  validateBody(z.object({}).strict()),
+  previewAiDistributionSchedule,
+);
+distributionRoutes.post(
+  "/:distributionId/schedules/ai-confirm",
+  authorizeRoles(...DISTRIBUTION_SCHEDULE_MANAGE_ROLES),
+  validateParams(distributionIdSchema),
+  validateBody(aiScheduleConfirmSchema),
+  confirmAiDistributionSchedule,
 );
 distributionRoutes.post(
   "/:distributionId/schedules",

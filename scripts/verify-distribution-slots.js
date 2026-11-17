@@ -173,7 +173,6 @@ try {
 
   for (const [label, token] of [
     ["DSWD", dswdToken],
-    ["Barangay", facilitatorToken],
   ]) {
     const forbiddenGenerate = await request(`/distributions/${primaryId}/slots/generate`, {
       method: "POST",
@@ -185,10 +184,10 @@ try {
 
   const generate = await request(`/distributions/${primaryId}/slots/generate`, {
     method: "POST",
-    token: adminToken,
+    token: facilitatorToken,
     body: { capacity: 30 },
   });
-  requireStatus(generate, 201, "admin slot generation");
+  requireStatus(generate, 201, "assigned Barangay slot generation");
   const slots = generate.payload.data.slots;
   if (
     slots.length !== 4
@@ -229,6 +228,14 @@ try {
   );
   requireStatus(crossBarangayRead, 404, "cross-Barangay slot read protection");
 
+  for (const [path, method] of [
+    [`/distributions/${otherDistributionId}/slots/generate`, "POST"],
+    [`/distributions/${otherDistributionId}/slots/${firstSlotId}`, "PATCH"],
+  ]) {
+    const blocked = await request(path, { method, token: facilitatorToken, body: { capacity: 40 } });
+    requireStatus(blocked, 404, "cross-Barangay slot write protection");
+  }
+
   const slotDetail = await request(
     `/distributions/${primaryId}/slots/${firstSlotId}`,
     { token: dswdToken },
@@ -237,7 +244,6 @@ try {
 
   for (const [label, token] of [
     ["DSWD", dswdToken],
-    ["Barangay", facilitatorToken],
   ]) {
     const forbiddenCapacity = await request(
       `/distributions/${primaryId}/slots/${firstSlotId}`,
@@ -245,6 +251,12 @@ try {
     );
     requireStatus(forbiddenCapacity, 403, `${label} slot-capacity RBAC check`);
   }
+
+  const facilitatorCapacity = await request(
+    `/distributions/${primaryId}/slots/${firstSlotId}`,
+    { method: "PATCH", token: facilitatorToken, body: { capacity: 35 } },
+  );
+  requireStatus(facilitatorCapacity, 200, "assigned Barangay slot capacity update");
 
   const updateCapacity = await request(
     `/distributions/${primaryId}/slots/${firstSlotId}`,

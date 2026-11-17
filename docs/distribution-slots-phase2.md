@@ -2,7 +2,7 @@
 
 ## Scope
 
-System Administrators generate and manage time slots for draft distribution events. DSWD Staff can monitor all slots. Barangay Facilitators can read slots only for distribution events in their assigned Barangay.
+System Administrators and assigned Barangay Facilitators generate time slots and edit capacity for draft distribution events. Facilitators access these controls under Distribution day > Queue & schedules > Service sessions and capacity, scoped to their assigned Barangay. DSWD Staff can monitor all slots. Closing and reopening slots remain restricted to System Administrators.
 
 This phase does not create allocations, beneficiary schedules, queue numbers, QR tokens, claims, payouts, or notifications.
 
@@ -10,10 +10,10 @@ This phase does not create allocations, beneficiary schedules, queue numbers, QR
 
 | Method | Endpoint | Access |
 |---|---|---|
-| `POST` | `/api/v1/distributions/:distributionId/slots/generate` | System Administrator |
+| `POST` | `/api/v1/distributions/:distributionId/slots/generate` | System Administrator, assigned Barangay Facilitator |
 | `GET` | `/api/v1/distributions/:distributionId/slots` | All staff, Barangay-scoped |
 | `GET` | `/api/v1/distributions/:distributionId/slots/:slotId` | All staff, Barangay-scoped |
-| `PATCH` | `/api/v1/distributions/:distributionId/slots/:slotId` | System Administrator |
+| `PATCH` | `/api/v1/distributions/:distributionId/slots/:slotId` | System Administrator, assigned Barangay Facilitator |
 | `POST` | `/api/v1/distributions/:distributionId/slots/:slotId/close` | System Administrator |
 | `POST` | `/api/v1/distributions/:distributionId/slots/:slotId/reopen` | System Administrator |
 
@@ -138,9 +138,9 @@ Expected: `200 OK`. `slotStart` and `slotEnd` must end in `+08:00`.
 
 ### 7. Confirm wrong-role protection
 
-Repeat the generation request using `{{dswdToken}}`, then `{{barangayToken}}`.
+Repeat the generation request using `{{dswdToken}}`.
 
-Expected for each: `403 FORBIDDEN`. Role authorization runs before the duplicate-generation check.
+Expected: `403 FORBIDDEN`. Role authorization runs before the duplicate-generation check. An assigned Barangay token may generate slots for a draft event without slots; repeating generation returns `409`. Writing to another Barangay's event returns `404`.
 
 ### 8. Update slot capacity as System Administrator
 
@@ -156,7 +156,7 @@ Content-Type: application/json
 }
 ```
 
-Expected: `200 OK`, capacity 40. The same request with DSWD or Barangay token must return `403 FORBIDDEN`.
+Expected: `200 OK`, capacity 40. The same request with an assigned Barangay token also succeeds. A DSWD token returns `403 FORBIDDEN`; a facilitator assigned to another Barangay receives `404`. Open, closed, and cancelled events reject capacity edits.
 
 ### 9. Close and reopen the slot
 
