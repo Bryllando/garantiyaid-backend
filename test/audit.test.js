@@ -144,7 +144,7 @@ test("audit API route surface is strictly read-only", () => {
     .filter((layer) => layer.route)
     .flatMap((layer) => Object.keys(layer.route.methods));
 
-  assert.deepEqual(routeMethods, ["get", "get"]);
+  assert.deepEqual(routeMethods, ["get", "get", "get"]);
   for (const mutationMethod of ["post", "put", "patch", "delete"]) {
     assert.equal(routeMethods.includes(mutationMethod), false);
   }

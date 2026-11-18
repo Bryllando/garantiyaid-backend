@@ -115,6 +115,8 @@ test("Phase 8 route surface exposes every dashboard, report, fund, and CSV endpo
     { path: "/distributions/:distributionId", methods: ["get"] },
   ]);
   assert.deepEqual(routeSurface(reportRoutes), [
+    { path: "/snapshot", methods: ["get"] },
+    { path: "/explain", methods: ["post"] },
     { path: "/distributions/:distributionId/summary", methods: ["get"] },
     { path: "/distributions/:distributionId/claims", methods: ["get"] },
     { path: "/distributions/:distributionId/schedules", methods: ["get"] },

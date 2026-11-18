@@ -142,6 +142,15 @@ export async function getAuditLogOrThrow(auditId) {
   return sanitizeAuditLog(auditLog);
 }
 
+export async function getAuditExport(filters, database = prisma) {
+  const auditLogs = await database.auditLog.findMany({
+    where: buildAuditLogWhere(filters),
+    select: auditLogPublicSelect,
+    orderBy: [{ createdAt: "desc" }, { auditId: "desc" }],
+  });
+  return { generatedAt: new Date().toISOString(), timeZone: "Asia/Manila", auditLogs: auditLogs.map(sanitizeAuditLog), total: auditLogs.length };
+}
+
 export async function writeAuditLog({
   userId,
   actorType = "STAFF",

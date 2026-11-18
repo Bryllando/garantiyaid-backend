@@ -1,6 +1,8 @@
 import { writeAuditLog } from "../audit/audit.service.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
+import { generateReportSnapshot, reportFacts } from "./reportSnapshot.service.js";
+import { explainReportFacts } from "./report.ai.js";
 import {
   assertDetailedReportAllowed,
   assertDistributionSummaryReportAllowed,
@@ -137,4 +139,19 @@ export const exportDistributionCsv = asyncHandler(async (req, res) => {
   });
   applyCsvDownloadHeaders(res, exported.filename);
   return res.status(200).send(exported.csv);
+});
+
+export const getReportSnapshot = asyncHandler(async (req, res) => {
+  const report = await generateReportSnapshot(req.validatedQuery, req.staffUser);
+  report.facts = reportFacts(report);
+  await recordReportAction(req, { action: "REPORT_SNAPSHOT_GENERATED", reportType: report.reportType, distributionId: report.distributionId });
+  res.status(200).json({ success: true, data: { report } });
+});
+
+export const explainReportSnapshot = asyncHandler(async (req, res) => {
+  const report = await generateReportSnapshot(req.validatedBody, req.staffUser);
+  report.facts = reportFacts(report);
+  report.aiExplanation = await explainReportFacts(report.facts);
+  await recordReportAction(req, { action: "REPORT_AI_HIGHLIGHTS_GENERATED", reportType: report.reportType, distributionId: report.distributionId });
+  res.status(200).json({ success: true, data: { report } });
 });

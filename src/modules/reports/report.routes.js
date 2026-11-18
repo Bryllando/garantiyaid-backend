@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { authenticateStaff } from "../../middleware/authenticate.js";
 import { authorizeRoles } from "../../middleware/authorize.js";
-import { validateParams, validateQuery } from "../../middleware/validate.js";
+import { validateBody, validateParams, validateQuery } from "../../middleware/validate.js";
+import { reportSnapshotQuerySchema } from "./report.schemas.js";
 import { reportRateLimiter } from "../../middleware/rateLimit.js";
 import {
   DETAILED_REPORT_ROLES,
@@ -22,11 +23,15 @@ import {
   getDistributionSummaryReport,
   getFundUtilizationReport,
   getQueueScheduleReport,
+  getReportSnapshot,
+  explainReportSnapshot,
 } from "./report.controller.js";
 
 const reportRoutes = Router();
 
 reportRoutes.use(authenticateStaff, reportRateLimiter);
+reportRoutes.get("/snapshot", authorizeRoles(...DETAILED_REPORT_ROLES), validateQuery(reportSnapshotQuerySchema), getReportSnapshot);
+reportRoutes.post("/explain", authorizeRoles(...DETAILED_REPORT_ROLES), validateBody(reportSnapshotQuerySchema), explainReportSnapshot);
 reportRoutes.get(
   "/distributions/:distributionId/summary",
   authorizeRoles(...DISTRIBUTION_SUMMARY_REPORT_ROLES),
