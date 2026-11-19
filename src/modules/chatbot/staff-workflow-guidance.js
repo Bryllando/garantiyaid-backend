@@ -1,4 +1,6 @@
 // Grounded in the implemented screens and policies. Draft beneficiary FAQs are review material, not published policy.
+import { isSystemOverviewQuestion, normalizeChatbotText } from "./chatbot.intent.js";
+
 export const STAFF_WORKFLOW_GUIDANCE = {
   DOCUMENT_REQUIREMENTS: [
     '1. Open Assistance programs and check the selected program’s published requirements.\n2. Review the beneficiary’s documents in the authorized record.\n3. Explain missing items and the correction process. Confirm unclear requirements with the responsible office.\n\nEligibility, documents and assistance amounts depend on the program. I cannot decide eligibility or inspect a personal application in this conversation.',
@@ -34,4 +36,170 @@ export const STAFF_WORKFLOW_GUIDANCE = {
 
 export function staffWorkflowGuidance(intent, language) {
   return STAFF_WORKFLOW_GUIDANCE[intent]?.[{ en: 0, fil: 1, ceb: 2 }[language] ?? 0];
+}
+
+const staffOverview = [
+  "GarantiyAid tracks assistance from enrollment to receipt.\n\n1. Barangay staff register beneficiaries and submit enrollments for review. An authorized reviewer records the decision.\n2. Admin prepares distribution events and allocates assistance. Authorized staff assign appointments.\n3. Staff complete the event’s required identity checks. The assigned Barangay Facilitator records physical handovers. DSWD staff record simulated wallet credits for wallet events. Staff can then review the recorded outcome and receipt.",
+  "Sinusubaybayan ng GarantiyAid ang ayuda mula enrollment hanggang resibo.\n\n1. Nirerehistro ng Barangay staff ang beneficiaries at isinusumite ang enrollments. Ang awtorisadong reviewer ang nagtatala ng desisyon.\n2. Inihahanda ng Admin ang distribution event at allocation. Ang awtorisadong staff ang nagtatakda ng appointment.\n3. Kinukumpleto ng staff ang identity checks ng event. Itinatala ng nakatalagang Barangay Facilitator ang handover. Para sa wallet events, DSWD staff ang nagtatala ng simulated credit. Makikita ng staff ang resulta at resibo pagkatapos.",
+  "Ang GarantiyAid nagsubay sa ayuda gikan sa enrollment hangtod sa resibo.\n\n1. Ang Barangay staff mo-register sa beneficiaries ug mo-submit sa enrollments. Ang awtorisadong reviewer motala sa desisyon.\n2. Ang Admin moandam sa distribution event ug allocation. Ang awtorisadong staff mo-assign sa appointment.\n3. Kompletohon sa staff ang required identity checks sa event. Ang assigned Barangay Facilitator motala sa physical handover. Sa wallet events, DSWD staff ang motala sa simulated credit. Dayon masusi sa staff ang resulta ug resibo.",
+];
+
+const staffStart = {
+  SYSTEM_ADMIN: [
+    "Start in **Assistance programs** or **Distribution events**. Open **Reports** to review distribution activity and export records.",
+    "Magsimula sa **Assistance programs** o **Distribution events**. Sa **Reports** makikita ang distribution activity at mga export.",
+    "Sugdi sa **Assistance programs** o **Distribution events**. Ablihi ang **Reports** para makita ang distribution activity ug ma-export ang records.",
+  ],
+  DSWD_STAFF: [
+    "Start in **Enrollment review** for submissions, **Live monitoring** for distributions, or **Reports** for analysis and exports.",
+    "Buksan ang **Enrollment review** para sa submissions, **Live monitoring** para sa distributions, o **Reports** para sa pagsusuri at exports.",
+    "Ablihi ang **Enrollment review** para sa submissions, **Live monitoring** para sa distributions, o **Reports** para sa analysis ug exports.",
+  ],
+  BARANGAY_FACILITATOR: [
+    "Start in **Beneficiaries**, **Queue & schedules**, or **Releases & receipts** for your assigned barangay.",
+    "Magsimula sa **Beneficiaries**, **Queue & schedules**, o **Releases & receipts** para sa nakatalaga mong barangay.",
+    "Sugdi sa **Beneficiaries**, **Queue & schedules**, o **Releases & receipts** sa imong assigned barangay.",
+  ],
+};
+
+const reportGuidance = [
+  "1. Open **Reports**. The distribution status report shows authorized event totals.\n2. For details, choose a report type and event. Apply the relevant filters, then select **Generate report**.\n3. **Download report PDF** uses the generated report’s coverage. A **full-event CSV** covers the selected event. **Explain with AI** summarizes the report’s figures.",
+  "1. Buksan ang **Reports** para makita ang totals ng awtorisadong distribution events.\n2. Piliin ang report type at event. Ilagay ang filters, pagkatapos piliin ang **Generate report**.\n3. Sakop ng **Download report PDF** ang generated report. Sakop ng **full-event CSV** ang napiling event. Ipinapaliwanag ng **Explain with AI** ang mga numero sa report.",
+  "1. Ablihi ang **Reports** para makita ang totals sa awtorisadong distribution events.\n2. Pilia ang report type ug event, i-apply ang filters, dayon pilia ang **Generate report**.\n3. Ang **Download report PDF** mosunod sa scope sa generated report. Ang **full-event CSV** para sa napiling event. Ang **Explain with AI** mopasabot sa figures sa report.",
+];
+
+const scheduleGuidance = {
+  SYSTEM_ADMIN: [
+    "Open **Distribution events** and choose a draft. Confirm the program, allocations, sessions, and slot capacity. **Generate AI draft** proposes assignments for you to review and edit. **Confirm and save draft schedule** saves the appointments. Opening the event is a separate action. Move existing appointments separately. A cancelled appointment must be reactivated separately.",
+    "Sa **Distribution events**, piliin ang draft at suriin ang programa, allocations, sessions at capacity. Nagmumungkahi ng assignments ang **Generate AI draft**. Suriin at ayusin ang proposal, pagkatapos piliin ang **Confirm and save draft schedule**. Hiwalay ang pagbubukas ng event at paglipat o pag-reactivate ng appointment.",
+    "Sa **Distribution events**, pilia ang draft ug susiha ang program, allocations, sessions ug capacity. Ang **Generate AI draft** mohatag og proposal. Ribyuha ug usba kung kinahanglan, dayon pilia ang **Confirm and save draft schedule**. Lahi ang pag-open sa event ug pagbalhin o pag-reactivate sa appointment.",
+  ],
+  DSWD_STAFF: [
+    "Open **Live monitoring** and select a distribution to review appointments, check-ins, and missed schedules. Use **Reports** for a filtered queue report. Send scheduling corrections to Admin or authorized barangay scheduling staff.",
+    "Sa **Live monitoring**, piliin ang distribution para suriin ang appointments, check-ins at missed schedules. Gamitin ang **Reports** para sa filtered queue report. Ipaabot ang mga correction sa Admin o awtorisadong barangay scheduling staff.",
+    "Sa **Live monitoring**, pilia ang distribution para masusi ang appointments, check-ins ug missed schedules. Gamita ang **Reports** para sa filtered queue report. Ipaabot ang corrections sa Admin o awtorisadong barangay scheduling staff.",
+  ],
+  BARANGAY_FACILITATOR: [
+    "Open **Queue & schedules** for your assigned barangay and select the event. For a draft event, check session capacity and review any assignments from **Generate AI draft**. Use **Confirm and save draft schedule** after review. Admin handles opening the event. Use the event’s appointment controls to review any moves or reactivations.",
+    "Sa **Queue & schedules**, piliin ang event ng iyong barangay. Para sa draft, suriin ang session capacity at assignments mula sa **Generate AI draft** bago piliin ang **Confirm and save draft schedule**. Admin ang nagbubukas ng event. Gamitin ang appointment controls para sa paglipat o pag-reactivate.",
+    "Sa **Queue & schedules**, pilia ang event sa imong barangay. Para sa draft, susiha ang session capacity ug proposal gikan sa **Generate AI draft** una mopili sa **Confirm and save draft schedule**. Admin ang mo-open sa event. Gamita ang appointment controls para sa pagbalhin o pag-reactivate.",
+  ],
+};
+
+const afterCheckIn = [
+  "After check-in, complete every identity check required for that event. The assigned Barangay Facilitator records a physical handover, or authorized DSWD staff record the simulated wallet credit for a wallet event. The receipt follows the recorded completion.",
+  "Pagkatapos ng check-in, kumpletuhin ang mga identity check na kailangan ng event. Itinatala ng nakatalagang Barangay Facilitator ang physical handover. Para sa wallet event, itinatala ng awtorisadong DSWD staff ang simulated credit. Susunod ang resibo kapag recorded na ang completion.",
+  "Human sa check-in, kompletoha ang tanang identity checks nga gikinahanglan sa event. Ang assigned Barangay Facilitator motala sa physical handover. Sa wallet event, ang awtorisadong DSWD staff motala sa simulated credit. Ang resibo mosunod sa natala nga completion.",
+];
+
+export function staffScheduleGuidance(language, staffRole) {
+  const index = { en: 0, fil: 1, ceb: 2 }[language] ?? 0;
+  return Object.hasOwn(scheduleGuidance, staffRole) ? scheduleGuidance[staffRole][index] : undefined;
+}
+
+export function staffOverviewGuidance(language, staffRole) {
+  const index = { en: 0, fil: 1, ceb: 2 }[language] ?? 0;
+  const entryPoints = Object.hasOwn(staffStart, staffRole) ? staffStart[staffRole][index] : undefined;
+  return [staffOverview[index], entryPoints].filter(Boolean).join("\n\n");
+}
+
+const systemWalkthrough = [
+  `### GarantiyAid walkthrough
+
+For your consultation, follow one fictional beneficiary through a physical-assistance event. At each step, show the record that the next staff member will use.
+
+| Step and who handles it | What to do and verify |
+| --- | --- |
+| **1. Program setup · DSWD staff** | In **Assistance programs**, add the requirements and activate the program. Check that the program is active before enrolling anyone. |
+| **2. Enrollment · Barangay Facilitator** | In **Beneficiaries**, search first, then register the person if needed. Upload each required document, choose the active program and select **Submit enrollment**. Keep the enrollment reference for the reviewer. |
+| **3. Review · DSWD staff or independent Admin** | In **Enrollment review**, select **Start validation** and review each document and the eligibility result. Check for **Approved** after approving, or record the correction needed before returning the case. |
+| **4. Event and queue · Admin** | In **Distribution events**, draft the event, set the package and session capacity, allocate the approved beneficiary and save an appointment. Check the date, slot and beneficiary, then use **Open distribution event**. Issue a QR card separately for an event that uses QR. |
+| **5. Verification · Authorized staff** | Select the exact appointment and complete the event’s identity checks. Show the **Checked in** appointment and verified claim. If a required check is pending, use **Continue identity checks** before any handover. |
+| **6. Handover and receipt · Barangay Facilitator** | In **Releases & receipts**, record the actual quantity and acknowledgment or evidence reference. Save the release, then select **Issue receipt** and check the details. |
+| **7. Reconciliation · Admin** | In **Distribution reconciliation**, compare the handover, receipt and log. Resolve any findings before **Close distribution event**. Show the final status and audit history. |
+
+**What to explain during the demo**
+
+- A different user reviews the enrollment. Admin allocates approved beneficiaries to the event, then schedules them.
+- A verified claim is ready for the release workflow. The recorded handover and issued receipt show what happened next.
+- For a simulated wallet event, authorized DSWD staff record the simulated credit after verification.`,
+  `### Walkthrough ng GarantiyAid
+
+Para sa consultation, sundan ang isang kathang-isip na beneficiary sa isang physical-assistance event. Sa bawat hakbang, ipakita ang record na gagamitin ng susunod na staff.
+
+| Hakbang at responsable | Gawin at suriin |
+| --- | --- |
+| **1. Programa · DSWD staff** | Sa **Assistance programs**, idagdag ang requirements at i-activate ang programa. Tiyaking aktibo ito bago mag-enroll. |
+| **2. Enrollment · Barangay Facilitator** | Sa **Beneficiaries**, hanapin muna ang tao bago mag-register. I-upload ang bawat kailangan na dokumento, piliin ang programa at gamitin ang **Submit enrollment**. Itabi ang enrollment reference para sa reviewer. |
+| **3. Review · DSWD staff o independent Admin** | Sa **Enrollment review**, piliin ang **Start validation** at suriin ang bawat dokumento at eligibility result. Tingnan kung **Approved** pagkatapos mag-approve, o itala ang kailangang itama bago ibalik ang case. |
+| **4. Event at pila · Admin** | Sa **Distribution events**, gumawa ng draft, itakda ang package at session capacity, i-allocate ang approved beneficiary at i-save ang appointment. Suriin ang petsa, slot at pangalan bago gamitin ang **Open distribution event**. Hiwalay ang pag-issue ng QR card para sa event na gumagamit ng QR. |
+| **5. Verification · Awtorisadong staff** | Piliin ang tamang appointment at kumpletuhin ang identity checks ng event. Ipakita ang **Checked in** na appointment at verified claim. Kung may pending na check, gamitin ang **Continue identity checks** bago ang handover. |
+| **6. Handover at resibo · Barangay Facilitator** | Sa **Releases & receipts**, itala ang aktuwal na dami at acknowledgment o evidence reference. I-save ang release, piliin ang **Issue receipt** at suriin ang detalye. |
+| **7. Reconciliation · Admin** | Sa **Distribution reconciliation**, ihambing ang handover, resibo at log. Ayusin ang findings bago gamitin ang **Close distribution event**. Ipakita ang final status at audit history. |
+
+**Ipaliwanag sa demo**
+
+- Ibang user ang magre-review ng enrollment. Admin ang nag-a-allocate ng approved beneficiaries sa event bago sila i-schedule.
+- Kapag verified ang claim, maaari nang simulan ang release workflow. Ang handover record at resibo ang magpapakita ng kinalabasan.
+- Para sa simulated wallet event, ang awtorisadong DSWD staff ang nagtatala ng simulated credit pagkatapos ng verification.`,
+  `### Walkthrough sa GarantiyAid
+
+Para sa consultation, sunda ang usa ka hinimo nga beneficiary sa physical-assistance event. Sa matag lakang, ipakita ang record nga gamiton sa sunod nga staff.
+
+| Lakang ug responsable | Buhaton ug susihon |
+| --- | --- |
+| **1. Programa · DSWD staff** | Sa **Assistance programs**, idugang ang requirements ug i-activate ang programa. Susiha nga active kini una mag-enroll. |
+| **2. Enrollment · Barangay Facilitator** | Sa **Beneficiaries**, pangitaa una ang tawo sa dili pa mag-register. I-upload ang matag required document, pilia ang programa ug gamita ang **Submit enrollment**. Tipigi ang enrollment reference para sa reviewer. |
+| **3. Review · DSWD staff o independent Admin** | Sa **Enrollment review**, pilia ang **Start validation** ug susiha ang matag dokumento ug eligibility result. Susiha ang **Approved** nga status human mo-approve, o itala ang angay tul-iron una ibalik ang case. |
+| **4. Event ug pila · Admin** | Sa **Distribution events**, paghimo og draft, itakda ang package ug session capacity, i-allocate ang approved beneficiary ug i-save ang appointment. Susiha ang petsa, slot ug tawo una mopili sa **Open distribution event**. Lahi ang pag-issue og QR card para sa event nga naggamit og QR. |
+| **5. Verification · Awtorisadong staff** | Pilia ang tukmang appointment ug kompletoha ang identity checks sa event. Ipakita ang **Checked in** nga appointment ug verified claim. Kung naa pay pending nga check, gamita ang **Continue identity checks** una itunol ang ayuda. |
+| **6. Handover ug resibo · Barangay Facilitator** | Sa **Releases & receipts**, itala ang aktuwal nga gidaghanon ug acknowledgment o evidence reference. I-save ang release, pilia ang **Issue receipt** ug susiha ang detalye. |
+| **7. Reconciliation · Admin** | Sa **Distribution reconciliation**, itandi ang handover, resibo ug log. Sulbara ang findings una mopili sa **Close distribution event**. Ipakita ang kataposang status ug audit history. |
+
+**Ipasabot panahon sa demo**
+
+- Lain nga user ang mo-review sa enrollment. Ang Admin mo-allocate sa approved beneficiaries sa event una sila i-schedule.
+- Kung verified na ang claim, puwede nang sugdan ang release workflow. Ang handover record ug resibo magpakita sa nahitabo.
+- Sa simulated wallet event, ang awtorisadong DSWD staff motala sa simulated credit human sa verification.`,
+];
+
+const fullSystemFlow = /\b(?:(?:flow|workflow|walkthrough|process|proseso|daloy) (?:of|for|sa|ng) (?:garantiyaid|(?:this|the|whole) (?:system|app)|sistemang ito|kini nga system)|(?:garantiyaid|system) (?:flow|workflow|walkthrough)|(?:from|gikan sa|mula) enrollment (?:to|hangtod|hanggang)(?: sa)? (?:receipt|release|resibo))\b/;
+const stepByStep = /\b(?:step by step|in detail|in a table|walk me through|hakbang hakbang|matag lakang|tagsa tagsa)\b/;
+const detailFollowUp = /^(?:(?:please|can you|could you|palihog|paki) )*(?:(?:explain|show|walk me through)(?: (?:it|that|more))?(?: (?:step by step|in detail))?|(?:show|make|put) (?:it|that) (?:as|in|into) a table|make (?:it|that) a table|ipasabot pa|ipaliwanag pa)$/;
+
+function asksForSystemWalkthrough(question) {
+  return fullSystemFlow.test(question) || (stepByStep.test(question) && isSystemOverviewQuestion(question
+    .replace(stepByStep, " ").replace(/\s+/g, " ").trim()
+    .replace(/ for (?:my |a |the )?consultation$/, "")));
+}
+
+export function staffSystemWalkthrough({ intent, language, messageText, history }) {
+  if (!["HELP", "SCHEDULE", "BENEFICIARY", "DOCUMENT_REQUIREMENTS", "ENROLLMENT", "IDENTITY", "RELEASE"].includes(intent)) return undefined;
+  const question = normalizeChatbotText(messageText);
+  const previousQuestion = detailFollowUp.test(question)
+    ? history.findLast(message => message.role === "user" && !detailFollowUp.test(normalizeChatbotText(message.content)))?.content
+    : undefined;
+  if (asksForSystemWalkthrough(question) || (previousQuestion && (
+    isSystemOverviewQuestion(previousQuestion) || asksForSystemWalkthrough(normalizeChatbotText(previousQuestion))
+  ))) {
+    return systemWalkthrough[{ en: 0, fil: 1, ceb: 2 }[language] ?? 0];
+  }
+}
+
+export function staffNavigationGuidance({ intent, language, messageText, staffRole }) {
+  if (!["HELP", "SCHEDULE", "BENEFICIARY"].includes(intent)) return undefined;
+  if (intent === "HELP" && isSystemOverviewQuestion(messageText)) {
+    return staffOverviewGuidance(language, staffRole);
+  }
+  const question = normalizeChatbotText(messageText);
+  const index = { en: 0, fil: 1, ceb: 2 }[language] ?? 0;
+  if (/\b(?:check in|checked in)\b/.test(question) && /\b(?:after|next|sunod|human sa|pagkatapos)\b/.test(question)) {
+    return afterCheckIn[index];
+  }
+  if (intent === "BENEFICIARY") return undefined;
+  const asksForReport = /\b(?:reports?|ulat)\b/.test(question)
+    && /\b(?:find|open|generate|download|view|use|where|asa|saan|paano|unsaon|tan aw|makita)\b/.test(question);
+  if (!asksForReport) return intent === "SCHEDULE" ? staffScheduleGuidance(language, staffRole) : undefined;
+  if (staffRole === "SYSTEM_ADMIN" || staffRole === "DSWD_STAFF") return reportGuidance[index];
+  return staffRole === "BARANGAY_FACILITATOR" ? staffStart[staffRole][index] : undefined;
 }

@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import { spawnSync } from 'node:child_process';
 import bcrypt from 'bcrypt';
+import { io as connectSocket } from 'socket.io-client';
 import { env } from '../src/config/env.js';
 import prisma from '../src/lib/prisma.js';
 import { verifyAccessToken } from '../src/modules/auth/auth.service.js';
-import { authenticateSocketConnection } from '../src/realtime/socket.js';
+import { attachRealtimeServer, authenticateSocketConnection, clearRealtimePublisher } from '../src/realtime/socket.js';
 import { authorizeRoles } from '../src/middleware/authorize.js';
 import { assertDevAdminRequest, devAdminConfigurationError, DEV_ADMIN_USERNAME } from '../src/modules/auth/devAdmin.policy.js';
 import app from '../src/app.js';
@@ -147,6 +149,33 @@ test('realtime connections enforce the same developer environment and local requ
   env.devQuickLoginEnabled = true;
   socket.request.socket.remoteAddress = '192.0.2.1';
   await assert.rejects(authenticateSocketConnection(socket), { code: 'DEV_LOGIN_LOCAL_ONLY' });
+});
+
+test('Developer Admin realtime authenticates when the initial polling connection closes', { timeout: 6000 }, async t => {
+  await fixture(t);
+  const { accessToken } = await developerLogin();
+  const httpServer = createServer();
+  const realtime = attachRealtimeServer(httpServer);
+  httpServer.listen(0, '127.0.0.1');
+  await once(httpServer, 'listening');
+  const socket = connectSocket(`http://127.0.0.1:${httpServer.address().port}`, {
+    autoConnect: false,
+    reconnection: false,
+    transports: ['polling'],
+    auth: { accessToken },
+    extraHeaders: { Origin: configuration.corsOrigins[0], Connection: 'close' },
+  });
+  t.after(async () => {
+    socket.close();
+    clearRealtimePublisher(realtime);
+    await realtime.close();
+  });
+  const ready = new Promise((resolve, reject) => {
+    socket.once('realtime.ready', resolve);
+    socket.once('connect_error', reject);
+  });
+  socket.connect();
+  assert.equal((await ready).role, 'SYSTEM_ADMIN');
 });
 
 test('passwordless developer endpoints are absent even when local developer login is enabled', async t => {

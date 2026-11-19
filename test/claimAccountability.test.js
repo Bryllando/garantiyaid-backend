@@ -24,6 +24,37 @@ import {
 const filerId = "11111111-1111-4111-8111-111111111111";
 const reviewerId = "22222222-2222-4222-8222-222222222222";
 
+test("only committed receipt and dispute changes publish a scoped dashboard update", async (t) => {
+  const emitted = [];
+  const io = { to() { return this; }, emit(name, envelope) { emitted.push([name, envelope]); } };
+  const distributionId = "distribution-1", barangayId = "barangay-1", claimId = "claim-1";
+  const receipt = { claim: { claimStatus: "CLAIMED" } };
+  const disputeResult = { claimId, claim: { allocation: { amount: "0" } } };
+  const commits = [{ receipt, created: true }, { receipt, created: false }, disputeResult, disputeResult];
+  globalThis.prisma = {
+    distribution: { findFirst: async () => ({ distributionId, barangayId }) },
+    async $transaction() {
+      if (!commits.length) throw new Error("rolled back");
+      return commits.shift();
+    },
+  };
+  t.after(() => { delete globalThis.prisma; });
+  const { createClaimDispute, issueClaimReceipt, reviewClaimDispute } = await import("../src/modules/distributions/distributionClaimAccountability.controller.js");
+  const { clearRealtimePublisher, configureRealtimePublisher } = await import("../src/realtime/socket.js");
+  configureRealtimePublisher(io);
+  t.after(() => clearRealtimePublisher(io));
+  const req = { staffUser: { role: "DSWD_STAFF" }, validatedParams: { distributionId, claimId }, validatedBody: {} };
+  const invoke = handler => new Promise((resolve, reject) => handler(req, { status() { return this; }, json: resolve }, reject));
+  await invoke(issueClaimReceipt);
+  await invoke(issueClaimReceipt);
+  await invoke(createClaimDispute);
+  await invoke(reviewClaimDispute);
+  await assert.rejects(invoke(reviewClaimDispute), /rolled back/);
+  assert.deepEqual(emitted.map(([name, envelope]) => [name, envelope.distributionId, envelope.barangayId, envelope.data]),
+    ["CLAIM_RECEIPT_ISSUED", "CLAIM_DISPUTE_FILED", "CLAIM_DISPUTE_REVIEW_UPDATED"].map(reason =>
+      ["dashboard.metrics.updated", distributionId, barangayId, { reason, claimId }]));
+});
+
 function receiptClaim(overrides = {}) {
   return {
     claimId: filerId,

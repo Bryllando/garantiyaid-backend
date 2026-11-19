@@ -231,7 +231,6 @@ export const submitStaffAssistantMessage = asyncHandler(async (req, res) => {
       signal: controller.signal,
       ...(streaming ? {
         onText: (text) => send({ type: "text", text }),
-        onStatus: (status) => send({ type: "status", status }),
       } : {}),
     });
     if (streaming) {

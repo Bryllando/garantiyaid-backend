@@ -383,6 +383,7 @@ export async function getDistributionDashboardSummary(
     qrScanGroups,
     biometricGroups,
     transactionGroups,
+    physicalHandoverCount,
   ] = await Promise.all([
     database.distributionSlot.groupBy({
       by: ["slotStatus"],
@@ -430,6 +431,9 @@ export async function getDistributionDashboardSummary(
       _count: { _all: true },
       _sum: { amount: true },
     }),
+    distribution.deliveryMode === "PHYSICAL_GOODS"
+      ? database.claim.count({ where: { ...baseWhere, releaseMethod: "PHYSICAL_GOODS", releasedAt: { not: null } } })
+      : null,
   ]);
 
   const allocationCounts = countMap(allocationGroups, "allocationStatus");
@@ -463,6 +467,7 @@ export async function getDistributionDashboardSummary(
       checkedInCount: scheduleCounts.CHECKED_IN ?? 0,
       verifiedCount: claimCounts.VERIFIED ?? 0,
       claimedCount: claimCounts.CLAIMED ?? 0,
+      physicalHandoverCount,
       cancelledAllocationCount: allocationCounts.CANCELLED ?? 0,
       cancelledScheduleCount: scheduleCounts.CANCELLED ?? 0,
       unclaimedCount: (allocationCounts.PENDING ?? 0) + (allocationCounts.ALLOCATED ?? 0),

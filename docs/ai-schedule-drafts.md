@@ -8,7 +8,9 @@ Generate service sessions and allocate approved beneficiaries first. The AI prop
 
 ## AI behavior
 
-The installed OpenAI-compatible client calls the existing OpenRouter model (`OPENROUTER_CHATBOT_MODEL`) using `OPENROUTER_API_KEY`. The model receives anonymous group counts, eligible slot references, capacity and existing occupancy. Names, contact information, identifiers, locations, service-area names and exact dates are excluded. Allocations with identical eligible slots are grouped; the validated aggregate proposal is expanded to local beneficiary records on the server.
+The backend calls Mistral's OpenAI-compatible API directly with `mistral-large-4-0`. Set `MISTRAL_API_KEY` in the backend environment and restart the backend. Run `npm run ai:check` to test chat streaming, report highlights, and schedule drafts using synthetic records.
+
+The model receives anonymous group counts, eligible slot references, capacity and existing occupancy. Names, contact information, identifiers, locations, service-area names and exact dates are excluded. The server groups allocations with identical eligible slots and expands validated aggregate proposals into local beneficiary records.
 
 The objective is to spread occupancy across eligible slots, preferring earlier slots on ties. A language-model suggestion does not guarantee a mathematical optimum. Invalid, incomplete, overflowing, unavailable or out-of-area output is rejected. Provider errors are shown as errors; automatic assignment is never presented as a successful AI response.
 

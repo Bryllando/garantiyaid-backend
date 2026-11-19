@@ -61,6 +61,7 @@ const SENSITIVE_KEY_FRAGMENTS = Object.freeze([
 ]);
 
 let activeIo = null;
+const handshakeRequests = new WeakMap();
 
 function normalizedKey(key) {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -149,7 +150,7 @@ export async function authenticateSocketConnection(socket, database = prisma) {
     throw error;
   }
   if (isDeveloperAdmin(user)) {
-    assertDevAdminRequest(socket.request, env);
+    assertDevAdminRequest(handshakeRequests.get(socket.request) ?? socket.request, env);
     assertDevAdminAccount(user);
   }
   return user;
@@ -236,6 +237,14 @@ export function attachRealtimeServer(
   const io = new Server(httpServer, {
     serveClient: false,
     transports: ["websocket", "polling"],
+    allowRequest(request, done) {
+      if (env.devQuickLoginEnabled) {
+        // The first polling connection can close before Socket.IO authenticates the staff session.
+        const { localAddress, remoteAddress } = request.socket;
+        handshakeRequests.set(request, { headers: request.headers, socket: { localAddress, remoteAddress } });
+      }
+      done(null, true);
+    },
     cors: {
       origin: env.corsOrigins,
       methods: ["GET", "POST"],

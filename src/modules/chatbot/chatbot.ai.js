@@ -1,6 +1,6 @@
 import { env } from "../../config/env.js";
-import { createNvidiaClient, NVIDIA_MODEL } from "../../lib/nvidia.js";
-import { staffWorkflowGuidance } from "./staff-workflow-guidance.js";
+import { createMistralClient, INTERACTIVE_AI_TIMEOUT_MS, MISTRAL_MODEL } from "../../lib/mistral.js";
+import { staffNavigationGuidance, staffOverviewGuidance, staffScheduleGuidance, staffSystemWalkthrough, staffWorkflowGuidance } from "./staff-workflow-guidance.js";
 import { processExplanation } from "./chatbot.process-explanations.js";
 
 const SAFE_EXTERNAL_INTENTS = new Set([
@@ -43,10 +43,10 @@ const SYSTEM_PROMPT = `You rewrite a pre-approved general government-service ans
 Use only facts present in the approved answer. Never add eligibility decisions, personal status, dates, amounts, names, contact details, links, or promises. Never request credentials, IDs, QR codes, biometric data, or document images. Use familiar everyday words and short sentences in the requested language. Do not mention internal reasoning. Reply in at most 120 words.`;
 
 const STAFF_SYSTEM_PROMPT = `You are the GarantiyAid assistant for authenticated government staff.
-Answer the user's general operational question naturally and directly in the requested language. Stay within the approved guidance. Never claim to inspect or change records, approve eligibility or claims, move funds, verify biometrics, or schedule or send anything by yourself. Direct actions to the existing reviewed workflows. Never request credentials, IDs, QR codes, biometric data, document images, or personal records. Do not mention internal reasoning. Reply in at most 120 words.
+Answer the user's general operational question naturally and directly in the requested language. Stay within the approved guidance. Never claim to inspect or change records, approve eligibility or claims, move funds, verify biometrics, or schedule or send anything by yourself. Direct actions to the existing reviewed workflows. Never request credentials, IDs, QR codes, biometric data, document images, or personal records. Do not mention internal reasoning. Keep simple answers brief. Use up to 160 words when the user asks for steps or a comparison.
 Answer the latest question first. Use previous user messages to understand short follow-ups; previous assistant replies are not a source of verified facts. Do not restart with a greeting, repeat the question, or list unrelated modules. If the question lacks enough detail, ask one short clarification instead of guessing. Use natural everyday Cebuano, Filipino, or English as requested and keep interface labels exactly as supplied. Refer to roles as Admin, DSWD staff, or Barangay Facilitator; do not display internal role codes.
-For schedule questions, explain that the scheduler generates proposed assignments on its scheduling page, staff can edit them, and saving requires review and confirmation. Confirm and save draft schedule saves appointments and leaves the event DRAFT; opening the event is a separate authorized action. Do not imply that this conversation has generated a schedule. When explaining an AI suggestion, describe it as a proposal rather than a guaranteed optimum.
-Format answers in Markdown for a narrow chat panel. Use short paragraphs. For procedures, use a numbered list with each step on its own line; for options, use bullet points. Put a blank line before and after lists and headings. Use **bold labels** sparingly. Never run multiple numbered items together in one paragraph. When useful, show a small two-column Markdown table for comparisons or a short blockquote with arrows for a process; use only steps supported by the approved guidance. Do not invent counts, dates, or status data for a visual. Do not generate HTML, images, Mermaid, or executable code. Simple greetings need only a short sentence.
+For schedule questions, follow the guidance for the current role. DSWD staff review schedules. Only Admin or assigned Barangay staff can edit permitted draft schedules. Saving appointments leaves the event DRAFT. Opening the event requires a separate Admin action. AI assignments are proposals, and any saved appointments require staff review and confirmation.
+Format answers in Markdown for a narrow chat panel. For procedures, start with the goal and use a numbered list. Give the action, responsible role or screen, and how to check the result when those details are in the approved guidance. Say where to stop or ask for review if the guidance identifies a blocker. Put a blank line before and after lists and headings. Use **bold labels** sparingly. Use a compact two-column Markdown table when requested or when it helps compare roles, stages, or statuses. Never invent counts, dates, status data, or placeholder rows for a table. Do not generate HTML, images, Mermaid, or executable code. Simple greetings need only a short sentence.
 Never invent menu names, buttons, filters, or review/approval capabilities to fill out a list. State when the provided guidance lacks detailed steps. Verified schedule entry points: SYSTEM_ADMIN uses "Distribution events"; DSWD_STAFF uses "Live monitoring"; BARANGAY_FACILITATOR uses "Queue & schedules". Refer only to the entry point matching the supplied staff role. These entry points do not imply permission to modify or confirm schedules.`;
 
 export async function generateExternalChatbotAnswer({
@@ -54,10 +54,9 @@ export async function generateExternalChatbotAnswer({
   language,
   approvedAnswer,
   promptMessages,
-  apiKey = env.nvidiaApiKey,
+  apiKey = env.mistralApiKey,
   client,
-  model = NVIDIA_MODEL,
-  timeoutMs = 30_000,
+  timeoutMs = INTERACTIVE_AI_TIMEOUT_MS,
   signal: callerSignal,
   onText,
 }) {
@@ -65,13 +64,13 @@ export async function generateExternalChatbotAnswer({
   if (!apiKey || !SAFE_EXTERNAL_INTENTS.has(intent)) return null;
 
   try {
-    const provider = client ?? createNvidiaClient({ apiKey, timeoutMs });
+    const provider = client ?? createMistralClient({ apiKey, timeoutMs });
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
     const stream = await provider.chat.completions.create({
-        model,
+        model: MISTRAL_MODEL,
         stream: true,
-        max_tokens: 2048,
+        max_tokens: 1024,
         temperature: 0.2,
         reasoning_effort: "low",
         messages: promptMessages ?? [
@@ -83,7 +82,7 @@ export async function generateExternalChatbotAnswer({
         ],
     }, { signal });
     let messageText = "";
-    let responseModel = model;
+    let responseModel = MISTRAL_MODEL;
     let finishReason;
     for await (const chunk of stream) {
       signal.throwIfAborted();
@@ -91,13 +90,19 @@ export async function generateExternalChatbotAnswer({
       if (typeof chunk.model === "string") responseModel = chunk.model;
       finishReason = chunk.choices?.[0]?.finish_reason ?? finishReason;
       const content = chunk.choices?.[0]?.delta?.content;
-      if (typeof content === "string") messageText += content;
+      let text = typeof content === "string" ? content : "";
+      if (Array.isArray(content)) {
+        text = content
+          .filter(part => part?.type === "text" && typeof part.text === "string")
+          .map(part => part.text).join("");
+      }
+      messageText += text;
       if (messageText.length > 2_000) return null;
-      if (content) onText?.(messageText);
+      if (text) onText?.(messageText.replace(/<br\s*\/?>/gi, "\n"));
     }
     if (signal.aborted) return null;
     if (finishReason !== "stop") return null;
-    const normalized = messageText.trim();
+    const normalized = messageText.replace(/<br\s*\/?>/gi, "\n").trim();
     return normalized ? { messageText: normalized, model: responseModel } : null;
   } catch {
     callerSignal?.throwIfAborted();
@@ -122,7 +127,10 @@ export async function generateStaffAssistantAnswer({
     else if (/\b(?:sms|reminder|notification|delivery|pahibalo|mensahe)\b/i.test(previousQuestion)) intent = "DELIVERY";
     else if (/\b(?:beneficiar(?:y|ies)|benepisyaryo|sitio|purok)\b/i.test(previousQuestion)) intent = "BENEFICIARY";
   }
-  const workflowAnswer = processExplanation({ intent, language, messageText, history })?.messageText ?? staffWorkflowGuidance(intent, language);
+  const workflowAnswer = staffSystemWalkthrough({ intent, language, messageText, history })
+    ?? processExplanation({ intent, language, messageText, history })?.messageText
+    ?? staffWorkflowGuidance(intent, language)
+    ?? staffNavigationGuidance({ intent, language, messageText, staffRole });
   if (workflowAnswer) {
     options.signal?.throwIfAborted();
     return { messageText: workflowAnswer, externalAiUsed: false, externalAiModel: null, inputProcessedExternally: false };
@@ -131,7 +139,8 @@ export async function generateStaffAssistantAnswer({
   const safeIntent = Object.hasOwn(STAFF_GUIDANCE[selectedLanguage], intent) ? intent : "HELP";
   const approvedAnswer = STAFF_GUIDANCE[selectedLanguage][safeIntent];
   const grounding = safeIntent === "HELP"
-    ? ["SCHEDULE", "DELIVERY", "BENEFICIARY", "HELP"].map(topic => STAFF_GUIDANCE[selectedLanguage][topic]).join("\n")
+    ? [staffOverviewGuidance(selectedLanguage, staffRole), staffScheduleGuidance(selectedLanguage, staffRole),
+      ...["DELIVERY", "BENEFICIARY", "HELP"].map(topic => STAFF_GUIDANCE[selectedLanguage][topic])].filter(Boolean).join("\n")
     : approvedAnswer;
   const externalRequest = {
     intent: `STAFF_${safeIntent}`,
@@ -147,16 +156,7 @@ export async function generateStaffAssistantAnswer({
     ],
     ...options,
   };
-  let external = null;
-  if (safeIntent !== "GREETING") {
-    external = await generateExternalChatbotAnswer({ ...externalRequest, model: NVIDIA_MODEL, timeoutMs: 20_000 });
-    options.signal?.throwIfAborted();
-    if (!external) {
-      options.onText?.("");
-      options.onStatus?.("retrying");
-      external = await generateExternalChatbotAnswer({ ...externalRequest, model: NVIDIA_MODEL, timeoutMs: 40_000 });
-    }
-  }
+  const external = safeIntent === "GREETING" ? null : await generateExternalChatbotAnswer(externalRequest);
   options.signal?.throwIfAborted();
   if (!external) options.onText?.("");
   return {

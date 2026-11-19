@@ -224,7 +224,7 @@ test("decimal-safe simulated fund utilization handles reversals without floating
 
 test("per-distribution aggregation reports slots, completion, anomalies, QR expiry, and simulated funds", async () => {
   const database = {
-    distribution: { findFirst: async () => distributionRecord() },
+    distribution: { findFirst: async () => ({ ...distributionRecord(), deliveryMode: "PHYSICAL_GOODS" }) },
     distributionSlot: {
       groupBy: async () => [
         { slotStatus: "AVAILABLE", _count: { _all: 2 }, _sum: { capacity: 20 } },
@@ -247,6 +247,10 @@ test("per-distribution aggregation reports slots, completion, anomalies, QR expi
     },
     claim: {
       groupBy: async () => [group("claimStatus", "VERIFIED", 1), group("claimStatus", "CLAIMED", 2)],
+      count: async ({ where }) => {
+        assert.deepEqual(where, { distributionId, releaseMethod: "PHYSICAL_GOODS", releasedAt: { not: null } });
+        return 3;
+      },
     },
     qrToken: {
       groupBy: async () => [group("qrStatus", "ACTIVE", 3), group("qrStatus", "USED", 2), group("qrStatus", "EXPIRED", 1)],
@@ -276,6 +280,7 @@ test("per-distribution aggregation reports slots, completion, anomalies, QR expi
   assert.equal(summary.slots.slotCount, 3);
   assert.equal(summary.slots.totalCapacity, 30);
   assert.equal(summary.beneficiaries.claimCompletionPercentage, "40.00");
+  assert.equal(summary.beneficiaries.physicalHandoverCount, 3);
   assert.equal(summary.qrTokens.activeCount, 2);
   assert.equal(summary.qrTokens.expiredCount, 2);
   assert.equal(summary.qrScans.verifiedCount, 2);

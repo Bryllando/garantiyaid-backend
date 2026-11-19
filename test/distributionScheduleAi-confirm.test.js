@@ -50,14 +50,15 @@ const invoke = req => new Promise((resolve, reject) => confirmAiDistributionSche
 
 test('preview calls the model with anonymous input and returns an editable draft without writing schedules', async t => {
   const req = await fixture();
-  const previousKey = env.nvidiaApiKey;
-  env.nvidiaApiKey = 'synthetic-test-key';
-  t.after(() => { env.nvidiaApiKey = previousKey; });
+  const previousKey = env.mistralApiKey;
+  env.mistralApiKey = 'synthetic-test-key';
+  t.after(() => { env.mistralApiKey = previousKey; });
   t.mock.method(Completions.prototype, 'create', async function (body) {
-    assert.equal(this._client.baseURL, 'https://integrate.api.nvidia.com/v1');
-    assert.equal(this._client.apiKey, env.nvidiaApiKey);
-    assert.equal(body.model, 'mistralai/mistral-large-4-1t-a52b');
-    assert.equal(body.reasoning_effort, 'high');
+    assert.equal(this._client.baseURL, 'https://api.mistral.ai/openai/v1');
+    assert.equal(this._client.apiKey, env.mistralApiKey);
+    assert.equal(body.model, 'mistral-large-4-0');
+    assert.equal(body.reasoning_effort, 'medium');
+    assert.equal(body.parallel_tool_calls, false);
     assert.equal(body.reasoning, undefined);
     assert.equal(JSON.stringify(body.messages).includes('Private person'), false);
     assert.equal(JSON.stringify(body.messages).includes('area-1'), false);

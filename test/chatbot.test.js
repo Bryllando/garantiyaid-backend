@@ -354,6 +354,22 @@ test("public process explanations persist as controlled text and never bypass se
   assert.doesNotMatch(personal.botMessage.messageText, /^General process:/);
 });
 
+test("public greetings and system overviews are answered without a model request", async () => {
+  const database = inMemoryChatbotDatabase();
+  const now = new Date("2099-01-01T00:00:00.000Z");
+  const session = await createGenericChatbotSession({ language: "en" }, database, now);
+  const external = async () => assert.fail("Basic public guidance should be local.");
+  for (const [messageText, intent, answerPattern] of [
+    ["Hello", "GREETING", /general guidance/],
+    ["Can you tell me how this system works?", "PROGRAM_INFORMATION", /GarantiyAid is a web application/],
+  ]) {
+    const result = await processGenericChatbotTurn({ sessionId, token: session.sessionToken, messageText }, database, now, external);
+    assert.equal(result.classification.intent, intent);
+    assert.equal(result.externalAiUsed, false);
+    assert.match(result.botMessage.messageText, answerPattern);
+  }
+});
+
 test("safe intents may use external AI wording without forwarding the raw user message", async () => {
   const database = inMemoryChatbotDatabase();
   const created = await createGenericChatbotSession(

@@ -179,6 +179,21 @@ export function normalizeChatbotText(value) {
     .trim();
 }
 
+const systemName = "(?:garantiyaid|(?:this|the|your) (?:system|app))";
+const overviewQuestions = [
+  new RegExp(`^(?:(?:learn|understand) )?how (?:does )?${systemName} works?$`),
+  new RegExp(`^(?:how (?:do i|to) )?(?:use|learn) ${systemName}(?: and how it works)?$`),
+  /^(?:what is|whats) (?:garantiyaid|this system)(?: for)?$/,
+  /^(?:unsa(?:y)? (?:ang |gamit sa )?(?:garantiyaid|kini nga system)|unsaon (?:pag gamit|paggamit|pag work) sa (?:garantiyaid|system)|giunsa pag work ang (?:garantiyaid|system))$/,
+  /^(?:ano ang garantiyaid|paano (?:gumagana ang|gamitin ang) (?:garantiyaid|sistemang ito|system na ito))$/,
+];
+
+export function isSystemOverviewQuestion(message) {
+  const question = normalizeChatbotText(message)
+    .replace(/^(?:(?:please|can you|ca nyou|could you|would you|tell me|explain|help me|palihog|ipasabot|paki|ipaliwanag) )+/, "");
+  return overviewQuestions.some(pattern => pattern.test(question));
+}
+
 function scoreRule(text, words, rule) {
   if (rule.exact.includes(text)) return 0.99;
 
@@ -206,6 +221,9 @@ export function classifyChatbotIntent(messageText) {
   }
   if (GREETINGS.has(normalizedText)) {
     return { intent: "GREETING", confidence: 0.99, normalizedText };
+  }
+  if (isSystemOverviewQuestion(normalizedText)) {
+    return { intent: "PROGRAM_INFORMATION", confidence: 0.99, normalizedText };
   }
 
   const words = new Set(normalizedText.split(" "));

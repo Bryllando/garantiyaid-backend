@@ -5,14 +5,14 @@ import { Completions } from "openai/resources/chat/completions";
 import { env } from "../src/config/env.js";
 import { submitStaffAssistantMessage } from "../src/modules/chatbot/chatbot.controller.js";
 
-async function testServer(t) {
-  const previousKey = env.nvidiaApiKey;
-  env.nvidiaApiKey = `nvapi-${"a".repeat(64)}`;
-  t.after(() => { env.nvidiaApiKey = previousKey; });
+async function testServer(t, messageText = "Contact 09123456789") {
+  const previousKey = env.mistralApiKey;
+  env.mistralApiKey = "synthetic-test-key";
+  t.after(() => { env.mistralApiKey = previousKey; });
   // Controller transport harness; route authentication is covered in chatbot.test.js.
   const app = express();
   app.post("/chat", (req, _res, next) => {
-    req.validatedBody = { intent: "HELP", language: "en", messageText: "Contact 09123456789", history: [] };
+    req.validatedBody = { intent: "HELP", language: "en", messageText, history: [] };
     req.staffUser = { role: "SYSTEM_ADMIN" };
     next();
   }, submitStaffAssistantMessage);
@@ -28,9 +28,10 @@ test("HTTP controller flushes answer text before model completion, redacts input
   const gate = new Promise((resolve) => { finish = resolve; });
   t.after(() => finish());
   t.mock.method(Completions.prototype, "create", async function* (body) {
-    assert.equal(this._client.baseURL, "https://integrate.api.nvidia.com/v1");
-    assert.equal(this._client.apiKey, env.nvidiaApiKey);
-    assert.equal(body.model, "mistralai/mistral-large-4-1t-a52b");
+    assert.equal(this._client.baseURL, "https://api.mistral.ai/openai/v1");
+    assert.equal(this._client.apiKey, env.mistralApiKey);
+    assert.equal(this._client.maxRetries, 0);
+    assert.equal(body.model, "mistral-large-4-0");
     assert.equal(body.reasoning_effort, "low");
     assert.doesNotMatch(JSON.stringify(body.messages), /09123456789/);
     yield { choices: [{ delta: { content: "Hello staff." } }] };
@@ -78,3 +79,20 @@ test("closing the HTTP stream cancels its upstream provider request", { timeout:
   await response.body.cancel();
   await cancellation;
 });
+
+for (const question of ["ca nyou tell me how this system works?", "help me how to learn this system and how it works?"]) {
+  test(`local GarantiyAid guidance completes the HTTP stream for "${question}"`, { timeout: 5_000 }, async (t) => {
+    const url = await testServer(t, question);
+    const provider = t.mock.method(Completions.prototype, "create", async () => {
+      throw new Error("The overview should not call the provider.");
+    });
+    const response = await fetch(url, { method: "POST", headers: { Accept: "text/event-stream" } });
+    const payload = await response.text();
+    const events = payload.split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6)));
+    const finished = events.find(event => event.type === "done");
+    assert.equal(provider.mock.callCount(), 0);
+    assert.equal(finished.data.externalAiUsed, false);
+    assert.match(finished.data.messageText, /from enrollment to receipt/);
+    assert.match(finished.data.messageText, /\*\*Distribution events\*\*/);
+  });
+}

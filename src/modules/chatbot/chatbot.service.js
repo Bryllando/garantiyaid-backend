@@ -7,7 +7,7 @@ import { env } from "../../config/env.js";
 import prisma from "../../lib/prisma.js";
 import { AppError } from "../../utils/AppError.js";
 import { generateExternalChatbotAnswer } from "./chatbot.ai.js";
-import { classifyChatbotIntent } from "./chatbot.intent.js";
+import { classifyChatbotIntent, isSystemOverviewQuestion } from "./chatbot.intent.js";
 import { processExplanation } from "./chatbot.process-explanations.js";
 import {
   controlledChatbotAnswer,
@@ -362,6 +362,8 @@ export async function processGenericChatbotTurn(
   const externalAnswer = !chatbotSessionExpired(answerSession, now)
     && !["RESOLVED", "ENDED"].includes(answerSession.status)
     && !explanation
+    && classification.intent !== "GREETING"
+    && !isSystemOverviewQuestion(classification.normalizedText)
     ? await externalAnswerGenerator({
       intent: classification.intent,
       language: localizedAnswer.language,

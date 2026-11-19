@@ -81,7 +81,7 @@ export async function publishPhysicalReleaseResult(distributionId, result) {
     }),
     publishRealtimeEvent("dashboard.metrics.updated", {
       distributionId,
-      data: { reason: "PHYSICAL_ASSISTANCE_RELEASED" },
+      data: { reason: "PHYSICAL_ASSISTANCE_RELEASED", claimId: lifecycle.claimId, queueNumber: claim.schedule?.queueNumber },
     }),
   ]);
 }
@@ -149,7 +149,7 @@ export async function publishQrVerificationResult(distributionId, result) {
   }
   events.push(publishRealtimeEvent("dashboard.metrics.updated", {
     distributionId,
-    data: { reason: error ? "QR_SCAN_ANOMALY" : "QR_CLAIM_UPDATED" },
+    data: { reason: error ? "QR_SCAN_ANOMALY" : "QR_CLAIM_UPDATED", claimId: claim?.claimId ?? error?.details?.claimId },
   }));
   await Promise.all(events);
 }
@@ -212,7 +212,7 @@ export async function publishBiometricVerificationResult(
   }
   events.push(publishRealtimeEvent("dashboard.metrics.updated", {
     distributionId,
-    data: { reason: error ? "BIOMETRIC_ANOMALY" : "BIOMETRIC_CLAIM_UPDATED" },
+    data: { reason: error ? "BIOMETRIC_ANOMALY" : "BIOMETRIC_CLAIM_UPDATED", claimId: claim?.claimId },
   }));
   await Promise.all(events);
 }
@@ -234,7 +234,7 @@ export async function publishClaimSignatureResult(distributionId, result) {
     }),
     publishRealtimeEvent("dashboard.metrics.updated", {
       distributionId,
-      data: { reason: claim.verificationMethod === "MANUAL" && !claim.signatureVerified ? "MANUAL_IDENTITY_REVIEW_RECORDED" : "CLAIM_SIGNATURE_COMPLETED" },
+      data: { reason: claim.verificationMethod === "MANUAL" && !claim.signatureVerified ? "MANUAL_IDENTITY_REVIEW_RECORDED" : "CLAIM_SIGNATURE_COMPLETED", claimId: claim.claimId },
     }),
   ]);
 }
@@ -268,7 +268,7 @@ export async function publishWalletCreditResult(distributionId, result) {
     }),
     publishRealtimeEvent("dashboard.metrics.updated", {
       distributionId,
-      data: { reason: "SIMULATED_BENEFIT_CREDIT_COMPLETED" },
+      data: { reason: "SIMULATED_BENEFIT_CREDIT_COMPLETED", claimId: lifecycle.claimId },
     }),
   ]);
 }
@@ -311,7 +311,7 @@ export async function publishWalletReversalResult(result) {
     }),
     publishRealtimeEvent("dashboard.metrics.updated", {
       distributionId,
-      data: { reason: "SIMULATED_BENEFIT_CREDIT_REVERSED" },
+      data: { reason: "SIMULATED_BENEFIT_CREDIT_REVERSED", claimId: lifecycle.claimId },
     }),
   ]);
 }

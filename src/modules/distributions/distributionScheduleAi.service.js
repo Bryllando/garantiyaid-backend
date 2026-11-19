@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { env } from "../../config/env.js";
 import { AppError } from "../../utils/AppError.js";
-import { createNvidiaClient, NVIDIA_MODEL } from "../../lib/nvidia.js";
+import { createMistralClient, MISTRAL_MODEL } from "../../lib/mistral.js";
 import { distributionSlotCoversBeneficiary } from "./distributionSlot.service.js";
 
 export const aiScheduleConfirmSchema = z.object({
@@ -82,16 +82,17 @@ export function expandAiSuggestion(problem, raw) {
   return { summary: parsed.data.summary, assignments };
 }
 
-export async function suggestAiSchedule(problem, { client, apiKey = env.nvidiaApiKey } = {}) {
-  if (!client && !apiKey) throw new AppError(503, "AI_SCHEDULER_NOT_CONFIGURED", "AI scheduling is unavailable. Configure NVIDIA_API_KEY on the server; existing scheduling tools remain available.");
-  const provider = client ?? createNvidiaClient({ apiKey });
+export async function suggestAiSchedule(problem, { client, apiKey = env.mistralApiKey } = {}) {
+  if (!client && !apiKey) throw new AppError(503, "AI_SCHEDULER_NOT_CONFIGURED", "AI scheduling is unavailable. Configure MISTRAL_API_KEY on the server. Existing scheduling tools remain available.");
+  const provider = client ?? createMistralClient({ apiKey });
   let result;
   try {
     result = await provider.chat.completions.create({
-      model: NVIDIA_MODEL,
+      model: MISTRAL_MODEL,
       temperature: 0,
       max_tokens: 8192,
-      reasoning_effort: "high",
+      reasoning_effort: "medium",
+      parallel_tool_calls: false,
       tool_choice: { type: "function", function: { name: "propose_schedule" } },
       tools: [{ type: "function", function: { name: "propose_schedule", description: "Return a draft schedule for staff review. This does not save appointments.", parameters: {
         type: "object", additionalProperties: false, required: ["summary", "assignments"], properties: {
@@ -106,7 +107,7 @@ export async function suggestAiSchedule(problem, { client, apiKey = env.nvidiaAp
     }, { signal: AbortSignal.timeout(90_000) });
   } catch (error) {
     const failure = {
-      401: ["AI_SCHEDULER_CREDENTIALS_REJECTED", "The AI service rejected the server's API key. Ask the administrator to replace the NVIDIA key and restart the backend. No appointments were saved."],
+      401: ["AI_SCHEDULER_CREDENTIALS_REJECTED", "Mistral rejected the server's API key. Ask the administrator to replace the Mistral key and restart the backend. No appointments were saved."],
       402: ["AI_SCHEDULER_CREDITS_REQUIRED", "The AI account or API key has insufficient credits. Ask the administrator to review its balance and spending limit. No appointments were saved."],
       403: ["AI_SCHEDULER_ACCESS_DENIED", "The AI service blocked this request. Ask the administrator to review the key's permissions and provider restrictions. No appointments were saved."],
       429: ["AI_SCHEDULER_RATE_LIMITED", "The AI service has reached its request limit. Wait before trying again, or use the existing assignment tools. No appointments were saved."],
@@ -121,5 +122,5 @@ export async function suggestAiSchedule(problem, { client, apiKey = env.nvidiaAp
     if (!["tool_calls", "stop"].includes(choice?.finish_reason) || calls?.length !== 1 || calls[0].type !== "function" || calls[0].function?.name !== "propose_schedule") throw new Error("Incomplete proposal");
     raw = JSON.parse(calls[0].function.arguments);
   } catch { throw new AppError(502, "AI_SCHEDULE_INVALID_RESPONSE", "The AI returned an incomplete draft. Try generating again; no appointments were saved."); }
-  return { ...expandAiSuggestion(problem, raw), model: result.model || NVIDIA_MODEL };
+  return { ...expandAiSuggestion(problem, raw), model: result.model || MISTRAL_MODEL };
 }

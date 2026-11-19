@@ -15,7 +15,7 @@ The public beneficiary chatbot and biometric AI remain separate workflows. Neith
 | Existing implementation | Reuse and limitation |
 | --- | --- |
 | Staff assistant chat and role-specific actions | Reuse the panel. Current keyword routing can mistake greetings, negation, and delivery questions for other intents. |
-| OpenRouter-backed staff guidance with fallback answers | Reuse guidance. The current model is not connected to executable tools and cannot itself create schedules. |
+| Mistral Large 4 staff guidance with local fallback answers | Reuse guidance. Staff create schedules through the authorized scheduling workflow. |
 | Distribution assistant form and preview | Reuse field validation and review. Chat currently opens the form without carrying a structured request into it. |
 | Distribution creation API | Creates a DRAFT event after server validation. The current endpoint does not require a server-bound assistant approval or provide assistant-specific duplicate prevention. |
 | Reminder preview and enqueue API | Reuse recipient checks, preview hash/count validation, confirmation, and existing idempotency support. |

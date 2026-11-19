@@ -2,6 +2,7 @@ import prisma from "../../lib/prisma.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
+import { publishRealtimeEvent } from "../../realtime/socket.js";
 import {
   assertClaimDisputeFileAllowed,
   assertClaimDisputeReviewAllowed,
@@ -32,7 +33,7 @@ function claimNotFound() {
 export const issueClaimReceipt = asyncHandler(async (req, res) => {
   assertDistributionReadAllowed(req.staffUser);
   const { distributionId, claimId } = req.validatedParams;
-  await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
+  const { barangayId } = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
 
   const result = await prisma.$transaction(async (tx) => {
     const claim = await tx.claim.findFirst({
@@ -85,6 +86,7 @@ export const issueClaimReceipt = asyncHandler(async (req, res) => {
     throw error;
   });
 
+  if (result.created) await publishRealtimeEvent("dashboard.metrics.updated", { distributionId, barangayId, data: { reason: "CLAIM_RECEIPT_ISSUED", claimId } });
   return res.status(result.created ? 201 : 200).json({
     success: true,
     data: { receipt: claimReceiptToResponse(result.receipt), created: result.created },
@@ -132,7 +134,7 @@ export const createClaimDispute = asyncHandler(async (req, res) => {
   assertClaimDisputeFileAllowed(req.staffUser);
   const { distributionId, claimId } = req.validatedParams;
   const { reasonCode, statement } = req.validatedBody;
-  await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
+  const { barangayId } = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
 
   const dispute = await prisma.$transaction(async (tx) => {
     const claim = await tx.claim.findFirst({
@@ -190,6 +192,7 @@ export const createClaimDispute = asyncHandler(async (req, res) => {
     throw error;
   });
 
+  await publishRealtimeEvent("dashboard.metrics.updated", { distributionId, barangayId, data: { reason: "CLAIM_DISPUTE_FILED", claimId } });
   return res.status(201).json({
     success: true,
     data: { dispute: claimDisputeToResponse(dispute) },
@@ -241,7 +244,7 @@ export const reviewClaimDispute = asyncHandler(async (req, res) => {
   assertClaimDisputeReviewAllowed(req.staffUser);
   const { distributionId, disputeId } = req.validatedParams;
   const { action, reviewNotes, expectedUpdatedAt, expectedClaimUpdatedAt } = req.validatedBody;
-  await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
+  const { barangayId } = await getDistributionClaimParentOrThrow(distributionId, req.staffUser);
 
   const dispute = await prisma.$transaction(async (tx) => {
     const current = await tx.claimDispute.findFirst({
@@ -330,6 +333,7 @@ export const reviewClaimDispute = asyncHandler(async (req, res) => {
     return updated;
   });
 
+  await publishRealtimeEvent("dashboard.metrics.updated", { distributionId, barangayId, data: { reason: "CLAIM_DISPUTE_REVIEW_UPDATED", claimId: dispute.claimId } });
   return res.status(200).json({
     success: true,
     data: { dispute: claimDisputeToResponse(dispute) },

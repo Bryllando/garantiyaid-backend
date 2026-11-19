@@ -1,35 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   externalChatbotIntentAllowed,
   generateExternalChatbotAnswer,
   generateStaffAssistantAnswer,
 } from "../src/modules/chatbot/chatbot.ai.js";
-import { NVIDIA_MODEL } from "../src/lib/nvidia.js";
+import { MISTRAL_MODEL } from "../src/lib/mistral.js";
 
-const testApiKey = `nvapi-${"a".repeat(64)}`;
+const testApiKey = "synthetic-test-key";
 
-test("staff streaming clears an interrupted draft before streaming the fallback", async () => {
+test("staff streaming clears an interrupted draft and returns guidance after one attempt", async () => {
   const events = [];
   let calls = 0;
   async function* stream() {
-    if (++calls === 1) {
-      yield { choices: [{ delta: { content: "Unfinished draft" } }] };
-      throw new Error("Stream disconnected");
-    }
-    yield { choices: [{ delta: { content: "Complete reply." } }] };
-    assert.deepEqual(events, ["Unfinished draft", "", "retrying", "Complete reply."]);
-    yield { choices: [{ delta: {}, finish_reason: "stop" }] };
+    calls++;
+    yield { choices: [{ delta: { content: "Unfinished draft" } }] };
+    throw new Error("Stream disconnected");
   }
   const result = await generateStaffAssistantAnswer({ intent: "HELP", language: "en", messageText: "Help me" }, {
     apiKey: testApiKey,
     client: { chat: { completions: { create: async () => stream() } } },
     onText: (text) => events.push(text),
-    onStatus: (status) => events.push(status),
   });
-  assert.equal(calls, 2);
-  assert.equal(result.messageText, "Complete reply.");
-  assert.equal(result.externalAiUsed, true);
+  assert.equal(calls, 1);
+  assert.deepEqual(events, ["Unfinished draft", ""]);
+  assert.match(result.messageText, /I can guide you/);
+  assert.equal(result.externalAiUsed, false);
 });
 
 test("client cancellation aborts generation without invoking the fallback", async () => {
@@ -63,13 +60,15 @@ test("a provider EOF or token limit cannot silently finalize a partial answer", 
   }
 });
 
-test("NVIDIA streams only an approved abstract answer and keeps reasoning private", async () => {
+test("Mistral streams visible text in both formats and keeps reasoning private", async () => {
   let request;
   let requestOptions;
+  const received = [];
   async function* stream() {
     yield { choices: [{ delta: { reasoning_content: "PRIVATE REASONING", reasoning: "PRIVATE REASONING" } }] };
-    yield { choices: [{ delta: { content: "Approved " } }] };
-    yield { choices: [{ delta: { content: "guidance." } }] };
+    yield { choices: [{ delta: { content: "<br>Approved " } }] };
+    yield { choices: [{ delta: { content: [{ type: "thinking", thinking: [{ type: "text", text: "PRIVATE REASONING" }] }] } }] };
+    yield { choices: [{ delta: { content: [{ type: "text", text: "guidance." }] } }] };
     yield { choices: [{ delta: {}, finish_reason: "stop" }] };
   }
   const result = await generateExternalChatbotAnswer({
@@ -77,6 +76,7 @@ test("NVIDIA streams only an approved abstract answer and keeps reasoning privat
     language: "ceb",
     approvedAnswer: "Bring only documents listed by authorized staff.",
     apiKey: testApiKey,
+    onText: text => received.push(text),
     client: {
       chat: { completions: { create: async (body, options) => {
         request = body;
@@ -86,8 +86,9 @@ test("NVIDIA streams only an approved abstract answer and keeps reasoning privat
     },
   });
 
-  assert.deepEqual(result, { messageText: "Approved guidance.", model: NVIDIA_MODEL });
-  assert.equal(request.model, NVIDIA_MODEL);
+  assert.deepEqual(result, { messageText: "Approved guidance.", model: MISTRAL_MODEL });
+  assert.deepEqual(received, ["\nApproved ", "\nApproved guidance."]);
+  assert.equal(request.model, MISTRAL_MODEL);
   assert.equal(request.stream, true);
   assert.ok(requestOptions.signal instanceof AbortSignal);
   assert.equal(request.reasoning, undefined);
@@ -137,9 +138,9 @@ test("staff guidance uses the current question and bounded conversation context"
     yield { choices: [{ delta: {}, finish_reason: "stop" }] };
   }
   const result = await generateStaffAssistantAnswer({
-    intent: "SCHEDULE",
+    intent: "BENEFICIARY",
     language: "ceb",
-    messageText: "Asa makita ang schedule?",
+    messageText: "Asa makita ang beneficiary record?",
     history: [{ role: "user", content: "Hello" }, { role: "assistant", content: "Maayong adlaw!" }],
     staffRole: "DSWD_STAFF",
   }, {
@@ -158,11 +159,11 @@ test("staff guidance uses the current question and bounded conversation context"
   assert.deepEqual(request.messages.slice(1), [
     { role: "user", content: "Hello" },
     { role: "assistant", content: "Maayong adlaw!" },
-    { role: "user", content: "Asa makita ang schedule?" },
+    { role: "user", content: "Asa makita ang beneficiary record?" },
   ]);
 });
 
-test("staff guidance returns a controlled reply when NVIDIA times out", async () => {
+test("staff guidance returns a controlled reply when Mistral times out", async () => {
   const result = await generateStaffAssistantAnswer({
     intent: "HELP",
     language: "ceb",
@@ -180,12 +181,9 @@ test("staff guidance returns a controlled reply when NVIDIA times out", async ()
   assert.match(result.messageText, /Makatabang ko/);
 });
 
-test("staff guidance retries the selected NVIDIA model after a failed request", async () => {
-  const requestedModels = [];
-  async function* stream() {
-    yield { model: NVIDIA_MODEL, choices: [{ delta: { content: "Natural AI reply." } }] };
-    yield { choices: [{ delta: {}, finish_reason: "stop" }] };
-  }
+test("staff guidance stops waiting before the first token and falls back without a retry", async () => {
+  let calls = 0;
+  let cancelled = false;
   const result = await generateStaffAssistantAnswer({
     intent: "HELP",
     language: "en",
@@ -193,17 +191,21 @@ test("staff guidance retries the selected NVIDIA model after a failed request", 
     staffRole: "SYSTEM_ADMIN",
   }, {
     apiKey: testApiKey,
-    client: { chat: { completions: { create: async ({ model }) => {
-      requestedModels.push(model);
-      if (requestedModels.length === 1) throw new Error("Provider unavailable");
-      return stream();
+    timeoutMs: 5,
+    client: { chat: { completions: { create: async (_body, { signal }) => {
+      calls++;
+      try {
+        await delay(2_000, undefined, { signal });
+      } finally {
+        cancelled = signal.aborted;
+      }
     } } } },
   });
 
-  assert.deepEqual(requestedModels, [NVIDIA_MODEL, NVIDIA_MODEL]);
-  assert.equal(result.messageText, "Natural AI reply.");
-  assert.equal(result.externalAiUsed, true);
-  assert.equal(result.externalAiModel, NVIDIA_MODEL);
+  assert.equal(calls, 1);
+  assert.equal(cancelled, true);
+  assert.match(result.messageText, /I can guide you/);
+  assert.equal(result.externalAiUsed, false);
 });
 
 test("simple staff greetings answer immediately without waiting for the large model", async () => {
@@ -235,11 +237,17 @@ test("short follow-ups keep the previous user's topic without trusting assistant
       apiKey: testApiKey,
       client: { chat: { completions: { create: async function* (body) { prompt = body.messages[0].content; yield { choices: [{ delta: { content: 'Grounded follow-up.' }, finish_reason: 'stop' }] }; } } } },
     });
-    assert.equal(result.externalAiUsed, true);
-    assert.ok(prompt.includes(expected));
-    assert.equal(prompt.includes('Invented:'), false);
-    assert.match(prompt, /previous assistant replies are not a source of verified facts/i);
-    assert.match(prompt, /BARANGAY_FACILITATOR/);
+    if (expected === 'Generate AI draft') {
+      assert.equal(result.externalAiUsed, false);
+      assert.ok(result.messageText.includes(expected));
+      assert.equal(prompt, undefined);
+    } else {
+      assert.equal(result.externalAiUsed, true);
+      assert.ok(prompt.includes(expected));
+      assert.equal(prompt.includes('Invented:'), false);
+      assert.match(prompt, /previous assistant replies are not a source of verified facts/i);
+      assert.match(prompt, /BARANGAY_FACILITATOR/);
+    }
   }
   let calls = 0;
   const fallback = await generateStaffAssistantAnswer({ intent: 'HELP', language: 'en', messageText: 'what next?', history: [{ role: 'assistant', content: 'A schedule was generated.' }] }, { apiKey: '', client: { chat: { completions: { create() { calls++; } } } } });
