@@ -30,4 +30,17 @@ for (const scenario of ["one account per beneficiary", "one request per mobile i
     assert.equal(await prisma.mobileBeneficiaryAccount.count({ where: { issuer } }), 0);
   });
 }
+test("database accepts a mobile link request audit without a staff user", { skip: !enabled }, async () => {
+  const recordId = randomUUID();
+  const rollback = new Error("Roll back the synthetic audit entry");
+  await assert.rejects(prisma.$transaction(async tx => {
+    const audit = await tx.auditLog.create({ data: {
+      actorType: "BENEFICIARY", action: "MOBILE_LINK_REQUESTED", entityAffected: "MOBILE_ACCOUNT", recordId,
+    } });
+    assert.equal(audit.userId, null);
+    throw rollback;
+  }), error => error === rollback);
+  assert.equal(await prisma.auditLog.count({ where: { recordId } }), 0);
+});
+
 test.after(async () => { if (enabled) await prisma.$disconnect(); });
