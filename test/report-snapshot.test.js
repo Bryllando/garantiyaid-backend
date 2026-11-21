@@ -96,8 +96,8 @@ test("audit export uses exact applied filters, all rows, deterministic ordering 
 test("AI selects only server-authored facts and rejects invented or incomplete highlights", async () => {
   const facts = [{ id: "verified", label: "Awaiting assistance", explanation: "7 verified claims await assistance." }, { id: "completed", label: "Completed", explanation: "18 completed claims." }];
   const client = selected => ({ chat: { completions: { create: async request => {
-    assert.equal(request.model, "mistral-large-4-0");
-    assert.equal(request.reasoning_effort, "low");
+    assert.equal(request.model, "mistralai/mistral-large-4-1t-a52b");
+    assert.equal(request.reasoning_effort, "none");
     assert.equal(JSON.stringify(request.messages).includes("beneficiaryName"), false);
     return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ function: { name: "select_report_highlights", arguments: JSON.stringify({ factIds: selected }) } }] } }] };
   } } } });

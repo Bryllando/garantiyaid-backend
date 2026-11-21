@@ -54,7 +54,7 @@ export async function generateExternalChatbotAnswer({
   language,
   approvedAnswer,
   promptMessages,
-  apiKey = env.mistralApiKey,
+  apiKey = env.nvidiaApiKey,
   client,
   timeoutMs = INTERACTIVE_AI_TIMEOUT_MS,
   signal: callerSignal,
@@ -72,7 +72,7 @@ export async function generateExternalChatbotAnswer({
         stream: true,
         max_tokens: 1024,
         temperature: 0.2,
-        reasoning_effort: "low",
+        reasoning_effort: "none",
         messages: promptMessages ?? [
           { role: "system", content: SYSTEM_PROMPT },
           {

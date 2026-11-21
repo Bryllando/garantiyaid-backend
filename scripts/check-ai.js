@@ -7,8 +7,8 @@ import { explainReportFacts } from "../src/modules/reports/report.ai.js";
 
 // Live provider check with synthetic counts only; no database access or saved appointments.
 try {
-  if (!env.mistralApiKey) throw new AppError(503, "MISTRAL_NOT_CONFIGURED", "Set MISTRAL_API_KEY in the backend environment.");
-  console.log("Checking Mistral Large 4 with synthetic data...");
+  if (!env.nvidiaApiKey) throw new AppError(503, "NVIDIA_NOT_CONFIGURED", "Set NVIDIA_API_KEY in the backend environment.");
+  console.log("Checking NVIDIA-hosted Mistral Large 4 with synthetic data...");
   const streamStartedAt = performance.now();
   let firstTextMs;
   const reply = await generateExternalChatbotAnswer({

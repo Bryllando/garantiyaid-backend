@@ -2,7 +2,7 @@ import { env } from "../../config/env.js";
 import { createMistralClient, INTERACTIVE_AI_TIMEOUT_MS, MISTRAL_MODEL } from "../../lib/mistral.js";
 import { AppError } from "../../utils/AppError.js";
 
-export async function explainReportFacts(facts, { client, apiKey = env.mistralApiKey } = {}) {
+export async function explainReportFacts(facts, { client, apiKey = env.nvidiaApiKey } = {}) {
   if (!client && !apiKey) throw new AppError(503, "REPORT_AI_UNAVAILABLE", "AI highlights are unavailable. The report explanations and PDF download are ready to use.");
   const ids = facts.map(fact => fact.id);
   try {
@@ -11,8 +11,7 @@ export async function explainReportFacts(facts, { client, apiKey = env.mistralAp
       stream: false,
       temperature: 0,
       max_tokens: 1024,
-      reasoning_effort: "low",
-      parallel_tool_calls: false,
+      reasoning_effort: "none",
       tool_choice: { type: "function", function: { name: "select_report_highlights" } },
       tools: [{ type: "function", function: { name: "select_report_highlights", description: "Order the most useful provided report explanations for staff review.", parameters: { type: "object", required: ["factIds"], properties: { factIds: { type: "array", items: { type: "string", enum: ids } } } } } }],
       messages: [

@@ -6,9 +6,9 @@ import { env } from "../src/config/env.js";
 import { submitStaffAssistantMessage } from "../src/modules/chatbot/chatbot.controller.js";
 
 async function testServer(t, messageText = "Contact 09123456789") {
-  const previousKey = env.mistralApiKey;
-  env.mistralApiKey = "synthetic-test-key";
-  t.after(() => { env.mistralApiKey = previousKey; });
+  const previousKey = env.nvidiaApiKey;
+  env.nvidiaApiKey = "synthetic-test-key";
+  t.after(() => { env.nvidiaApiKey = previousKey; });
   // Controller transport harness; route authentication is covered in chatbot.test.js.
   const app = express();
   app.post("/chat", (req, _res, next) => {
@@ -28,11 +28,11 @@ test("HTTP controller flushes answer text before model completion, redacts input
   const gate = new Promise((resolve) => { finish = resolve; });
   t.after(() => finish());
   t.mock.method(Completions.prototype, "create", async function* (body) {
-    assert.equal(this._client.baseURL, "https://api.mistral.ai/openai/v1");
-    assert.equal(this._client.apiKey, env.mistralApiKey);
+    assert.equal(this._client.baseURL, "https://integrate.api.nvidia.com/v1");
+    assert.equal(this._client.apiKey, env.nvidiaApiKey);
     assert.equal(this._client.maxRetries, 0);
-    assert.equal(body.model, "mistral-large-4-0");
-    assert.equal(body.reasoning_effort, "low");
+    assert.equal(body.model, "mistralai/mistral-large-4-1t-a52b");
+    assert.equal(body.reasoning_effort, "none");
     assert.doesNotMatch(JSON.stringify(body.messages), /09123456789/);
     yield { choices: [{ delta: { content: "Hello staff." } }] };
     await gate;

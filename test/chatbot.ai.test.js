@@ -92,7 +92,7 @@ test("Mistral streams visible text in both formats and keeps reasoning private",
   assert.equal(request.stream, true);
   assert.ok(requestOptions.signal instanceof AbortSignal);
   assert.equal(request.reasoning, undefined);
-  assert.equal(request.reasoning_effort, "low");
+  assert.equal(request.reasoning_effort, "none");
   assert.deepEqual(JSON.parse(request.messages[1].content), {
     language: "ceb",
     intent: "DOCUMENT_REQUIREMENTS",

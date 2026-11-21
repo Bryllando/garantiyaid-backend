@@ -8,7 +8,7 @@ Generate service sessions and allocate approved beneficiaries first. The AI prop
 
 ## AI behavior
 
-The backend calls Mistral's OpenAI-compatible API directly with `mistral-large-4-0`. Set `MISTRAL_API_KEY` in the backend environment and restart the backend. Run `npm run ai:check` to test chat streaming, report highlights, and schedule drafts using synthetic records.
+The backend calls NVIDIA's OpenAI-compatible API with `mistralai/mistral-large-4-1t-a52b`. Set `NVIDIA_API_KEY` in the backend environment and restart the backend. Run `npm run ai:check` to test chat streaming, report highlights, and schedule drafts using synthetic records.
 
 The model receives anonymous group counts, eligible slot references, capacity and existing occupancy. Names, contact information, identifiers, locations, service-area names and exact dates are excluded. The server groups allocations with identical eligible slots and expands validated aggregate proposals into local beneficiary records.
 
