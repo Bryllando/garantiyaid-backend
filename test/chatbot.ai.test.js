@@ -14,7 +14,7 @@ test("role walkthroughs answer the reported question offline and keep the authen
   const question = "step by step how this works as a  admin";
   for (const [messageText, history] of [[question, []], ["explain it step by step", [{ role: "user", content: question }]]]) {
     const result = await generateStaffAssistantAnswer({ intent: "HELP", language: "en", staffRole: "SYSTEM_ADMIN", messageText, history }, { apiKey: "" });
-    assert.match(result.messageText, /^1\. In \*\*Enrollment review/);
+    assert.match(result.messageText, /Administration → Staff and barangays.*1\. In \*\*Enrollment review/s);
     assert.match(result.messageText, /5\..*Distribution reconciliation/);
     assert.equal(result.externalAiUsed, false);
   }
@@ -275,6 +275,7 @@ test("general AI questions receive approved scheduler facts, while an unavailabl
   assert.match(prompt, /Generate AI draft/);
   assert.match(prompt, /Confirm and save draft schedule/);
   assert.match(prompt, /Requested language: ceb/);
+  assert.match(prompt, /Staff and barangays.*Register barangay.*Create staff account/s);
   assert.match(prompt, /leaves the event DRAFT/);
   assert.match(prompt, /do not display internal role codes/);
   const fallback = await generateStaffAssistantAnswer(input, { apiKey: '' });

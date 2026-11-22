@@ -1,6 +1,6 @@
 import { env } from "../../config/env.js";
 import { createMistralClient, MISTRAL_MODEL } from "../../lib/mistral.js";
-import { staffNavigationGuidance, staffOverviewGuidance, staffScheduleGuidance, staffSystemWalkthrough, staffWorkflowGuidance } from "./staff-workflow-guidance.js";
+import { staffAdministrationGuidance, staffNavigationGuidance, staffOverviewGuidance, staffScheduleGuidance, staffSystemWalkthrough, staffWorkflowGuidance } from "./staff-workflow-guidance.js";
 import { processExplanation } from "./chatbot.process-explanations.js";
 
 const SAFE_EXTERNAL_INTENTS = new Set([
@@ -141,6 +141,7 @@ export async function generateStaffAssistantAnswer({
   const approvedAnswer = STAFF_GUIDANCE[selectedLanguage][safeIntent];
   const grounding = safeIntent === "HELP"
     ? [staffOverviewGuidance(selectedLanguage, staffRole), staffScheduleGuidance(selectedLanguage, staffRole),
+      staffAdministrationGuidance(selectedLanguage, staffRole),
       ...["DELIVERY", "BENEFICIARY", "HELP"].map(topic => STAFF_GUIDANCE[selectedLanguage][topic])].filter(Boolean).join("\n")
     : approvedAnswer;
   const externalRequest = {

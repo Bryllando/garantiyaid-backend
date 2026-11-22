@@ -4,6 +4,34 @@ import { STAFF_WORKFLOW_GUIDANCE } from '../src/modules/chatbot/staff-workflow-g
 import { staffAssistantMessageSchema } from '../src/modules/chatbot/chatbot.schemas.js';
 import { generateStaffAssistantAnswer } from '../src/modules/chatbot/chatbot.ai.js';
 
+test('staff setup questions use real admin screens in the requested language and follow the current topic', async () => {
+  const question = 'where did the admin create a staff account in dswd and barangay staff? and also creating the barangays?';
+  const answer = async (messageText, language = 'en', staffRole = 'SYSTEM_ADMIN', history = []) => {
+    const result = await generateStaffAssistantAnswer({ intent: 'HELP', language, staffRole, messageText, history }, { apiKey: '' });
+    assert.equal(result.externalAiUsed, false);
+    return result.messageText;
+  };
+  const combined = await answer(question);
+  assert.match(combined, /Administration.*Staff and barangays/s);
+  assert.match(combined, /Add barangay.*Register barangay/s);
+  assert.match(combined, /Create staff account.*DSWD Staff.*Barangay Facilitator/s);
+
+  const staff = await answer('Asa ko maghimo og account para sa DSWD staff?', 'ceb');
+  assert.match(staff, /Ablihi.*Staff accounts.*Create staff account/s);
+  assert.doesNotMatch(staff, /Register barangay/);
+  const history = [{ role: 'user', content: question }, { role: 'assistant', content: 'Made-up instructions.' }];
+  const barangays = await answer('Paano magdagdag ng barangay?', 'fil', 'SYSTEM_ADMIN', history);
+  assert.match(barangays, /Buksan.*Add barangay.*Register barangay/s);
+  assert.doesNotMatch(barangays, /Create staff account|Made-up/);
+  assert.match(await answer('what about barangays?', 'en', 'SYSTEM_ADMIN', [{role: 'user', content: 'Where do I add staff accounts?'}]), /Register barangay/);
+  assert.match(await answer('Explain it step by step', 'en', 'SYSTEM_ADMIN', history), /Create staff account/);
+  for (const role of ['DSWD_STAFF', 'BARANGAY_FACILITATOR']) {
+    assert.match(await answer(question, 'en', role), /Ask (?:a|your) System Administrator/);
+  }
+  assert.doesNotMatch(await answer('How do barangay staff create an enrollment?'), /Create staff account|Register barangay/);
+  assert.doesNotMatch(await answer('Where can I reset a staff account password?'), /Create staff account/);
+});
+
 test('sensitive workflow guidance stays controlled in all languages without an external action or model call', async () => {
   for (const intent of Object.keys(STAFF_WORKFLOW_GUIDANCE)) {
     for (const language of ['en', 'fil', 'ceb']) {

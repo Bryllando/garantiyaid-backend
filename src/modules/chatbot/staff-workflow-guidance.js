@@ -167,6 +167,45 @@ const fullSystemFlow = /\b(?:(?:flow|workflow|walkthrough|process|proseso|daloy)
 const stepByStep = /\b(?:step by step|in detail|in a table|walk me through|hakbang hakbang|matag lakang|tagsa tagsa)\b/;
 const detailFollowUp = /^(?:(?:please|can you|could you|palihog|paki) )*(?:(?:explain|show|walk me through)(?: (?:it|that|more))?(?: (?:step by step|in detail))?|(?:show|make|put) (?:it|that) (?:as|in|into) a table|make (?:it|that) a table|ipasabot pa|ipaliwanag pa)$/;
 
+const administration = {
+  en: {
+    open: "As a System Administrator, open **Administration → Staff and barangays** in the sidebar.",
+    barangays: "Under **Barangays**, select **Add barangay**. Enter the city or municipality, province and official barangay name, then select **Register barangay**. If a new facilitator will serve this barangay, register it first.",
+    staff: "Under **Staff accounts**, select **Create staff account**. Choose **DSWD Staff** or **Barangay Facilitator** and enter the full name and official email. For a facilitator, enter a username and select an active barangay. Create the account, then give the staff member their generated Staff ID and temporary password privately.",
+    restricted: "Ask your System Administrator to create the staff account or register the barangay under **Administration → Staff and barangays**. That screen requires a System Administrator account.",
+  },
+  ceb: {
+    open: "Ablihi ang **Administration → Staff and barangays** sa sidebar.",
+    barangays: "Sa **Barangays**, pilia ang **Add barangay**. Isulod ang siyudad o munisipyo, probinsya ug opisyal nga ngalan sa barangay. Pilia ang **Register barangay**. Kung dinhi i-assign ang bag-ong facilitator, irehistro una ang barangay.",
+    staff: "Sa **Staff accounts**, pilia ang **Create staff account**. Pilia ang **DSWD Staff** o **Barangay Facilitator**, dayon isulod ang kompletong ngalan ug opisyal nga email. Para sa facilitator, isulod pud ang username ug pilia ang aktibong barangay nga iyang serbisyohan. Human mahimo ang account, ihatag sa staff sa pribado ang iyang Staff ID ug temporary password.",
+    restricted: "Ang System Administrator ang makahimo og staff account o makarehistro og barangay sa **Administration → Staff and barangays**. Hangyoa ang inyong admin nga moasikaso niini.",
+  },
+  fil: {
+    open: "Buksan ang **Administration → Staff and barangays** sa sidebar.",
+    barangays: "Sa **Barangays**, piliin ang **Add barangay**. Ilagay ang lungsod o munisipalidad, lalawigan at opisyal na pangalan ng barangay, pagkatapos piliin ang **Register barangay**. Kung dito itatalaga ang bagong facilitator, irehistro muna ang barangay.",
+    staff: "Sa **Staff accounts**, piliin ang **Create staff account**. Piliin ang **DSWD Staff** o **Barangay Facilitator** at ilagay ang buong pangalan at opisyal na email. Para sa facilitator, maglagay din ng username at pumili ng aktibong barangay. Pagkagawa ng account, pribadong ibigay sa kawani ang kanyang Staff ID at pansamantalang password.",
+    restricted: "Hilingin sa inyong System Administrator na gumawa ng staff account o magrehistro ng barangay sa **Administration → Staff and barangays**. Para sa System Administrator ang screen na ito.",
+  },
+};
+
+export function staffAdministrationGuidance(language, staffRole, { staff = true, barangays = true } = {}) {
+  const copy = administration[language] ?? administration.en;
+  if (staffRole !== "SYSTEM_ADMIN") return copy.restricted;
+  return [copy.open, barangays && copy.barangays, staff && copy.staff].filter(Boolean).join("\n\n");
+}
+
+const setupVerb = /\b(?:creat(?:e|es|ed|ing)|add(?:s|ed|ing)?|register(?:ing)?|set up|setup|make|find|open|(?:mag|pag|mo|maka)?himo|(?:mag|pag)?buhat|(?:mag|pag)?dugang|(?:mag|pag)?dagdag|gumawa|(?:i|mag)?rehistro)\s+(?:(?:a|an|the|new|another|og|ug|sa|ang|mga|ng|bagong|bag o|nga|na) )*/g;
+const staffObject = /^(?:(?:dswd(?: and barangay)?|barangay) (?:staff|facilitators?|accounts?)|staff(?: accounts?)?|accounts? (?:for|para (?:sa|ng)|sa|ng) (?:the |a |mga )?(?:dswd|barangay|staff))\b/;
+const barangayObject = /^(?:barangays?|brgys?)\b(?! (?:staff|facilitators?|accounts?|beneficiar(?:y|ies)|residents?|enrollments?|events?|reports?)\b)/;
+
+function administrationTopics(question) {
+  const objects = Array.from(question.matchAll(setupVerb), match => question.slice(match.index + match[0].length));
+  const staff = objects.some(object => staffObject.test(object)) || /\bstaff account (?:creation|setup)\b/.test(question);
+  const barangays = objects.some(object => barangayObject.test(object)) || /\bbarangay registration\b/.test(question)
+    || (staff && /\b(?:and|ug|at) (?:the |mga )?barangays?\b(?:$| (?:too|also|pud|rin)$)/.test(question));
+  if (staff || barangays) return { staff, barangays };
+}
+
 const roleQualifier = /\b(?:as|for|isip|bilang) (?:an? |the |usa ka |isang )?(?:system admin(?:istrator)?|admin(?:istrator)?|dswd staff|barangay facilitator)\b/;
 const adminSteps = [
   "1. In **Enrollment review**, check the decision for each application. Only approved beneficiaries can be allocated.\n2. Open **Distribution events**, create a draft, and set the package, sessions and capacity.\n3. Allocate the approved beneficiaries and review their appointments. Select **Confirm and save draft schedule** if you used the AI draft.\n4. Check the date and queue, then select **Open distribution event**. Issue QR cards if the event requires them.\n5. After staff record verification and handover, open **Distribution reconciliation**. Match releases to receipts and resolve findings before closing the event.",
@@ -189,11 +228,24 @@ function asksForSystemWalkthrough(question) {
 export function staffSystemWalkthrough({ intent, language, messageText, history, staffRole }) {
   if (!["HELP", "SCHEDULE", "BENEFICIARY", "DOCUMENT_REQUIREMENTS", "ENROLLMENT", "IDENTITY", "RELEASE"].includes(intent)) return undefined;
   const question = normalizeChatbotText(messageText);
-  const previousQuestion = detailFollowUp.test(question)
-    ? history.findLast(message => message.role === "user" && !detailFollowUp.test(normalizeChatbotText(message.content)))?.content
+  const followUp = text => detailFollowUp.test(text) || /^(?:what next|and then|continue|where do i go|unya|dayon|unsa(?:y| ang)? sunod|ano ang susunod)$/.test(text);
+  const previousQuestion = followUp(question)
+    ? history.findLast(message => message.role === "user" && !followUp(normalizeChatbotText(message.content)))?.content
     : undefined;
+  if (["HELP", "BENEFICIARY", "DOCUMENT_REQUIREMENTS"].includes(intent)) {
+    let topics = administrationTopics(normalizeChatbotText(previousQuestion ?? messageText));
+    if (!topics && /^(?:what about|how about|and|unya ang|paano naman ang) (?:the )?(barangays?|staff accounts?)$/.test(question)) {
+      const lastQuestion = history.findLast(message => message.role === "user")?.content;
+      if (lastQuestion && administrationTopics(normalizeChatbotText(lastQuestion))) {
+        topics = { staff: question.includes("staff"), barangays: question.includes("barangay") };
+      }
+    }
+    if (topics) return staffAdministrationGuidance(language, staffRole, topics);
+  }
   if (asksForRoleGuide(question) || (previousQuestion && asksForRoleGuide(normalizeChatbotText(previousQuestion)))) {
-    return staffRole === "SYSTEM_ADMIN" ? adminSteps[{ en: 0, fil: 1, ceb: 2 }[language] ?? 0] : staffOverviewGuidance(language, staffRole);
+    if (staffRole !== "SYSTEM_ADMIN") return staffOverviewGuidance(language, staffRole);
+    const setup = (administration[language] ?? administration.en).open;
+    return setup + "\n\n" + adminSteps[{ en: 0, fil: 1, ceb: 2 }[language] ?? 0];
   }
   if (asksForSystemWalkthrough(question) || (previousQuestion && (
     isSystemOverviewQuestion(previousQuestion) || asksForSystemWalkthrough(normalizeChatbotText(previousQuestion))
