@@ -10,6 +10,19 @@ import { MISTRAL_MODEL } from "../src/lib/mistral.js";
 
 const testApiKey = "synthetic-test-key";
 
+test("role walkthroughs answer the reported question offline and keep the authenticated role", async () => {
+  const question = "step by step how this works as a  admin";
+  for (const [messageText, history] of [[question, []], ["explain it step by step", [{ role: "user", content: question }]]]) {
+    const result = await generateStaffAssistantAnswer({ intent: "HELP", language: "en", staffRole: "SYSTEM_ADMIN", messageText, history }, { apiKey: "" });
+    assert.match(result.messageText, /^1\. In \*\*Enrollment review/);
+    assert.match(result.messageText, /5\..*Distribution reconciliation/);
+    assert.equal(result.externalAiUsed, false);
+  }
+  const readOnly = await generateStaffAssistantAnswer({ intent: "HELP", language: "en", staffRole: "DSWD_STAFF", messageText: question }, { apiKey: "" });
+  assert.match(readOnly.messageText, /Live monitoring/);
+  assert.doesNotMatch(readOnly.messageText, /then select \*\*Open distribution event/);
+});
+
 test("staff streaming clears an interrupted draft and returns guidance after one attempt", async () => {
   const events = [];
   let calls = 0;
@@ -25,7 +38,7 @@ test("staff streaming clears an interrupted draft and returns guidance after one
   });
   assert.equal(calls, 1);
   assert.deepEqual(events, ["Unfinished draft", ""]);
-  assert.match(result.messageText, /I can guide you/);
+  assert.match(result.messageText, /Which screen/);
   assert.equal(result.externalAiUsed, false);
 });
 
@@ -92,7 +105,7 @@ test("Mistral streams visible text in both formats and keeps reasoning private",
   assert.equal(request.stream, true);
   assert.ok(requestOptions.signal instanceof AbortSignal);
   assert.equal(request.reasoning, undefined);
-  assert.equal(request.reasoning_effort, "none");
+  assert.equal(request.reasoning_effort, "low");
   assert.deepEqual(JSON.parse(request.messages[1].content), {
     language: "ceb",
     intent: "DOCUMENT_REQUIREMENTS",
@@ -178,7 +191,7 @@ test("staff guidance returns a controlled reply when Mistral times out", async (
 
   assert.equal(result.externalAiUsed, false);
   assert.equal(result.inputProcessedExternally, false);
-  assert.match(result.messageText, /Makatabang ko/);
+  assert.match(result.messageText, /Unsang screen/);
 });
 
 test("staff guidance stops waiting before the first token and falls back without a retry", async () => {
@@ -204,7 +217,7 @@ test("staff guidance stops waiting before the first token and falls back without
 
   assert.equal(calls, 1);
   assert.equal(cancelled, true);
-  assert.match(result.messageText, /I can guide you/);
+  assert.match(result.messageText, /Which screen/);
   assert.equal(result.externalAiUsed, false);
 });
 
@@ -252,7 +265,7 @@ test("short follow-ups keep the previous user's topic without trusting assistant
   let calls = 0;
   const fallback = await generateStaffAssistantAnswer({ intent: 'HELP', language: 'en', messageText: 'what next?', history: [{ role: 'assistant', content: 'A schedule was generated.' }] }, { apiKey: '', client: { chat: { completions: { create() { calls++; } } } } });
   assert.equal(calls, 0);
-  assert.match(fallback.messageText, /I can guide you/);
+  assert.match(fallback.messageText, /Which screen/);
 });
 
 test("general AI questions receive approved scheduler facts, while an unavailable model returns concise help", async () => {
@@ -265,6 +278,6 @@ test("general AI questions receive approved scheduler facts, while an unavailabl
   assert.match(prompt, /leaves the event DRAFT/);
   assert.match(prompt, /do not display internal role codes/);
   const fallback = await generateStaffAssistantAnswer(input, { apiKey: '' });
-  assert.match(fallback.messageText, /^Makatabang ko/);
+  assert.match(fallback.messageText, /^Unsang screen/);
   assert.ok(fallback.messageText.length < 250);
 });

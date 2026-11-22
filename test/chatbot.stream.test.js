@@ -32,7 +32,7 @@ test("HTTP controller flushes answer text before model completion, redacts input
     assert.equal(this._client.apiKey, env.nvidiaApiKey);
     assert.equal(this._client.maxRetries, 0);
     assert.equal(body.model, "mistralai/mistral-large-4-1t-a52b");
-    assert.equal(body.reasoning_effort, "none");
+    assert.equal(body.reasoning_effort, "low");
     assert.doesNotMatch(JSON.stringify(body.messages), /09123456789/);
     yield { choices: [{ delta: { content: "Hello staff." } }] };
     await gate;

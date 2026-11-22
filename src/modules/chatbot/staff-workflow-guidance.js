@@ -167,18 +167,34 @@ const fullSystemFlow = /\b(?:(?:flow|workflow|walkthrough|process|proseso|daloy)
 const stepByStep = /\b(?:step by step|in detail|in a table|walk me through|hakbang hakbang|matag lakang|tagsa tagsa)\b/;
 const detailFollowUp = /^(?:(?:please|can you|could you|palihog|paki) )*(?:(?:explain|show|walk me through)(?: (?:it|that|more))?(?: (?:step by step|in detail))?|(?:show|make|put) (?:it|that) (?:as|in|into) a table|make (?:it|that) a table|ipasabot pa|ipaliwanag pa)$/;
 
+const roleQualifier = /\b(?:as|for|isip|bilang) (?:an? |the |usa ka |isang )?(?:system admin(?:istrator)?|admin(?:istrator)?|dswd staff|barangay facilitator)\b/;
+const adminSteps = [
+  "1. In **Enrollment review**, check the decision for each application. Only approved beneficiaries can be allocated.\n2. Open **Distribution events**, create a draft, and set the package, sessions and capacity.\n3. Allocate the approved beneficiaries and review their appointments. Select **Confirm and save draft schedule** if you used the AI draft.\n4. Check the date and queue, then select **Open distribution event**. Issue QR cards if the event requires them.\n5. After staff record verification and handover, open **Distribution reconciliation**. Match releases to receipts and resolve findings before closing the event.",
+  "1. Sa **Enrollment review**, suriin ang desisyon sa bawat application. Ang mga aprubadong beneficiary ang puwedeng i-allocate.\n2. Sa **Distribution events**, gumawa ng draft at itakda ang package, sessions at capacity.\n3. I-allocate ang mga aprubadong beneficiary at suriin ang appointments. Kung gumamit ng AI draft, piliin ang **Confirm and save draft schedule**.\n4. Suriin ang petsa at pila bago piliin ang **Open distribution event**. Mag-issue ng QR cards kung kailangan.\n5. Pagkatapos maitala ng staff ang verification at handover, buksan ang **Distribution reconciliation**. Itugma ang releases at resibo at lutasin ang findings bago isara ang event.",
+  "1. Sa **Enrollment review**, susiha ang desisyon sa matag application. Ang mga approved nga beneficiary ang puwedeng i-allocate.\n2. Sa **Distribution events**, paghimo og draft ug itakda ang package, sessions ug capacity.\n3. I-allocate ang approved nga beneficiaries ug ribyuha ang ilang appointments. Kung migamit ka og AI draft, pilia ang **Confirm and save draft schedule**.\n4. Susiha ang petsa ug pila una mopili sa **Open distribution event**. Pag-issue og QR cards kung gikinahanglan.\n5. Human matala sa staff ang verification ug handover, ablihi ang **Distribution reconciliation**. Itandi ang releases sa mga resibo ug sulbara ang findings una isira ang event.",
+];
+
+function asksForRoleGuide(question) {
+  if (!roleQualifier.test(question)) return false;
+  const topic = question.replace(roleQualifier, "").replace(stepByStep, "").replace(/\s+/g, " ").trim();
+  return !topic || isSystemOverviewQuestion(topic) || /^(?:how (?:does )?(?:this|it) works?|what (?:do|should) i do|unsaon (?:ni|nako)|paano (?:ito|gamitin ito))$/.test(topic);
+}
+
 function asksForSystemWalkthrough(question) {
   return fullSystemFlow.test(question) || (stepByStep.test(question) && isSystemOverviewQuestion(question
     .replace(stepByStep, " ").replace(/\s+/g, " ").trim()
     .replace(/ for (?:my |a |the )?consultation$/, "")));
 }
 
-export function staffSystemWalkthrough({ intent, language, messageText, history }) {
+export function staffSystemWalkthrough({ intent, language, messageText, history, staffRole }) {
   if (!["HELP", "SCHEDULE", "BENEFICIARY", "DOCUMENT_REQUIREMENTS", "ENROLLMENT", "IDENTITY", "RELEASE"].includes(intent)) return undefined;
   const question = normalizeChatbotText(messageText);
   const previousQuestion = detailFollowUp.test(question)
     ? history.findLast(message => message.role === "user" && !detailFollowUp.test(normalizeChatbotText(message.content)))?.content
     : undefined;
+  if (asksForRoleGuide(question) || (previousQuestion && asksForRoleGuide(normalizeChatbotText(previousQuestion)))) {
+    return staffRole === "SYSTEM_ADMIN" ? adminSteps[{ en: 0, fil: 1, ceb: 2 }[language] ?? 0] : staffOverviewGuidance(language, staffRole);
+  }
   if (asksForSystemWalkthrough(question) || (previousQuestion && (
     isSystemOverviewQuestion(previousQuestion) || asksForSystemWalkthrough(normalizeChatbotText(previousQuestion))
   ))) {

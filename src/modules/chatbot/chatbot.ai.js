@@ -1,5 +1,5 @@
 import { env } from "../../config/env.js";
-import { createMistralClient, INTERACTIVE_AI_TIMEOUT_MS, MISTRAL_MODEL } from "../../lib/mistral.js";
+import { createMistralClient, MISTRAL_MODEL } from "../../lib/mistral.js";
 import { staffNavigationGuidance, staffOverviewGuidance, staffScheduleGuidance, staffSystemWalkthrough, staffWorkflowGuidance } from "./staff-workflow-guidance.js";
 import { processExplanation } from "./chatbot.process-explanations.js";
 
@@ -21,21 +21,21 @@ const STAFF_GUIDANCE = Object.freeze({
     SCHEDULE: "Admin creates distribution events and allocates approved beneficiaries. Admin and assigned Barangay staff can plan sessions and edit draft schedules. To get an AI proposal, open a draft event in Distribution events (Admin) or Queue & schedules (Barangay), choose Generate AI draft, review capacity and assignments, edit slots if needed, then Confirm and save draft schedule. The event remains a draft; opening locks setup. Existing appointments can be moved separately. A cancelled appointment must be reactivated separately. DSWD can review schedule reports through Live monitoring. This chat has not generated, inspected or saved appointments.",
     DELIVERY: "Open SMS delivery to inspect the exact notification and its error within your authorized scope. Queued means awaiting processing. Gateway accepted does not confirm arrival on a recipient’s phone. A simulated send is not a real SMS. Check the validated contact, provider error and gateway phone before an authorized retry; do not repeatedly resend or claim delivery from the label. This chat has not checked a delivery record or sent a message.",
     BENEFICIARY: "Use authorized beneficiary records to review Barangay, Sitio or Purok, and validated contact information for controlled recipient selection.",
-    HELP: "I can guide you to schedules, delivery records, beneficiary records, or the reviewed reminder and distribution-draft workflows.",
+    HELP: "Which screen are you on, and what are you trying to do there? Tell me the step or button you need help with.",
   }),
   fil: Object.freeze({
     GREETING: "Kumusta! Handa akong sumagot sa pangkalahatang tanong tungkol sa GarantiyAid operations at gabayan ka sa reviewed staff workflows.",
     SCHEDULE: "Admin ang gumagawa ng event at nag-aallocate ng approved beneficiaries. Admin at nakatalagang Barangay staff ang maaaring magplano ng sessions at mag-edit ng draft schedules. Sa draft event sa Distribution events (Admin) o Queue & schedules (Barangay), piliin ang Generate AI draft, suriin ang capacity at assignments, baguhin ang slots kung kailangan, pagkatapos Confirm and save draft schedule. Draft pa rin ang event; locked ang setup kapag open na. Hiwalay na nirereview ang existing at cancelled appointments gamit ang Move o Reactivate. DSWD: schedule reports sa Live monitoring. Walang appointment na ginawa o binago ng chat na ito.",
     DELIVERY: "Buksan ang SMS delivery at suriin ang tamang notification at error sa iyong scope. Ang queued ay naghihintay pa. Hindi patunay ng pagdating sa phone ang gateway accepted. Hindi totoong SMS ang simulated send. Suriin ang validated contact, provider error at gateway phone bago ang awtorisadong retry. Huwag paulit-ulit magpadala. Walang delivery record na tiningnan o mensaheng ipinadala ang chat na ito.",
     BENEFICIARY: "Gamitin ang awtorisadong beneficiary records para suriin ang Barangay, Sitio o Purok, at validated contact information para sa kontroladong recipient selection.",
-    HELP: "Maaari kitang gabayan sa schedules, delivery records, beneficiary records, at reviewed reminder o distribution-draft workflows.",
+    HELP: "Anong screen ang bukas at ano ang gusto mong gawin doon? Sabihin ang hakbang o button na kailangan mong gamitin.",
   }),
   ceb: Object.freeze({
     GREETING: "Oo, motubag ko. Maayong adlaw! Pangutan-a ko bahin sa GarantiyAid operations ug reviewed staff workflows.",
     SCHEDULE: "Admin ang maghimo og event ug mo-allocate sa approved beneficiaries. Admin ug assigned Barangay staff makaplano sa sessions ug maka-edit sa draft schedules. Sa draft event sa Distribution events (Admin) o Queue & schedules (Barangay), pilia ang Generate AI draft, ribyuha ang capacity ug assignments, usba ang slots kung gikinahanglan, dayon Confirm and save draft schedule. Draft gihapon ang event; locked ang setup kung open na. Lahi ang pagribyu sa existing ug cancelled appointments gamit ang Move o Reactivate. DSWD: schedule reports sa Live monitoring. Walay appointment nga gihimo o giusab niining chat.",
     DELIVERY: "Ablihi ang SMS delivery ug susiha ang tukmang notification ug error sulod sa imong scope. Ang queued naghulat pa. Dili pamatuod nga naabot sa phone ang gateway accepted. Dili tinuod nga SMS ang simulated send. Susiha ang validated contact, provider error ug gateway phone una ang awtorisadong retry. Ayaw balik-balika og send. Walay delivery record nga gitan-aw o mensahe nga gipadala niining chat.",
     BENEFICIARY: "Gamita ang awtorisadong beneficiary records sa pagribyu sa Barangay, Sitio o Purok, ug validated contact information para sa kontroladong recipient selection.",
-    HELP: "Makatabang ko sa schedules, delivery records, beneficiary records, ug reviewed reminder o distribution-draft workflows.",
+    HELP: "Unsang screen ang imong giablihan ug unsay gusto nimong buhaton didto? Isulti ang lakang o button nga imong gikinahanglag tabang.",
   }),
 });
 
@@ -56,7 +56,8 @@ export async function generateExternalChatbotAnswer({
   promptMessages,
   apiKey = env.nvidiaApiKey,
   client,
-  timeoutMs = INTERACTIVE_AI_TIMEOUT_MS,
+  // The hosted model can spend its first minute reasoning before emitting visible text.
+  timeoutMs = 90_000,
   signal: callerSignal,
   onText,
 }) {
@@ -70,9 +71,9 @@ export async function generateExternalChatbotAnswer({
     const stream = await provider.chat.completions.create({
         model: MISTRAL_MODEL,
         stream: true,
-        max_tokens: 1024,
+        max_tokens: 2048,
         temperature: 0.2,
-        reasoning_effort: "none",
+        reasoning_effort: "low",
         messages: promptMessages ?? [
           { role: "system", content: SYSTEM_PROMPT },
           {
@@ -127,7 +128,7 @@ export async function generateStaffAssistantAnswer({
     else if (/\b(?:sms|reminder|notification|delivery|pahibalo|mensahe)\b/i.test(previousQuestion)) intent = "DELIVERY";
     else if (/\b(?:beneficiar(?:y|ies)|benepisyaryo|sitio|purok)\b/i.test(previousQuestion)) intent = "BENEFICIARY";
   }
-  const workflowAnswer = staffSystemWalkthrough({ intent, language, messageText, history })
+  const workflowAnswer = staffSystemWalkthrough({ intent, language, messageText, history, staffRole })
     ?? processExplanation({ intent, language, messageText, history })?.messageText
     ?? staffWorkflowGuidance(intent, language)
     ?? staffNavigationGuidance({ intent, language, messageText, staffRole });
