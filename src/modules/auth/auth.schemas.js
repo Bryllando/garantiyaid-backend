@@ -12,6 +12,8 @@ const recoveryCode = z.string().trim().toUpperCase().max(19).refine(
   "Recovery code must contain 16 hexadecimal characters.",
 );
 
+export const continueSessionSchema = z.object({ continuationToken: z.string().min(1).max(2048) }).strict();
+
 export const loginSchema = z.object({
   identifier,
   password: loginPasswordSchema,

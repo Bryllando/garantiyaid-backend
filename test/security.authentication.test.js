@@ -67,7 +67,7 @@ test("staff JWTs use an explicit algorithm, issuer, audience, expiry, and UUID j
   assert.equal(payload.aud, env.jwtAudience);
   assert.match(payload.jti, /^[0-9a-f-]{36}$/i);
   assert.ok(payload.exp > payload.iat);
-  assert.equal(payload.exp - payload.iat, durationSeconds(env.jwtAccessExpiresIn));
+  assert.equal(payload.exp - payload.iat, Math.min(8 * 3600, durationSeconds(env.jwtAccessExpiresIn)));
   if (env.nodeEnv === "production") {
     assert.ok(payload.exp - payload.iat <= 60 * 60);
   }

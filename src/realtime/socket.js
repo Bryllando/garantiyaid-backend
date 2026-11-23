@@ -153,7 +153,7 @@ export async function authenticateSocketConnection(socket, database = prisma) {
     assertDevAdminRequest(handshakeRequests.get(socket.request) ?? socket.request, env);
     assertDevAdminAccount(user);
   }
-  return user;
+  return { ...user, tokenExpiresAt: payload.exp * 1000 };
 }
 
 export function realtimeRoomsForStaff(staffUser) {
@@ -262,6 +262,11 @@ export function attachRealtimeServer(
   });
   io.on("connection", (socket) => {
     const staffUser = socket.data.staffUser;
+    if (staffUser.tokenExpiresAt) {
+      // Closing the transport lets Socket.IO reconnect using the tab's current credential.
+      const expiry = setTimeout(() => socket.conn.close(), Math.max(0, staffUser.tokenExpiresAt - Date.now()));
+      socket.once("disconnect", () => clearTimeout(expiry));
+    }
     const rooms = realtimeRoomsForStaff(staffUser);
     for (const room of rooms) socket.join(room);
     socket.emit("realtime.ready", {

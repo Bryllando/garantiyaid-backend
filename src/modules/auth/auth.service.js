@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import prisma from "../../lib/prisma.js";
-import { env } from "../../config/env.js";
+import { durationInMilliseconds, env } from "../../config/env.js";
 import { AppError } from "../../utils/AppError.js";
 import { STAFF_ROLES, USERNAME_LOGIN_ROLES } from "./auth.constants.js";
 import { assertDevAdminAccount, assertDevAdminRequest, isDeveloperAdmin } from "./devAdmin.policy.js";
@@ -89,15 +89,23 @@ function jwtOptions(options = {}) {
   };
 }
 
-export function signAccessToken(user, { jwtId = randomUUID() } = {}) {
+const STAFF_SHIFT_SECONDS = 8 * 60 * 60;
+
+export function signAccessToken(user, { jwtId = randomUUID(), sessionEnd, expiresAt } = {}) {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const deadline = sessionEnd ?? issuedAt + STAFF_SHIFT_SECONDS;
+  const lifetimeSeconds = durationInMilliseconds(env.jwtAccessExpiresIn) / 1000;
   return jwt.sign(
     {
       sub: user.userId,
       role: user.role,
       type: "staff",
+      iat: issuedAt,
+      session_end: deadline,
+      exp: expiresAt ?? Math.min(issuedAt + lifetimeSeconds, deadline),
     },
     requireJwtSecret(),
-    jwtOptions({ expiresIn: env.jwtAccessExpiresIn, jwtid: jwtId }),
+    jwtOptions({ jwtid: jwtId }),
   );
 }
 
@@ -276,7 +284,36 @@ export async function issueAccessToken(user, { ipAddress = null, database = pris
     },
   });
 
-  return { accessToken, sessionId, expiresAt };
+  const continuationToken = jwt.sign(
+    { sub: user.userId, type: "staff_continuation", exp: payload.session_end },
+    requireJwtSecret(),
+    jwtOptions({ jwtid: sessionId }),
+  );
+  return { accessToken, continuationToken, sessionId, expiresAt };
+}
+
+export async function continueStaffSession(user, sessionId, continuationToken, database = prisma) {
+  const proof = verifyStaffToken(continuationToken, "staff_continuation", "INVALID_SESSION", "Sign in again to continue.");
+  if (proof.sub !== user.userId || proof.jti !== sessionId) {
+    throw new AppError(401, "INVALID_SESSION", "This continuation belongs to a different staff session.");
+  }
+  const now = Date.now();
+  const expires = Math.min(Math.floor((now + durationInMilliseconds(env.jwtAccessExpiresIn)) / 1000), proof.exp);
+  const expiresAt = new Date(expires * 1000);
+  const active = { sessionId, userId: user.userId, revokedAt: null };
+  const updated = await database.staffSession.updateMany({
+    where: { ...active, expiresAt: { gt: new Date(now), lte: expiresAt } },
+    data: { expiresAt },
+  });
+  if (!updated.count) {
+    // A concurrent request can have already extended this same session further.
+    const newerSession = await database.staffSession.findFirst({
+      where: { ...active, expiresAt: { gt: expiresAt } },
+      select: { sessionId: true },
+    });
+    if (!newerSession) throw new AppError(401, "INVALID_SESSION", "This staff session has ended. Sign in again.");
+  }
+  return signAccessToken(user, { jwtId: sessionId, sessionEnd: proof.exp, expiresAt: expires });
 }
 
 export function resolveStaffLoginLookup(identifier) {

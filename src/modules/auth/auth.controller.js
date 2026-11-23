@@ -11,6 +11,7 @@ import {
 } from "../staffNotifications/staffSecurityEmail.service.js";
 import {
   authenticateStaff as authenticateStaffCredentials,
+  continueStaffSession,
   generateRecoveryCodes,
   hashRecoveryCode,
   issueAccessToken,
@@ -34,6 +35,11 @@ import {
   passwordResetPath,
   passwordResetTokenIsUsable,
 } from "./passwordReset.service.js";
+
+export const renewSession = asyncHandler(async (req, res) => {
+  const accessToken = await continueStaffSession(req.staffUser, req.auth.sessionId, req.validatedBody.continuationToken);
+  res.set("Cache-Control", "no-store").json({ success: true, data: { accessToken } });
+});
 
 function invalidPasswordResetTokenError() {
   return new AppError(
@@ -214,7 +220,7 @@ export const login = asyncHandler(async (req, res) => {
     });
   }
 
-  const { accessToken } = await prisma.$transaction(async (tx) => {
+  const { accessToken, continuationToken } = await prisma.$transaction(async (tx) => {
     const issuedSession = await issueAccessToken(result.user, { ipAddress, database: tx });
     await tx.auditLog.create({
       data: {
@@ -247,6 +253,7 @@ export const login = asyncHandler(async (req, res) => {
     success: true,
     data: {
       accessToken,
+      continuationToken,
       user: result.user,
     },
   });
@@ -628,7 +635,7 @@ export const confirmTotp = [
     const recoveryCodes = generateRecoveryCodes();
     const recoveryCodeHashes = await Promise.all(recoveryCodes.map(hashRecoveryCode));
 
-    const { confirmedUser, accessToken, securityNotification } = await prisma.$transaction(async (tx) => {
+    const { confirmedUser, accessToken, continuationToken, securityNotification } = await prisma.$transaction(async (tx) => {
       const updated = await tx.user.updateMany({
         where: {
           userId: user.userId,
@@ -679,12 +686,12 @@ export const confirmTotp = [
         eventKey: req.requestId,
         user: confirmedUser,
       }, tx);
-      const { accessToken } = await issueAccessToken(confirmedUser, {
+      const { accessToken, continuationToken } = await issueAccessToken(confirmedUser, {
         ipAddress: clientIpAddress(req),
         database: tx,
       });
 
-      return { confirmedUser, accessToken, securityNotification: notification };
+      return { confirmedUser, accessToken, continuationToken, securityNotification: notification };
     });
     const emailDelivery = await dispatchStaffSecurityNotification(securityNotification);
 
@@ -692,6 +699,7 @@ export const confirmTotp = [
       success: true,
       data: {
         accessToken,
+        continuationToken,
         user: confirmedUser,
         recoveryCodes,
         emailDelivery,

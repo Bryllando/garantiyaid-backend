@@ -13,6 +13,7 @@ import {
   getOwnAccount,
   getCurrentStaff,
   login,
+  renewSession,
   logout,
   requestPasswordReset,
   completePasswordReset,
@@ -27,6 +28,7 @@ import {
   confirmTotpReplacementSchema,
   confirmTotpSchema,
   loginSchema,
+  continueSessionSchema,
   requestPasswordResetSchema,
   completePasswordResetSchema,
   reauthenticateAccountSchema,
@@ -39,6 +41,7 @@ authRoutes.post("/login", authenticationRateLimiter, validateBody(loginSchema), 
 authRoutes.post("/password-reset/request", passwordResetRateLimiter, validateBody(requestPasswordResetSchema), requestPasswordReset);
 authRoutes.post("/password-reset/complete", passwordResetRateLimiter, validateBody(completePasswordResetSchema), completePasswordReset);
 authRoutes.get("/me", authenticateStaff, getCurrentStaff);
+authRoutes.post("/session/continue", authenticateStaff, validateBody(continueSessionSchema), renewSession);
 authRoutes.post("/logout", authenticateStaff, logout);
 authRoutes.get("/account", authenticateStaff, getOwnAccount);
 authRoutes.patch("/account", authenticateStaff, validateBody(updateOwnProfileSchema), updateOwnProfile);
