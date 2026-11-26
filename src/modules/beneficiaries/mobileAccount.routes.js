@@ -1,3 +1,4 @@
+import { decideIdentity } from "../mobile/mobileIdentity.service.js";
 import { Router } from "express";
 import { z } from "zod";
 import prisma from "../../lib/prisma.js";
@@ -24,6 +25,7 @@ const listSchema = z.object({
 const paramsSchema = z.object({ accountId: z.uuid() });
 const decisionSchema = z.discriminatedUnion("decision", [
   z.object({ decision: z.literal("LINK"), beneficiaryId: z.uuid(), confirmedIdentity: z.literal(true), revision: z.number().int().positive(), note: z.string().trim().min(5).max(2000) }).strict(),
+  z.object({ decision: z.literal("RECOVERY"), beneficiaryId: z.uuid(), revision: z.number().int().positive(), note: z.string().trim().min(5).max(500) }).strict(),
   z.object({ decision: z.literal("REJECT"), revision: z.number().int().positive(), note: z.string().trim().min(5).max(2000) }).strict(),
 ]);
 const accountSelect = {
@@ -104,10 +106,10 @@ staffMobileAccountRoutes.get("/", validateQuery(listSchema), asyncHandler(async 
   const scope = beneficiaryAccessScope(req.staffUser);
   const where = { status, ...(status === "LINKED" ? { beneficiary: { is: scope } } : scope) };
   const [accounts, total] = await Promise.all([
-    prisma.mobileBeneficiaryAccount.findMany({ where, select: { ...accountSelect, beneficiary: { select: beneficiarySelect } }, orderBy: [{ createdAt: "asc" }, { accountId: "asc" }], skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.mobileBeneficiaryAccount.findMany({ where, select: { ...accountSelect, identityStatus: true, identityNote: true, identityDocumentId: true, beneficiary: { select: beneficiarySelect } }, orderBy: [{ createdAt: "asc" }, { accountId: "asc" }], skip: (page - 1) * pageSize, take: pageSize }),
     prisma.mobileBeneficiaryAccount.count({ where }),
   ]);
-  res.json({ success: true, data: { accounts, mobileAuthenticationConfigured: Boolean(env.mobileAuthPublicKey), pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } } });
+  res.json({ success: true, data: { accounts, mobileAuthenticationConfigured: Boolean(env.mobileAuthPublicKey || env.mobileAuthMode !== "DISABLED" && env.mobileAuthSecret), pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } } });
 }));
 
 staffMobileAccountRoutes.post("/:accountId/decision", validateParams(paramsSchema), validateBody(decisionSchema), asyncHandler(async (req, res) => {
@@ -119,6 +121,11 @@ staffMobileAccountRoutes.post("/:accountId/decision", validateParams(paramsSchem
       const existing = await tx.mobileBeneficiaryAccount.findFirst({ where: { accountId, ...scope }, select: accountSelect });
       if (!existing) throw new AppError(404, "MOBILE_REQUEST_NOT_FOUND", "Mobile account request was not found.");
       if (existing.status !== "PENDING" || existing.revision !== revision) throw conflict();
+      if (decision === "RECOVERY") {
+        const occupied = await tx.beneficiary.findFirst({ where: { beneficiaryId, ...scope, barangayId: existing.barangayId,
+          mobileAccount: { is: { status: "LINKED" } } }, select: { beneficiaryId: true } });
+        if (!occupied) throw conflict();
+      }
       if (decision === "LINK") {
         const beneficiary = await tx.beneficiary.findFirst({ where: { beneficiaryId, status: "ACTIVE", ...scope }, select: { beneficiaryId: true, barangayId: true } });
         if (!beneficiary) throw new AppError(404, "BENEFICIARY_NOT_FOUND", "An active beneficiary in your authorized area was not found.");
@@ -126,11 +133,11 @@ staffMobileAccountRoutes.post("/:accountId/decision", validateParams(paramsSchem
       }
       const updated = await tx.mobileBeneficiaryAccount.updateMany({
         where: { accountId, status: "PENDING", revision, ...scope },
-        data: { status: decision === "LINK" ? "LINKED" : "REJECTED", beneficiaryId: beneficiaryId ?? null, revision: { increment: 1 }, reviewNote: note, reviewedAt: new Date(), reviewedById: req.auth.userId },
+        data: { status: decision === "LINK" ? "LINKED" : "REJECTED", beneficiaryId: decision === "LINK" ? beneficiaryId : null, revision: { increment: 1 }, reviewNote: decision === "RECOVERY" ? "Contact the barangay office for assisted account recovery using your existing record." : note, reviewedAt: new Date(), reviewedById: req.auth.userId },
       });
       if (updated.count !== 1) throw conflict();
       await tx.auditLog.create({ data: {
-        userId: req.auth.userId, action: decision === "LINK" ? "MOBILE_ACCOUNT_LINKED" : "MOBILE_LINK_REJECTED", entityAffected: "MOBILE_ACCOUNT", recordId: accountId,
+        userId: req.auth.userId, action: decision === "LINK" ? "MOBILE_ACCOUNT_LINKED" : decision === "RECOVERY" ? "MOBILE_ACCOUNT_RECOVERY_REFERRED" : "MOBILE_LINK_REJECTED", entityAffected: "MOBILE_ACCOUNT", recordId: accountId,
         ipAddress: clientIpAddress(req), details: { beneficiaryId: beneficiaryId ?? null, revision: revision + 1, note },
       } });
       return tx.mobileBeneficiaryAccount.findUniqueOrThrow({ where: { accountId }, select: accountSelect });
@@ -141,3 +148,9 @@ staffMobileAccountRoutes.post("/:accountId/decision", validateParams(paramsSchem
     throw error;
   }
 }));
+
+staffMobileAccountRoutes.post("/:accountId/identity", authorizeRoles("SYSTEM_ADMIN"), validateParams(paramsSchema),
+  validateBody(z.object({ decision: z.enum(["APPROVE","RETURN"]), revision: z.number().int().positive(), note: z.string().trim().min(5).max(500) }).strict()),
+  asyncHandler(async (req,res) => {
+    res.json({ success: true, data: await decideIdentity(req.validatedParams.accountId, req.auth.userId, req.validatedBody) });
+  }));

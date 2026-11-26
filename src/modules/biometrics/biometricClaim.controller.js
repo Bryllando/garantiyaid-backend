@@ -1,3 +1,4 @@
+import { settleAfterVerification } from "../wallets/wallet.controller.js";
 import { createHash } from "node:crypto";
 import prisma from "../../lib/prisma.js";
 import { manualVerificationAllowed } from "../distributions/manualVerification.service.js";
@@ -511,6 +512,7 @@ export const verifyBiometricClaim = asyncHandler(async (req, res) => {
         walletTransactionCreated: false,
       },
     });
+    await settleAfterVerification(tx, req, currentDistribution, responseBody.data);
     await tx.idempotencyRecord.create({ data: idempotencyData(identity, hash, 201, responseBody) });
     return { replayed: false, responseStatus: 201, responseBody };
   });
@@ -669,6 +671,7 @@ export const submitClaimSignature = asyncHandler(async (req, res) => {
         walletTransactionCreated: false,
       },
     });
+    await settleAfterVerification(tx, req, currentDistribution, responseBody.data);
     await tx.idempotencyRecord.create({ data: idempotencyData(identity, hash, 201, responseBody) });
     return { replayed: false, responseStatus: 201, responseBody };
   });

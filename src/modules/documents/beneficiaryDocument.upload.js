@@ -6,8 +6,7 @@ import { env } from "../../config/env.js";
 import { BENEFICIARY_DOCUMENT_MAX_BYTES } from "./beneficiaryDocument.constants.js";
 
 export const beneficiaryDocumentUploadDirectory = path.resolve(
-  env.uploadRoot,
-  "beneficiary-documents",
+  env.documentStorageDir ?? path.join(env.uploadRoot, "beneficiary-documents"),
 );
 
 mkdirSync(beneficiaryDocumentUploadDirectory, { recursive: true });
@@ -26,5 +25,8 @@ export const uploadBeneficiaryDocument = multer({
   limits: {
     files: 1,
     fileSize: BENEFICIARY_DOCUMENT_MAX_BYTES,
+    fields: 2,
+    parts: 3,
+    fieldSize: 256,
   },
 }).single("file");

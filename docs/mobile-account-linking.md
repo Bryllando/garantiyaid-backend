@@ -14,9 +14,20 @@ Open **Beneficiaries → Mobile account requests** as Admin or Barangay Facilita
 
 The reviewer, reason, target beneficiary, time, and request revision are audit logged. Conflicting/stale decisions fail with 409; refresh before deciding again. Approved links cannot be reassigned through these endpoints. Account recovery or a suspected incorrect link must go to the administrator for investigation; there is no silent unlink/merge shortcut.
 
-## Mobile backend connection
+## Beneficiary phone app
 
-The mobile app is not in this repository. These endpoints are ready for its integration; no live mobile provider is assumed or enabled automatically.
+The Expo client uses the hosted API prefix `/api/v1/mobile`. Configure `EXPO_PUBLIC_API_URL` at build time. The preview and production EAS profiles point to the hosted web API.
+
+Set `MOBILE_AUTH_MODE=SMS` and a persistent, private `MOBILE_AUTH_SECRET` of at least 32 characters on the API. OTP delivery uses the existing configured SimGate gateway or an explicit `MOBILE_SMS_SEMAPHORE_API_KEY`. The development OTP mode works only outside production. Generate the Prisma client, apply migration `20261127010000_shared_mobile_claims` with the usual deployment migrations, and release the API, staff interface and mobile build together. Existing signed-assertion integrations can continue using the contract below.
+
+1. Registration creates a phone login. Verifying its OTP submits one link request. The staff account review screen connects the request to the existing beneficiary and shows potential matches within the authorized barangay. For an already-linked person, refer the requester to account recovery.
+2. After linking, the beneficiary uploads a JPEG or PNG photo ID, gives consent, and captures a selfie. The remote processor compares one ID portrait with one live face. ID approval requires a successful real-mode comparison, an accepted document, current consent, and a System Admin decision in **Beneficiaries → Mobile account requests → Linked accounts**. Declined matches and service outages return a correction status. Production requires the configured private face service and durable document storage.
+3. An approved beneficiary opens their mobile pass for an allocated, scheduled distribution. Existing printed passes continue to validate. New staff issuance and reissue endpoints are retired.
+4. Staff preview the pass before confirming. A DSWD confirmation authorizes the displayed allocation. If a later biometric or signature check completes the claim, settlement rechecks the authorizer, amount, and holds. Other claims continue to the DSWD settlement queue. Physical handover uses the facilitator release and receipt workflow. The mobile wallet displays the posted simulated balance and ledger reference.
+
+The opt-in HTTP acceptance test `test/mobileClaims.integration.test.js` uses a disposable loopback database named `garantiyaid_mobile_test`, development OTP, and a controlled face-service response. Set `RUN_MOBILE_CLAIM_INTEGRATION=1` for that test after applying migrations. A physical-device walkthrough separately verifies SMS delivery, selfie liveness and camera scanning.
+
+## External signed-assertion clients
 
 Configure the API with the mobile backend's **RSA public key** in `MOBILE_AUTH_PUBLIC_KEY`, plus matching `MOBILE_AUTH_ISSUER` and `MOBILE_AUTH_AUDIENCE`. The private signing key stays on the trusted mobile backend. Never bundle it or the staff JWT secret in the mobile app.
 

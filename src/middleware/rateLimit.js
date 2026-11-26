@@ -64,6 +64,10 @@ export const totpRateLimiter = rateLimit({
   limit: env.authRateLimitPer15Minutes,
 });
 
+export const mobileAuthenticationRateLimiter = rateLimit({
+  ...commonOptions, identifier: "garantiyaid-mobile-auth", limit: env.authRateLimitPer15Minutes,
+});
+
 export const biometricRateLimiter = rateLimit({
   ...commonOptions,
   identifier: "garantiyaid-biometric",

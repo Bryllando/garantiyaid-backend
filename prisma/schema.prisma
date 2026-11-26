@@ -498,9 +498,11 @@ model Beneficiary {
   barangay                Barangay                       @relation(fields: [barangayId], references: [barangayId])
   enrollments             Enrollment[]
   burialReferrals         BurialReferral[]
-  documents               BeneficiaryDocument[]
+  documents               BeneficiaryDocument[] @relation("BeneficiaryDocuments")
+  selfUploadedDocuments   BeneficiaryDocument[] @relation("BeneficiaryDocumentUploader")
   biometricData           BiometricData?
-  biometricConsents       BiometricConsent[]
+  biometricConsents       BiometricConsent[] @relation("BiometricConsentBeneficiary")
+  selfRecordedConsents    BiometricConsent[] @relation("BiometricConsentSelfRecorder")
   biometricAttempts       BiometricVerificationAttempt[]
   candidateDuplicateCases BiometricDuplicateCase[]       @relation("BiometricDuplicateCandidate")
   matchedDuplicateCases   BiometricDuplicateCase[]       @relation("BiometricDuplicateMatch")
@@ -517,7 +519,62 @@ model Beneficiary {
   @@map("beneficiaries")
 }
 
+model BeneficiaryMobileAccount {
+  accountId     String    @id @default(uuid()) @map("account_id") @db.Uuid
+  linkId String? @unique @map("link_id") @db.Uuid
+  registration Json
+  contactNumber String    @unique @map("contact_number") @db.VarChar(20)
+  verifiedAt    DateTime? @map("verified_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  link MobileBeneficiaryAccount? @relation(fields: [linkId], references: [accountId], onDelete: Restrict)
+  challenges  BeneficiaryMobileOtp[]
+  sessions    BeneficiaryMobileSession[]
+
+  @@map("beneficiary_mobile_accounts")
+}
+
+model BeneficiaryMobileOtp {
+  challengeId       String    @id @default(uuid()) @map("challenge_id") @db.Uuid
+  accountId         String    @map("account_id") @db.Uuid
+  purpose           String    @db.VarChar(10)
+  codeHash          String    @map("code_hash") @db.Char(64)
+  deliveryMode      String    @default("DEVELOPMENT") @map("delivery_mode") @db.VarChar(20)
+  deliveryAcceptedAt DateTime? @map("delivery_accepted_at") @db.Timestamptz(6)
+  attemptsRemaining Int       @default(5) @map("attempts_remaining")
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt        DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  account BeneficiaryMobileAccount @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+  @@map("beneficiary_mobile_otps")
+}
+
+model BeneficiaryMobileSession {
+  sessionId String    @id @default(uuid()) @map("session_id") @db.Uuid
+  accountId String    @map("account_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  authMode  String    @default("DEVELOPMENT") @map("auth_mode") @db.VarChar(20)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  account    BeneficiaryMobileAccount     @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
+
+  @@index([accountId, expiresAt])
+  @@map("beneficiary_mobile_sessions")
+}
+
 model MobileBeneficiaryAccount {
+  phoneLogin BeneficiaryMobileAccount?
+  identityStatus String @default("REQUIRED") @map("identity_status") @db.VarChar(30)
+  identityDocumentId String? @map("identity_document_id") @db.Uuid
+  identityConsentId String? @map("identity_consent_id") @db.Uuid
+  identityNote String? @map("identity_note") @db.VarChar(500)
+
   accountId       String                  @id @default(uuid()) @map("account_id") @db.Uuid
   issuer          String                  @db.VarChar(200)
   subject         String                  @db.VarChar(200)
@@ -621,7 +678,8 @@ model BurialReferral {
 model BeneficiaryDocument {
   documentId         String               @id @default(uuid()) @map("document_id") @db.Uuid
   beneficiaryId      String               @map("beneficiary_id") @db.Uuid
-  uploadedById       String               @map("uploaded_by") @db.Uuid
+  uploadedById       String?              @map("uploaded_by") @db.Uuid
+  uploadedByBeneficiaryId String?          @map("uploaded_by_beneficiary") @db.Uuid
   documentType       String               @map("doc_type") @db.VarChar(50)
   documentName       String?              @map("document_name") @db.VarChar(150)
   originalFileName   String               @map("original_file_name") @db.VarChar(255)
@@ -636,8 +694,9 @@ model BeneficiaryDocument {
   replacesDocumentId String?              @unique @map("replaces_document_id") @db.Uuid
   createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  beneficiary         Beneficiary          @relation(fields: [beneficiaryId], references: [beneficiaryId])
-  uploadedBy          User                 @relation("DocumentUploader", fields: [uploadedById], references: [userId])
+  beneficiary         Beneficiary          @relation("BeneficiaryDocuments", fields: [beneficiaryId], references: [beneficiaryId])
+  uploadedBy          User?                @relation("DocumentUploader", fields: [uploadedById], references: [userId], onDelete: Restrict)
+  uploadedByBeneficiary Beneficiary?       @relation("BeneficiaryDocumentUploader", fields: [uploadedByBeneficiaryId], references: [beneficiaryId], onDelete: Restrict)
   reviewedBy          User?                @relation("DocumentReviewer", fields: [reviewedById], references: [userId])
   replacesDocument    BeneficiaryDocument? @relation("DocumentReplacement", fields: [replacesDocumentId], references: [documentId])
   replacementDocument BeneficiaryDocument? @relation("DocumentReplacement")
@@ -655,14 +714,17 @@ model BiometricConsent {
   consentedAt    DateTime  @map("consented_at") @db.Timestamptz(6)
   revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
   retentionUntil DateTime  @map("retention_until") @db.Timestamptz(6)
-  recordedById   String    @map("recorded_by") @db.Uuid
+  recordedById   String?   @map("recorded_by") @db.Uuid
+  recordedByBeneficiaryId String? @map("recorded_by_beneficiary") @db.Uuid
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  beneficiary   Beneficiary    @relation(fields: [beneficiaryId], references: [beneficiaryId])
-  recordedBy    User           @relation("ConsentRecorder", fields: [recordedById], references: [userId])
+  beneficiary   Beneficiary    @relation("BiometricConsentBeneficiary", fields: [beneficiaryId], references: [beneficiaryId])
+  recordedBy    User?          @relation("ConsentRecorder", fields: [recordedById], references: [userId], onDelete: Restrict)
+  recordedByBeneficiary Beneficiary? @relation("BiometricConsentSelfRecorder", fields: [recordedByBeneficiaryId], references: [beneficiaryId], onDelete: Restrict, map: "biometric_consents_self_recorder_fkey")
   biometricData BiometricData?
 
+  @@index([beneficiaryId, createdAt])
   @@map("biometric_consents")
 }
 
@@ -910,6 +972,8 @@ model QrScanLog {
 }
 
 model Claim {
+  settlementAuthorizedById String? @map("settlement_authorized_by") @db.Uuid
+  settlementAmount Decimal? @map("settlement_amount") @db.Decimal(14,2)
   claimId                  String                  @id @default(uuid()) @map("claim_id") @db.Uuid
   beneficiaryId            String                  @map("beneficiary_id") @db.Uuid
   distributionId           String                  @map("distribution_id") @db.Uuid
@@ -1059,6 +1123,8 @@ model Transaction {
 }
 
 model Notification {
+  messageBs String? @map("message_bs") @db.Text
+  readAt DateTime? @map("read_at") @db.Timestamptz(6)
   notificationId      String              @id @default(uuid()) @map("notification_id") @db.Uuid
   beneficiaryId       String              @map("beneficiary_id") @db.Uuid
   scheduleId          String?             @map("schedule_id") @db.Uuid

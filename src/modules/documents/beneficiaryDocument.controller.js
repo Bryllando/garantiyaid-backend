@@ -6,7 +6,7 @@ import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
 import { getBeneficiaryOrThrow } from "../beneficiaries/beneficiary.service.js";
-import { detectAllowedDocumentMimeType } from "./beneficiaryDocument.file.js";
+import { decodeDocumentFileName, detectAllowedDocumentMimeType } from "./beneficiaryDocument.file.js";
 import {
   assertBeneficiaryDocumentBarangayAccess,
   assertBeneficiaryDocumentReplacementAllowed,
@@ -22,7 +22,7 @@ import {
   resolveBeneficiaryDocumentPath,
 } from "./beneficiaryDocument.service.js";
 
-async function removeUploadedFile(file) {
+export async function removeUploadedFile(file) {
   if (!file?.path) {
     return;
   }
@@ -36,7 +36,7 @@ async function removeUploadedFile(file) {
   }
 }
 
-async function prepareUploadedDocument(req) {
+export async function prepareUploadedDocument(req) {
   if (!req.file) {
     throw new AppError(400, "DOCUMENT_FILE_REQUIRED", "A beneficiary document file is required.");
   }
@@ -62,7 +62,7 @@ async function prepareUploadedDocument(req) {
     );
   }
 
-  const originalFileName = path.basename(req.file.originalname).replace(/[\u0000-\u001f\u007f]/g, "");
+  const originalFileName = path.basename(decodeDocumentFileName(req.file.originalname)).replace(/[\u0000-\u001f\u007f]/g, "");
   if (!originalFileName || originalFileName.length > 255) {
     throw new AppError(400, "INVALID_FILE_NAME", "Document file name must contain 1 to 255 characters.");
   }

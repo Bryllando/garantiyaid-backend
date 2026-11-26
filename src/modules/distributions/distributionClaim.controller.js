@@ -1,3 +1,4 @@
+import { settleAfterVerification } from "../wallets/wallet.controller.js";
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "../../lib/prisma.js";
 import { env } from "../../config/env.js";
@@ -555,7 +556,7 @@ export const previewQrClaim = asyncHandler(async (req, res) => {
     }),
     prisma.distributionAllocation.findUnique({
       where: { distributionId_beneficiaryId: { distributionId, beneficiaryId: qrToken.beneficiaryId } },
-      select: { allocationStatus: true },
+      select: { allocationStatus: true, amount: true },
     }),
     prisma.claim.findUnique({
       where: { beneficiaryId_distributionId: { distributionId, beneficiaryId: qrToken.beneficiaryId } },
@@ -592,6 +593,7 @@ export const previewQrClaim = asyncHandler(async (req, res) => {
   return res.status(200).json({
     success: true,
     data: {
+      amount: distribution.deliveryMode === "SIMULATED_WALLET" ? allocation.amount.toString() : null,
       beneficiary: qrToken.beneficiary,
       schedule,
       verificationRequirement: distribution.verificationRequirement,
@@ -967,6 +969,7 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
       }
     }
 
+    if (responseStatus === 201) await settleAfterVerification(tx, req, distribution, responseBody.data);
     await tx.idempotencyRecord.create({
       data: {
         ...identity,

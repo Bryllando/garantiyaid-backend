@@ -299,6 +299,193 @@ export const listCreditableClaims = asyncHandler(async (req, res) => {
   });
 });
 
+async function postClaimCredit(tx, req, distributionId, claimId, description, authorizedById) {
+  const currentDistribution = await getDistributionClaimParentOrThrow(
+    distributionId,
+    req.staffUser,
+    tx,
+  );
+  if (currentDistribution.status !== "OPEN" || currentDistribution.deliveryMode !== "SIMULATED_WALLET") {
+    throw new AppError(
+      409,
+      "DISTRIBUTION_NOT_OPEN_FOR_SIMULATED_CREDIT",
+      "This distribution is no longer open for simulated wallet credit.",
+    );
+  }
+
+  const claimRecord = await tx.claim.findFirst({
+    where: { claimId, distributionId },
+    select: {
+      claimId: true,
+      beneficiaryId: true,
+      distributionId: true,
+      allocationId: true,
+      scheduleId: true,
+      claimStatus: true,
+      isDuplicateFlag: true,
+      verificationMethod: true,
+      qrVerified: true,
+      biometricVerified: true,
+      signatureVerified: true,
+      disputes: {
+        where: { status: { in: ["OPEN", "UNDER_REVIEW", "REFERRED"] } },
+        select: { disputeId: true, status: true },
+      },
+    },
+  });
+  if (!claimRecord) {
+    throw new AppError(404, "CLAIM_NOT_FOUND", "Claim verification record was not found.");
+  }
+  const allocation = await tx.distributionAllocation.findUnique({
+    where: { allocationId: claimRecord.allocationId },
+    select: { allocationId: true, amount: true, allocationStatus: true },
+  });
+  const schedule = await tx.schedule.findUnique({
+    where: { scheduleId: claimRecord.scheduleId },
+    select: { scheduleId: true, status: true },
+  });
+  const beneficiary = await tx.beneficiary.findUnique({
+    where: { beneficiaryId: claimRecord.beneficiaryId },
+    select: { beneficiaryId: true, status: true },
+  });
+  const claim = {
+    ...claimRecord,
+    allocation,
+    schedule,
+    beneficiary,
+    distribution: currentDistribution,
+  };
+  const priorCredit = await tx.transaction.findFirst({
+    where: { claimId, transactionType: "BENEFIT_CREDIT" },
+    select: { transactionId: true, referenceNo: true, status: true },
+  });
+  if (priorCredit) {
+    throw new AppError(
+      409,
+      "CLAIM_ALREADY_CREDITED",
+      "This claim already has a simulated benefit-credit ledger entry.",
+      priorCredit,
+    );
+  }
+  assertClaimCreditable(claim);
+
+  const now = new Date();
+  const walletResult = await createWalletForBeneficiary(tx, claim.beneficiaryId, req, now);
+  assertWalletActive(walletResult.wallet);
+  const amount = claim.allocation.amount;
+  const balanceBefore = walletResult.wallet.balance;
+  const wallet = await tx.walletAccount.update({
+    where: { walletId: walletResult.wallet.walletId },
+    data: { balance: { increment: amount }, lastTransactionAt: now },
+    select: walletMutationSelect,
+  });
+
+  const claimUpdate = await tx.claim.updateMany({
+    where: { claimId, distributionId, claimStatus: "VERIFIED", isDuplicateFlag: false },
+    data: {
+      claimStatus: "CLAIMED",
+      releaseMethod: "SIMULATED_WALLET",
+      releasedById: authorizedById,
+      releasedAt: now,
+      claimedAt: now,
+    },
+  });
+  const allocationUpdate = await tx.distributionAllocation.updateMany({
+    where: { allocationId: claim.allocation.allocationId, allocationStatus: "ALLOCATED" },
+    data: { allocationStatus: "CLAIMED" },
+  });
+  if (claimUpdate.count !== 1 || allocationUpdate.count !== 1) {
+    throw new AppError(
+      409,
+      "SIMULATED_CREDIT_CONCURRENT_CHANGE",
+      "Claim or allocation state changed during simulated credit.",
+    );
+  }
+
+  const transaction = await tx.transaction.create({
+    data: {
+      claimId,
+      distributionId,
+      walletId: wallet.walletId,
+      beneficiaryId: claim.beneficiaryId,
+      initiatedById: authorizedById,
+      amount,
+      transactionType: "BENEFIT_CREDIT",
+      referenceNo: generateTransactionReference("CREDIT"),
+      status: "COMPLETED",
+      balanceBefore,
+      balanceAfter: wallet.balance,
+      description: description ?? "Verified benefit credited to the simulated wallet.",
+    },
+    select: transactionMutationSelect,
+  });
+
+  await tx.auditLog.create({
+    data: {
+      userId: req.auth.userId,
+      action: "SIMULATED_BENEFIT_CREDIT_COMPLETED",
+      entityAffected: "TRANSACTION",
+      recordId: transaction.transactionId,
+      ipAddress: clientIpAddress(req),
+      details: {
+        claimId,
+        distributionId,
+        allocationId: claim.allocation.allocationId,
+        beneficiaryId: claim.beneficiaryId,
+        walletId: wallet.walletId,
+        referenceNo: transaction.referenceNo,
+        amount: amount.toString(),
+        claimStatus: "CLAIMED",
+        allocationStatus: "CLAIMED",
+        simulated: true,
+        authorizedById,
+        realFundsMoved: false,
+      },
+    },
+  });
+
+  const responseBody = jsonSafe({
+    success: true,
+    data: {
+      transaction: transactionToResponse(transaction),
+      wallet: walletToResponse(wallet),
+      lifecycle: {
+        claimId,
+        claimStatus: "CLAIMED",
+        allocationId: claim.allocation.allocationId,
+        allocationStatus: "CLAIMED",
+      },
+      simulation: SIMULATION_DISCLOSURE,
+    },
+  });
+  return responseBody;
+}
+
+export async function settleAfterVerification(tx, req, distribution, data) {
+  if (distribution.deliveryMode !== "SIMULATED_WALLET" || !data?.claim) return;
+  const { claimId } = data.claim;
+  const row = await tx.claim.findUniqueOrThrow({ where: { claimId }, select: {
+    settlementAuthorizedById: true, settlementAmount: true, allocation: { select: { amount: true } },
+    isDuplicateFlag: true, disputes: { where: { status: { in: ["OPEN","UNDER_REVIEW","REFERRED"] } }, take: 1, select: { disputeId: true } },
+  } });
+  if (row.isDuplicateFlag || row.disputes.length) { data.nextPhase = "CLAIM_REVIEW"; return; }
+  const amount = row.allocation.amount;
+  let authorizedById = row.settlementAuthorizedById;
+  if (req.staffUser.role === "DSWD_STAFF") {
+    authorizedById = req.auth.userId;
+    await tx.claim.update({ where: { claimId }, data: { settlementAuthorizedById: authorizedById, settlementAmount: amount } });
+  } else if (!row.settlementAmount?.equals(amount) || !authorizedById ||
+    !await tx.user.findFirst({ where: { userId: authorizedById, role: "DSWD_STAFF", isActive: true } })) {
+    authorizedById = null;
+  }
+  if (!data.verificationComplete || !authorizedById) return;
+  const posted = await postClaimCredit(tx, req, distribution.distributionId, claimId, null, authorizedById);
+  data.claim.claimStatus = posted.data.lifecycle.claimStatus;
+  data.walletTransactionCreated = true;
+  data.ledgerReference = posted.data.transaction.referenceNo;
+  data.nextPhase = "COMPLETED";
+}
+
 export const creditVerifiedClaim = asyncHandler(async (req, res) => {
   assertWalletManageAllowed(req.staffUser);
   const { distributionId, claimId } = req.validatedParams;
@@ -337,170 +524,14 @@ export const creditVerifiedClaim = asyncHandler(async (req, res) => {
       return { replayed: true, responseStatus: concurrentRecord.responseStatus, responseBody: concurrentRecord.responseBody };
     }
 
-    const currentDistribution = await getDistributionClaimParentOrThrow(
-      distributionId,
-      req.staffUser,
-      tx,
-    );
-    if (currentDistribution.status !== "OPEN" || currentDistribution.deliveryMode !== "SIMULATED_WALLET") {
-      throw new AppError(
-        409,
-        "DISTRIBUTION_NOT_OPEN_FOR_SIMULATED_CREDIT",
-        "This distribution is no longer open for simulated wallet credit.",
-      );
-    }
-
-    const claimRecord = await tx.claim.findFirst({
-      where: { claimId, distributionId },
-      select: {
-        claimId: true,
-        beneficiaryId: true,
-        distributionId: true,
-        allocationId: true,
-        scheduleId: true,
-        claimStatus: true,
-        isDuplicateFlag: true,
-        verificationMethod: true,
-        qrVerified: true,
-        biometricVerified: true,
-        signatureVerified: true,
-        disputes: {
-          where: { status: { in: ["OPEN", "UNDER_REVIEW", "REFERRED"] } },
-          select: { disputeId: true, status: true },
-        },
-      },
-    });
-    if (!claimRecord) {
-      throw new AppError(404, "CLAIM_NOT_FOUND", "Claim verification record was not found.");
-    }
-    const allocation = await tx.distributionAllocation.findUnique({
-      where: { allocationId: claimRecord.allocationId },
-      select: { allocationId: true, amount: true, allocationStatus: true },
-    });
-    const schedule = await tx.schedule.findUnique({
-      where: { scheduleId: claimRecord.scheduleId },
-      select: { scheduleId: true, status: true },
-    });
-    const beneficiary = await tx.beneficiary.findUnique({
-      where: { beneficiaryId: claimRecord.beneficiaryId },
-      select: { beneficiaryId: true, status: true },
-    });
-    const claim = {
-      ...claimRecord,
-      allocation,
-      schedule,
-      beneficiary,
-      distribution: currentDistribution,
-    };
-    const priorCredit = await tx.transaction.findFirst({
-      where: { claimId, transactionType: "BENEFIT_CREDIT" },
-      select: { transactionId: true, referenceNo: true, status: true },
-    });
-    if (priorCredit) {
-      throw new AppError(
-        409,
-        "CLAIM_ALREADY_CREDITED",
-        "This claim already has a simulated benefit-credit ledger entry.",
-        priorCredit,
-      );
-    }
-    assertClaimCreditable(claim);
-
-    const now = new Date();
-    const walletResult = await createWalletForBeneficiary(tx, claim.beneficiaryId, req, now);
-    assertWalletActive(walletResult.wallet);
-    const amount = claim.allocation.amount;
-    const balanceBefore = walletResult.wallet.balance;
-    const wallet = await tx.walletAccount.update({
-      where: { walletId: walletResult.wallet.walletId },
-      data: { balance: { increment: amount }, lastTransactionAt: now },
-      select: walletMutationSelect,
-    });
-
-    const claimUpdate = await tx.claim.updateMany({
-      where: { claimId, distributionId, claimStatus: "VERIFIED", isDuplicateFlag: false },
-      data: {
-        claimStatus: "CLAIMED",
-        releaseMethod: "SIMULATED_WALLET",
-        releasedById: req.auth.userId,
-        releasedAt: now,
-        claimedAt: now,
-      },
-    });
-    const allocationUpdate = await tx.distributionAllocation.updateMany({
-      where: { allocationId: claim.allocation.allocationId, allocationStatus: "ALLOCATED" },
-      data: { allocationStatus: "CLAIMED" },
-    });
-    if (claimUpdate.count !== 1 || allocationUpdate.count !== 1) {
-      throw new AppError(
-        409,
-        "SIMULATED_CREDIT_CONCURRENT_CHANGE",
-        "Claim or allocation state changed during simulated credit.",
-      );
-    }
-
-    const transaction = await tx.transaction.create({
-      data: {
-        claimId,
-        distributionId,
-        walletId: wallet.walletId,
-        beneficiaryId: claim.beneficiaryId,
-        initiatedById: req.auth.userId,
-        amount,
-        transactionType: "BENEFIT_CREDIT",
-        referenceNo: generateTransactionReference("CREDIT"),
-        status: "COMPLETED",
-        balanceBefore,
-        balanceAfter: wallet.balance,
-        description: description ?? "Verified benefit credited to the simulated wallet.",
-      },
-      select: transactionMutationSelect,
-    });
-
-    await tx.auditLog.create({
-      data: {
-        userId: req.auth.userId,
-        action: "SIMULATED_BENEFIT_CREDIT_COMPLETED",
-        entityAffected: "TRANSACTION",
-        recordId: transaction.transactionId,
-        ipAddress: clientIpAddress(req),
-        details: {
-          claimId,
-          distributionId,
-          allocationId: claim.allocation.allocationId,
-          beneficiaryId: claim.beneficiaryId,
-          walletId: wallet.walletId,
-          referenceNo: transaction.referenceNo,
-          amount: amount.toString(),
-          claimStatus: "CLAIMED",
-          allocationStatus: "CLAIMED",
-          simulated: true,
-          realFundsMoved: false,
-        },
-      },
-    });
-
-    const responseBody = jsonSafe({
-      success: true,
-      data: {
-        transaction: transactionToResponse(transaction),
-        wallet: walletToResponse(wallet),
-        lifecycle: {
-          claimId,
-          claimStatus: "CLAIMED",
-          allocationId: claim.allocation.allocationId,
-          allocationStatus: "CLAIMED",
-        },
-        simulation: SIMULATION_DISCLOSURE,
-      },
-    });
+    const responseBody = await postClaimCredit(tx, req, distributionId, claimId, description, req.auth.userId);
     await tx.idempotencyRecord.create({
       data: {
         ...identity,
         requestHash,
         responseStatus: 201,
         responseBody,
-        expiresAt: new Date(now.getTime() + env.idempotencyTtlHours * 60 * 60 * 1000),
+        expiresAt: new Date(Date.now() + env.idempotencyTtlHours * 60 * 60 * 1000),
       },
     });
     return { replayed: false, responseStatus: 201, responseBody };

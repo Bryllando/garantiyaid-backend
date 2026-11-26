@@ -356,7 +356,7 @@ export async function acquireBiometricEnrollmentLock(database) {
   await database.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('garantiyaid-biometric-enrollment'))`;
 }
 
-async function remoteRepresentation(file) {
+async function remoteRepresentation(file, requireLiveFace = true) {
   if (!env.biometricServiceUrl) {
     throw new AppError(503, "BIOMETRIC_SERVICE_UNAVAILABLE", "Remote biometric service URL is not configured.");
   }
@@ -366,7 +366,7 @@ async function remoteRepresentation(file) {
   form.append("detector_backend", "opencv");
   form.append("enforce_detection", "true");
   form.append("align", "true");
-  form.append("anti_spoofing", "true");
+  form.append("anti_spoofing", String(requireLiveFace));
   form.append("max_faces", "2");
   try {
     const response = await fetch(`${env.biometricServiceUrl.replace(/\/$/, "")}/represent`, {
@@ -399,6 +399,18 @@ async function remoteRepresentation(file) {
       ? "The face service took too long to respond. Wait a moment, then retry with the captured photo."
       : "The face service is unavailable. Ask the System Administrator to check the biometric service, then retry.");
   }
+}
+
+export async function matchIdentityPortrait(document, selfie) {
+  if (env.biometricProcessorMode !== "REMOTE") {
+    throw new AppError(503, "REAL_FACE_SERVICE_REQUIRED", "Live identity matching is unavailable. Contact staff or try again later.");
+  }
+  const reference = await remoteRepresentation({ ...document, detectedType: assertValidBiometricCapture(document) }, false);
+  if (!reference) throw new AppError(422, "ID_PORTRAIT_UNREADABLE", "Upload a clear ID with one visible portrait.");
+  try {
+    const result = await processBiometricVerification(selfie, reference);
+    return result.livenessPassed && result.matchPassed && !result.simulated;
+  } finally { reference.fill(0); }
 }
 
 export async function processBiometricEnrollment(file) {

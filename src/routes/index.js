@@ -1,4 +1,5 @@
 import { Router } from "express";
+import mobileRoutes from "../modules/mobile/mobile.routes.js";
 import healthRoutes from "./health.routes.js";
 import authRoutes from "../modules/auth/auth.routes.js";
 import barangayRoutes from "../modules/barangays/barangay.routes.js";
@@ -26,7 +27,7 @@ const apiRoutes = Router();
 
 apiRoutes.use(healthRoutes);
 apiRoutes.use("/auth", authRoutes);
-apiRoutes.use("/mobile", mobileAccountRoutes);
+apiRoutes.use("/mobile", mobileRoutes, mobileAccountRoutes);
 apiRoutes.use("/mobile-account-requests", staffMobileAccountRoutes);
 apiRoutes.use("/barangays", barangayRoutes);
 apiRoutes.use("/beneficiaries/:beneficiaryId/documents", beneficiaryDocumentRoutes);

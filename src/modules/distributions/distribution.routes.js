@@ -24,7 +24,6 @@ import {
   CLAIM_DISPUTE_REVIEW_ROLES,
   CLAIM_VERIFY_ROLES,
   PHYSICAL_RELEASE_ROLES,
-  QR_TOKEN_ISSUE_ROLES,
   QR_TOKEN_MANAGE_ROLES,
   WALLET_MANAGE_ROLES,
   WALLET_READ_ROLES,
@@ -85,7 +84,6 @@ import {
   schedulableAllocationListQuerySchema,
 } from "./distributionSchedule.schemas.js";
 import {
-  generateQrTokens,
   getClaim,
   getQrToken,
   listClaims,
@@ -93,14 +91,12 @@ import {
   listQrScanLogs,
   listQrTokens,
   previewQrClaim,
-  reissueQrToken,
   revokeQrToken,
   verifyQrClaim,
 } from "./distributionClaim.controller.js";
 import {
   claimListQuerySchema,
   claimParamsSchema,
-  generateQrTokensSchema,
   qrEligibleScheduleListQuerySchema,
   qrScanLogListQuerySchema,
   qrTokenListQuerySchema,
@@ -344,13 +340,6 @@ distributionRoutes.get(
   validateQuery(qrEligibleScheduleListQuerySchema),
   listQrEligibleSchedules,
 );
-distributionRoutes.post(
-  "/:distributionId/qr-tokens/generate",
-  authorizeRoles(...QR_TOKEN_ISSUE_ROLES),
-  validateParams(distributionIdSchema),
-  validateBody(generateQrTokensSchema),
-  generateQrTokens,
-);
 distributionRoutes.get(
   "/:distributionId/qr-tokens",
   authorizeRoles(...DISTRIBUTION_READ_ROLES),
@@ -369,12 +358,6 @@ distributionRoutes.post(
   authorizeRoles(...QR_TOKEN_MANAGE_ROLES),
   validateParams(qrTokenParamsSchema),
   revokeQrToken,
-);
-distributionRoutes.post(
-  "/:distributionId/qr-tokens/:qrTokenId/reissue",
-  authorizeRoles(...QR_TOKEN_MANAGE_ROLES),
-  validateParams(qrTokenParamsSchema),
-  reissueQrToken,
 );
 distributionRoutes.post(
   "/:distributionId/claims/preview-qr",
