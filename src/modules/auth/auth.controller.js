@@ -99,6 +99,21 @@ export const requestPasswordReset = asyncHandler(async (req, res) => {
   });
 });
 
+export const checkPasswordReset = asyncHandler(async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const candidate = await prisma.staffPasswordResetToken.findUnique({
+    where: { tokenHash: hashPasswordResetToken(req.validatedBody.token) },
+    select: {
+      usedAt: true,
+      expiresAt: true,
+      user: { select: { isActive: true, archivedAt: true } },
+    },
+  });
+  const now = new Date();
+  if (!passwordResetTokenIsUsable(candidate, now)) throw invalidPasswordResetTokenError();
+  res.json({ success: true, data: { remainingMs: candidate.expiresAt.getTime() - now.getTime() } });
+});
+
 export const completePasswordReset = asyncHandler(async (req, res) => {
   const tokenHash = hashPasswordResetToken(req.validatedBody.token);
   const candidate = await prisma.staffPasswordResetToken.findUnique({

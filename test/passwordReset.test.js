@@ -7,6 +7,7 @@ import prisma from "../src/lib/prisma.js";
 import authRoutes from "../src/modules/auth/auth.routes.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import {
+  checkPasswordResetSchema,
   completePasswordResetSchema,
   requestPasswordResetSchema,
 } from "../src/modules/auth/auth.schemas.js";
@@ -33,6 +34,8 @@ test("password-reset inputs reuse the staff password policy and expose public ro
   assert.match(generated.token, /^[A-Za-z0-9_-]{43}$/);
   assert.match(generated.tokenHash, /^[a-f0-9]{64}$/);
   assert.equal(hashPasswordResetToken(generated.token), generated.tokenHash);
+  assert.equal(checkPasswordResetSchema.safeParse({ token: generated.token }).success, true);
+  assert.equal(checkPasswordResetSchema.safeParse({ token: "short" }).success, false);
   assert.equal(completePasswordResetSchema.safeParse({
     token: generated.token,
     newPassword: "A secure replacement password",
@@ -43,6 +46,7 @@ test("password-reset inputs reuse the staff password policy and expose public ro
   }).success, false);
   const routes = routeSurface(authRoutes);
   assert.ok(routes.some((route) => route.path === "/password-reset/request" && route.methods.includes("post")));
+  assert.ok(routes.some((route) => route.path === "/password-reset/check" && route.methods.includes("post")));
   assert.ok(routes.some((route) => route.path === "/password-reset/complete" && route.methods.includes("post")));
 });
 
@@ -189,6 +193,30 @@ test("reset requests are enumeration-safe and completion consumes the token and 
   assert.equal(state.notifications[0].targetPath, "/login");
 
   state.token.tokenHash = generated.tokenHash;
+  const checkToken = (token) => fetch(`${baseUrl}/password-reset/check`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token }),
+  });
+  const valid = await checkToken(generated.token);
+  assert.equal(valid.status, 200);
+  assert.equal(valid.headers.get("cache-control"), "no-store");
+  const validBody = await valid.json();
+  assert.ok(validBody.data.remainingMs > 0);
+  assert.deepEqual(Object.keys(validBody.data), ["remainingMs"]);
+  assert.equal(state.token.usedAt, null);
+  assert.equal(state.user.passwordHash, originalPasswordHash);
+
+  const assertRejected = async (token) => {
+    const response = await checkToken(token);
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal((await response.json()).error.code, "INVALID_OR_EXPIRED_PASSWORD_RESET_TOKEN");
+  };
+  const originalExpiry = state.token.expiresAt;
+  state.token.expiresAt = new Date(0);
+  await assertRejected(generated.token);
+  await assertRejected(generatePasswordResetToken().token);
+  state.token.expiresAt = originalExpiry;
+
   const complete = await fetch(`${baseUrl}/password-reset/complete`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: generated.token, newPassword: "Replacement private password" }),
   });
@@ -196,6 +224,7 @@ test("reset requests are enumeration-safe and completion consumes the token and 
   assert.equal(state.sessions.every((session) => session.revokedAt instanceof Date), true);
   assert.equal(await bcrypt.compare("Replacement private password", state.user.passwordHash), true);
   assert.ok(state.token.usedAt instanceof Date);
+  await assertRejected(generated.token);
 
   const reused = await fetch(`${baseUrl}/password-reset/complete`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: generated.token, newPassword: "Another replacement password" }),

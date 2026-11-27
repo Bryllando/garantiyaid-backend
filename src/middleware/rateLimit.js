@@ -58,6 +58,12 @@ export const passwordResetRateLimiter = rateLimit({
   limit: env.passwordResetRateLimitPer15Minutes,
 });
 
+export const passwordResetCheckRateLimiter = rateLimit({
+  ...commonOptions,
+  identifier: "garantiyaid-password-reset-check",
+  limit: env.passwordResetRateLimitPer15Minutes,
+});
+
 export const totpRateLimiter = rateLimit({
   ...commonOptions,
   identifier: "garantiyaid-totp",

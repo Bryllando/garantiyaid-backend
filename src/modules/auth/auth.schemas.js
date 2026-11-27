@@ -44,10 +44,13 @@ export const requestPasswordResetSchema = z.object({
   ),
 }).strict();
 
-export const completePasswordResetSchema = z.object({
+export const checkPasswordResetSchema = z.object({
   token: z.string().min(43).max(200).regex(/^[A-Za-z0-9_-]+$/, "Password-reset token is invalid."),
-  newPassword: newStaffPasswordSchema,
 }).strict();
+
+export const completePasswordResetSchema = checkPasswordResetSchema.extend({
+  newPassword: newStaffPasswordSchema,
+});
 
 export const confirmTotpSchema = z.object({
   code: totpCode,
