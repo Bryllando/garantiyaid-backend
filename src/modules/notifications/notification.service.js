@@ -460,4 +460,7 @@ export function assertNotificationRetryable(notification) {
   if (["NOTIFICATION_CONTEXT_CHANGED", "NOTIFICATION_REVIEW_REQUIRED"].includes(notification.lastErrorCode)) {
     throw new AppError(409, "NOTIFICATION_REVIEW_REQUIRED", "Review the current recipients and appointment, then queue a new notice. The old notice cannot be retried.");
   }
+  if (["INVALID_RECIPIENT", "MISSING_RECIPIENT"].includes(notification.lastErrorCode)) {
+    throw new AppError(409, "NOTIFICATION_CONTACT_REQUIRED", "Update the beneficiary's mobile number, then preview and queue a new notice.");
+  }
 }

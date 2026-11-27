@@ -11,13 +11,21 @@ import {
   assertProgramCriterionValid,
 } from "../src/modules/programs/program.service.js";
 
+const creationFields = {
+  programName: "Test",
+  programCode: "TEST-01",
+  programType: "TEST",
+  budgetAmount: "500000",
+  criteria: [{ criterionName: "Adult applicant", fieldName: "AGE", operator: "GREATER_THAN_OR_EQUAL", expectedValue: 18 }],
+};
+
 test("program creation normalizes dates, amounts, codes, and required documents", () => {
   const program = createProgramSchema.parse({
+    ...creationFields,
     programName: "Educational Assistance",
     programCode: " educ-2026 ",
     programType: " educational ",
     grantAmount: "5000.00",
-    budgetAmount: "500000",
     applicationStartDate: "2026-08-10",
     applicationEndDate: "2026-09-10",
     requiredDocumentTypes: ["VALID_ID", "VALID_ID", "BARANGAY_CERTIFICATE"],
@@ -26,30 +34,40 @@ test("program creation normalizes dates, amounts, codes, and required documents"
   assert.equal(program.programCode, "EDUC-2026");
   assert.equal(program.programType, "EDUCATIONAL");
   assert.equal(program.grantAmount, 5000);
+  assert.equal(program.budgetAmount, 500000);
+  assert.deepEqual(program.criteria, creationFields.criteria);
   assert.equal(program.applicationStartDate.toISOString(), "2026-08-10T00:00:00.000Z");
   assert.deepEqual(program.requiredDocumentTypes, ["VALID_ID", "BARANGAY_CERTIFICATE"]);
 });
 
 test("program input rejects malformed codes, dates, and unapproved document types", () => {
   assert.equal(createProgramSchema.safeParse({
-    programName: "Test",
+    ...creationFields,
     programCode: "bad code",
-    programType: "TEST",
   }).success, false);
 
   assert.equal(createProgramSchema.safeParse({
-    programName: "Test",
-    programCode: "TEST-01",
-    programType: "TEST",
+    ...creationFields,
     applicationStartDate: "2026-02-30",
   }).success, false);
 
   assert.equal(createProgramSchema.safeParse({
-    programName: "Test",
-    programCode: "TEST-01",
-    programType: "TEST",
+    ...creationFields,
     requiredDocumentTypes: ["PASSWORD_SCREENSHOT"],
   }).success, false);
+});
+
+test("program creation requires a budget and an eligibility rule, and funding must be positive when entered", () => {
+  const incomplete = createProgramSchema.safeParse({ ...creationFields, criteria: [], budgetAmount: undefined });
+  assert.equal(incomplete.success, false);
+  assert.deepEqual(incomplete.error.issues.map((issue) => issue.path[0]).sort(), ["budgetAmount", "criteria"]);
+  for (const invalid of [0, "0", -500, "abc", "1.009", true]) {
+    for (const field of ["budgetAmount", "grantAmount"]) {
+      assert.equal(createProgramSchema.safeParse({ ...creationFields, [field]: invalid }).success, false);
+      assert.equal(updateProgramSchema.safeParse({ [field]: invalid }).success, false);
+    }
+  }
+  assert.equal(updateProgramSchema.safeParse({ budgetAmount: "" }).success, false);
 });
 
 test("program updates require at least one approved field", () => {

@@ -4,7 +4,7 @@ import test from "node:test";
 import app from "../src/app.js";
 import prisma from "../src/lib/prisma.js";
 import { env } from "../src/config/env.js";
-import { enqueueAssistantDistributionReminder } from "../src/modules/notifications/notification.controller.js";
+import { enqueueAssistantDistributionReminder, enqueueScheduleNotification } from "../src/modules/notifications/notification.controller.js";
 import {
   distributionNotificationRoutes,
   scheduleNotificationRoutes,
@@ -272,6 +272,55 @@ test("assistant confirmation revalidates live recipients and facilitator scope b
   await assert.rejects(invoke(), { code: 'FORBIDDEN' });
   assert.equal(transaction.mock.callCount(), previousTransactions);
   assert.equal(writes.mock.callCount(), 0);
+});
+
+test("confirming a notice for an invalid number records one failure and alerts staff without queueing", async (t) => {
+  function stub(object, key, impl) {
+    const original = object[key];
+    object[key] = impl;
+    t.after(() => { object[key] = original; });
+  }
+  const record = schedule();
+  record.beneficiary.contactNumber = "0917";
+  let saved;
+  let replay;
+  const staffAlerts = [];
+  const audits = [];
+  stub(prisma.schedule, "findUnique", async () => record);
+  stub(prisma.idempotencyRecord, "findUnique", async () => replay);
+  stub(prisma.idempotencyRecord, "create", async ({ data }) => { replay = data; });
+  stub(prisma.notification, "findUnique", async () => saved);
+  stub(prisma.notification, "findUniqueOrThrow", async () => saved);
+  stub(prisma.notification, "createMany", async ({ data: [row] }) => {
+    assert.equal(saved, undefined);
+    saved = { ...row, notificationId, beneficiary: record.beneficiary, distribution: record.distribution, createdAt: new Date() };
+    return { count: 1 };
+  });
+  stub(prisma.user, "findMany", async () => [{ userId, role: "SYSTEM_ADMIN" }]);
+  stub(prisma.staffNotification, "upsert", async ({ create }) => {
+    staffAlerts.push(create);
+    return { ...create, notificationId, createdAt: new Date() };
+  });
+  stub(prisma.auditLog, "create", async ({ data }) => { audits.push(data); });
+  stub(prisma, "$transaction", async (callback) => callback(prisma));
+
+  const req = {
+    auth: { userId }, staffUser: { role: "SYSTEM_ADMIN" }, validatedParams: { scheduleId },
+    validatedBody: { notificationType: "SCHEDULE_CREATED" }, headers: {}, get: () => notificationId,
+  };
+  const invoke = () => new Promise((resolve, reject) => enqueueScheduleNotification(req, {
+    status() { return this; }, json: resolve, set() {},
+  }, reject));
+  const first = await invoke();
+  assert.equal(first.data.queuedCount, 0);
+  assert.equal(first.data.invalidContactCount, 1);
+  assert.equal(first.data.notifications[0].status, "FAILED");
+  assert.equal(first.data.notifications[0].lastErrorCode, "INVALID_RECIPIENT");
+  assert.throws(() => assertNotificationRetryable(saved), { code: "NOTIFICATION_CONTACT_REQUIRED" });
+  assert.match(staffAlerts[0].message, /update the beneficiary's registered mobile number/);
+  assert.equal(audits[0].details.invalidContactCount, 1);
+  assert.deepEqual(await invoke(), JSON.parse(JSON.stringify(first)));
+  assert.equal(staffAlerts.length, 1);
 });
 
 test("idempotency keys replay matching requests and reject payload conflicts", () => {

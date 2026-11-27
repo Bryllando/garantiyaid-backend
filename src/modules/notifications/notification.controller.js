@@ -184,10 +184,27 @@ async function enqueueRows(req, operation, schedules, options = {}) {
   if (req.validatedBody.previewHash && (rows.length !== 1 || scheduleNotificationPreviewHash(rows[0], schedules[0].beneficiary.contactNumber) !== req.validatedBody.previewHash)) {
     throw new AppError(409, "NOTIFICATION_PREVIEW_CHANGED", "The schedule or message changed after preview. Review the current message before queueing.");
   }
-  const { notifications, newlyCreated } = await createNotificationRows(rows);
+  const { notifications, newlyCreated } = await createNotificationRows(rows.map((row, index) => {
+    const contact = schedules[index].beneficiary.contactNumber;
+    if (normalizePhilippineMobileNumber(contact)) return row;
+    return {
+      ...row,
+      status: "FAILED",
+      failedAt: now,
+      lastErrorCode: contact?.trim() ? "INVALID_RECIPIENT" : "MISSING_RECIPIENT",
+    };
+  }));
   const pending = notifications.filter((notification) => notification.status === "PENDING");
+  const hasInvalidContact = (notification) => notification.status === "FAILED"
+    && ["INVALID_RECIPIENT", "MISSING_RECIPIENT"].includes(notification.lastErrorCode);
+  const invalidContactCount = notifications.filter(hasInvalidContact).length;
+  await Promise.all(newlyCreated.filter(hasInvalidContact).map((notification) => publishNotificationLifecycle(
+    "notification.failed",
+    notification,
+    { status: "FAILED", errorCode: notification.lastErrorCode, simulated: notification.simulated, realSmsSent: false },
+  )));
   try {
-    await enqueueNotificationJobs(pending, { now });
+    if (pending.length) await enqueueNotificationJobs(pending, { now });
   } catch {
     throw new AppError(
       503,
@@ -202,10 +219,13 @@ async function enqueueRows(req, operation, schedules, options = {}) {
     data: {
       notifications: notifications.map(notificationToResponse),
       queuedCount: pending.length,
+      invalidContactCount,
       deduplicatedCount: notifications.length - newlyCreated.length,
       simulated: simulatedSmsOnly,
       realSmsSent: false,
-      message: simulatedSmsOnly
+      message: invalidContactCount
+        ? "Update the beneficiary mobile numbers listed as failed in the notification history."
+        : simulatedSmsOnly
         ? "Notifications were queued for simulated SMS processing; no real SMS has been sent."
         : "Notifications were queued for SimGate. Gateway acceptance does not confirm delivery to the receiving phone.",
     },
@@ -229,6 +249,7 @@ async function enqueueRows(req, operation, schedules, options = {}) {
           notificationType,
           requestedCount: schedules.length,
           queuedCount: pending.length,
+          invalidContactCount,
           ...(options.assistant ? {
             assistant: true,
             serviceArea: req.validatedBody.serviceArea ?? null,

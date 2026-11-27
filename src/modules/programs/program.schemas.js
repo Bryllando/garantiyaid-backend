@@ -20,9 +20,17 @@ const optionalText = (maxLength) => z.preprocess(
   z.string().trim().min(1).max(maxLength).nullable().optional(),
 );
 
-const optionalMoney = z.preprocess(
-  (value) => (value === "" ? null : value),
-  z.coerce.number().finite().nonnegative().max(999_999_999_999.99).nullable().optional(),
+const positiveMoney = (max) => z.preprocess(
+  (value) => typeof value === "string" && /^\d+(?:\.\d{1,2})?$/.test(value.trim()) ? Number(value) : value,
+  z.number({ error: "Enter a positive amount with up to two decimal places." })
+    .positive("Amount must be greater than zero.")
+    .max(max)
+    .refine((value) => /^\d+(?:\.\d{1,2})?$/.test(String(value)), "Use up to two decimal places."),
+);
+const budgetAmount = positiveMoney(999_999_999_999.99);
+const optionalGrantAmount = z.preprocess(
+  (value) => typeof value === "string" && value.trim() === "" ? null : value,
+  positiveMoney(9_999_999_999.99).nullable().optional(),
 );
 
 function isValidDateOnly(value) {
@@ -50,8 +58,8 @@ const programFields = {
   programCode: z.string().trim().toUpperCase().min(3, "Use at least 3 characters for the program code.").max(30, "Use at most 30 characters for the program code.").regex(/^[A-Z0-9-]+$/, "Use letters, numbers, or hyphens in the program code."),
   programType: z.string().trim().toUpperCase().min(2).max(20, "Use at most 20 characters for the program type.").regex(/^[A-Z0-9_]+$/, "Use letters, numbers, or underscores in the program type; for example CASH_ASSISTANCE."),
   description: optionalText(5000),
-  grantAmount: optionalMoney,
-  budgetAmount: optionalMoney,
+  grantAmount: optionalGrantAmount,
+  budgetAmount,
   applicationStartDate: optionalDateOnly,
   applicationEndDate: optionalDateOnly,
   requiredDocumentTypes: requiredDocumentTypes.optional(),
@@ -60,7 +68,10 @@ const programFields = {
     .refine(values => new Set(values.map(value => value.toLowerCase().replace(/\s+/g, " "))).size === values.length, "Remove duplicate document names.").optional(),
 };
 
-export const createProgramSchema = z.object(programFields).strict();
+export const programImportDraftSchema = z.object({
+  ...programFields,
+  budgetAmount: budgetAmount.nullable().optional(),
+}).strict();
 export const updateProgramSchema = z.object(programFields).partial().strict().refine(
   (value) => Object.keys(value).length > 0,
   "At least one program field must be supplied.",
@@ -192,6 +203,12 @@ export const createProgramCriterionSchema = z.object(criterionFieldsSchema).stri
     const message = criterionIssue(value);
     if (message) context.addIssue({ code: "custom", path: ["expectedValue"], message });
   });
+
+export const createProgramSchema = z.object({
+  ...programFields,
+  criteria: z.array(createProgramCriterionSchema, { error: "Add at least one eligibility criterion." })
+    .min(1, "Add at least one eligibility criterion.").max(50),
+}).strict();
 
 export const updateProgramCriterionSchema = z.object(criterionFieldsSchema).partial().strict().refine(
   (value) => Object.keys(value).length > 0,

@@ -207,23 +207,17 @@ try {
       grantAmount: 1000,
       budgetAmount: 10000,
       requiredDocumentTypes: ["BIRTH_CERTIFICATE"],
+      criteria: [{
+        criterionName: "Resident of the covered barangay",
+        fieldName: "BARANGAY_ID",
+        operator: "EQUALS",
+        expectedValue: facilitator.barangayId,
+      }],
     },
   });
   requireStatus(createProgram, 201, "DSWD program creation");
   programId = createProgram.payload.data.program.programId;
-
-  const createCriterion = await request(`/programs/${programId}/criteria`, {
-    method: "POST",
-    token: dswdToken,
-    body: {
-      criterionName: "Resident of the covered barangay",
-      fieldName: "BARANGAY_ID",
-      operator: "EQUALS",
-      expectedValue: facilitator.barangayId,
-    },
-  });
-  requireStatus(createCriterion, 201, "DSWD criterion creation");
-  criterionId = createCriterion.payload.data.criterion.criterionId;
+  criterionId = createProgram.payload.data.program.criteria[0].criterionId;
 
   const createManualCriterion = await request(`/programs/${programId}/criteria`, {
     method: "POST",

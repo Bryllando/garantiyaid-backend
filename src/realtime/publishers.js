@@ -340,11 +340,14 @@ export async function publishNotificationLifecycle(eventName, notification, data
     }),
   ];
   if (eventName === "notification.failed") {
+    const contactInvalid = ["INVALID_RECIPIENT", "MISSING_RECIPIENT"].includes(data.errorCode);
     events.push(publishInboxNotification({
       barangayId,
       notificationType: "SMS_DELIVERY_FAILED",
-      title: "SMS delivery needs attention",
-      message: "A beneficiary SMS could not be processed. Review the delivery console for details.",
+      title: contactInvalid ? "Beneficiary mobile number needs updating" : "SMS delivery needs attention",
+      message: contactInvalid
+        ? "An SMS could not be sent. Open the failed notice in Notifications and update the beneficiary's registered mobile number."
+        : "A beneficiary SMS could not be processed. Review the delivery console for details.",
       targetPaths: {
         SYSTEM_ADMIN: "/notifications",
         DSWD_STAFF: "/notifications",

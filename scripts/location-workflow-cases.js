@@ -17,8 +17,10 @@ export async function runLocationCases({ prisma, barangays, staff, request, post
   check('Confirmed areas belong to their parent Barangay; identical names remain distinct and only Admin edits the registry');
 
   async function activeProgram(code) {
-    const p = (await post('dswd', '/programs', { programName: `Location ${code}`, programCode: code, programType: 'CASH_ASSISTANCE', grantAmount: 100, budgetAmount: 100000, requiredDocumentTypes: ['VALID_ID'] }, { status: 201 })).data.program;
-    await post('dswd', `/programs/${p.programId}/criteria`, { criterionName: 'Adult applicant', fieldName: 'AGE', operator: 'GREATER_THAN_OR_EQUAL', expectedValue: 18, isRequired: true }, { status: 201 });
+    const p = (await post('dswd', '/programs', {
+      programName: `Location ${code}`, programCode: code, programType: 'CASH_ASSISTANCE', grantAmount: 100, budgetAmount: 100000, requiredDocumentTypes: ['VALID_ID'],
+      criteria: [{ criterionName: 'Adult applicant', fieldName: 'AGE', operator: 'GREATER_THAN_OR_EQUAL', expectedValue: 18 }],
+    }, { status: 201 })).data.program;
     await post('dswd', `/programs/${p.programId}/activate`);
     return p;
   }

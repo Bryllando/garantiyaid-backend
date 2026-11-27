@@ -24,7 +24,7 @@ import {
   assertDistributionScheduleReschedulable,
   assertDistributionSchedulesManageable,
   assertDistributionScheduleTransition,
-  assertSlotAvailable,
+  assertScheduleSlotAvailable,
   buildSchedulableAllocationSearchWhere,
   buildScheduleSearchWhere,
   distributionOpeningReadiness,
@@ -217,7 +217,7 @@ export const createDistributionSchedule = asyncHandler(async (req, res) => {
       const slot = await getScheduleSlotOrThrow(distributionId, slotId, tx);
       assertDistributionSlotCoverage(slot, allocation.beneficiary);
       const occupyingCount = await activeScheduleCount(slotId, tx);
-      assertSlotAvailable(slot, occupyingCount);
+      await assertScheduleSlotAvailable(slot, occupyingCount, tx);
       const queueNumber = await nextSlotQueueNumber(slotId, tx);
       const schedule = await tx.schedule.create({
         data: {
@@ -611,7 +611,7 @@ export const rescheduleDistributionSchedule = asyncHandler(async (req, res) => {
     const targetSlot = await getScheduleSlotOrThrow(distributionId, targetSlotId, tx);
     assertDistributionSlotCoverage(targetSlot, schedule.beneficiary);
     const targetOccupyingCount = await activeScheduleCount(targetSlotId, tx);
-    assertSlotAvailable(targetSlot, targetOccupyingCount);
+    await assertScheduleSlotAvailable(targetSlot, targetOccupyingCount, tx);
     const queueNumber = await nextSlotQueueNumber(targetSlotId, tx);
 
     const update = await tx.schedule.updateMany({
@@ -689,7 +689,7 @@ async function transitionDistributionSchedule(req, nextStatus, action) {
       slot = await getScheduleSlotOrThrow(distributionId, schedule.slotId, tx);
       assertDistributionSlotCoverage(slot, schedule.beneficiary);
       occupyingCount = await activeScheduleCount(schedule.slotId, tx);
-      assertSlotAvailable(slot, occupyingCount);
+      await assertScheduleSlotAvailable(slot, occupyingCount, tx);
     }
 
     const transition = await tx.schedule.updateMany({

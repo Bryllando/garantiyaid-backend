@@ -29,15 +29,18 @@ async function runProgramTransaction(operation) {
 }
 
 export const createProgram = asyncHandler(async (req, res) => {
-  const data = programDocumentData(req.validatedBody);
+  const { criteria, ...fields } = req.validatedBody;
+  const data = programDocumentData(fields);
   assertProgramDetailsValid(data);
 
   const program = await prisma.$transaction(async (tx) => {
+    const validatedCriteria = await assertProgramCriteriaValid(criteria, tx);
     const createdProgram = await tx.program.create({
       data: {
         ...data,
         requiredDocumentTypes: req.validatedBody.requiredDocumentTypes ?? [],
         createdById: req.auth.userId,
+        criteria: { create: validatedCriteria },
       },
       select: programSelect,
     });
@@ -49,7 +52,7 @@ export const createProgram = asyncHandler(async (req, res) => {
         entityAffected: "PROGRAM",
         recordId: createdProgram.programId,
         ipAddress: clientIpAddress(req),
-        details: { programCode: createdProgram.programCode, status: createdProgram.status },
+        details: { programCode: createdProgram.programCode, status: createdProgram.status, criterionCount: validatedCriteria.length },
       },
     });
 
@@ -142,6 +145,9 @@ async function transitionProgram(req, res, nextStatus, action) {
 
     if (nextStatus === "ACTIVE") {
       assertProgramDetailsValid(existingProgram);
+      if (!(Number(existingProgram.budgetAmount) > 0) || (existingProgram.grantAmount != null && !(Number(existingProgram.grantAmount) > 0))) {
+        throw new AppError(409, "INVALID_PROGRAM_BUDGET", "Enter a budget greater than zero and, if applicable, a grant greater than zero before activating the program.");
+      }
       if (existingProgram.criteria.length === 0) {
         throw new AppError(
           409,
@@ -158,6 +164,18 @@ async function transitionProgram(req, res, nextStatus, action) {
           "PROGRAM_APPLICATION_CLOSED",
           "A program with an expired application period cannot be activated.",
         );
+      }
+    }
+
+    if (nextStatus === "CLOSED") {
+      const pendingClaims = await tx.claim.count({
+        where: {
+          distribution: { programId: existingProgram.programId },
+          claimStatus: { in: ["PENDING", "VERIFIED"] },
+        },
+      });
+      if (pendingClaims > 0) {
+        throw new AppError(409, "PROGRAM_HAS_UNRESOLVED_CLAIMS", "Resolve or cancel all pending and verified claims before closing this program.", { pendingClaims });
       }
     }
 

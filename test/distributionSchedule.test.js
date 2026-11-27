@@ -17,12 +17,14 @@ import {
   assertDistributionSchedulesManageable,
   assertDistributionScheduleTransition,
   assertSlotAvailable,
+  assertScheduleSlotAvailable,
   buildSchedulableAllocationSearchWhere,
   buildScheduleSearchWhere,
   distributionOpeningReadiness,
   distributionScheduleSelect,
   distributionScheduleToResponse,
   getDistributionScheduleParentOrThrow,
+  getScheduleSlotOrThrow,
   nextSlotQueueNumber,
   schedulableAllocationToResponse,
   scheduleBeneficiarySelect,
@@ -152,6 +154,34 @@ test("manual scheduling and reactivation reject slots at or after their end time
     assert.throws(() => assertSlotAvailable(slot, 0, new Date(instant)),
       (error) => error.code === "DISTRIBUTION_SLOT_ENDED");
   }
+});
+
+test("expired and out-of-event slots return the upcoming event range in Philippine time", async () => {
+  const now = new Date("2026-11-28T00:30:00Z");
+  const start = new Date("2099-08-20T01:00:00Z");
+  const end = new Date("2099-08-20T03:00:00Z");
+  const db = { distributionSlot: {
+    findFirst: async ({ where }) => {
+      assert.deepEqual(where, { distributionId, slotId: targetSlotId });
+      return null;
+    },
+    aggregate: async ({ where }) => {
+      assert.equal(where.distributionId, distributionId);
+      assert.equal(where.slotStatus, "AVAILABLE");
+      return { _min: { slotStart: start }, _max: { slotEnd: end } };
+    },
+  } };
+  const slot = { slotId, distributionId, slotStatus: "AVAILABLE", capacity: 2, slotEnd: now };
+  await assert.rejects(assertScheduleSlotAvailable(slot, 0, db, now), (error) => {
+    assert.equal(error.code, "DISTRIBUTION_SLOT_ENDED");
+    assert.match(error.message, /Choose an available event slot between .+ and .+ \(PHT\)/);
+    return true;
+  });
+  await assert.rejects(getScheduleSlotOrThrow(distributionId, targetSlotId, db), (error) => {
+    assert.equal(error.code, "DISTRIBUTION_SLOT_NOT_FOUND");
+    assert.match(error.message, /outside this distribution event.+\(PHT\)/);
+    return true;
+  });
 });
 
 test("schedule cancel/reactivate and reschedule transitions are controlled", () => {

@@ -147,6 +147,27 @@ export function assertSlotAvailable(slot, activeScheduleCount, now = new Date())
   }
 }
 
+async function availableSlotRange(distributionId, database, now) {
+  const range = await database.distributionSlot.aggregate({
+    where: { distributionId, slotStatus: "AVAILABLE", slotEnd: { gt: now } },
+    _min: { slotStart: true },
+    _max: { slotEnd: true },
+  });
+  if (!range._min.slotStart || !range._max.slotEnd) return "No upcoming time slots are available for this event.";
+
+  const formatter = new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Manila" });
+  return `Choose an available event slot between ${formatter.format(range._min.slotStart)} and ${formatter.format(range._max.slotEnd)} (PHT).`;
+}
+
+export async function assertScheduleSlotAvailable(slot, activeScheduleCount, database, now = new Date()) {
+  try {
+    assertSlotAvailable(slot, activeScheduleCount, now);
+  } catch (error) {
+    if (error.code !== "DISTRIBUTION_SLOT_ENDED") throw error;
+    throw new AppError(409, error.code, `This appointment time has ended. ${await availableSlotRange(slot.distributionId, database, now)}`);
+  }
+}
+
 export function assertDistributionScheduleTransition(schedule, nextStatus) {
   const allowedTransitions = {
     SCHEDULED: ["CANCELLED"],
@@ -271,7 +292,7 @@ export async function getScheduleSlotOrThrow(distributionId, slotId, database = 
     select: scheduleSlotSelect,
   });
   if (!slot) {
-    throw new AppError(404, "DISTRIBUTION_SLOT_NOT_FOUND", "Distribution slot was not found.");
+    throw new AppError(404, "DISTRIBUTION_SLOT_NOT_FOUND", `The selected slot is outside this distribution event. ${await availableSlotRange(distributionId, database, new Date())}`);
   }
   return slot;
 }

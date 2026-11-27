@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import prisma from "../src/lib/prisma.js";
+import { activateProgram, closeProgram, createProgram } from "../src/modules/programs/program.controller.js";
 import {
   PROGRAM_MANAGE_ROLES,
   PROGRAM_READ_ROLES,
@@ -70,4 +72,47 @@ test("program lifecycle permits only the approved transitions", () => {
     () => assertProgramTransition({ status: "CLOSED" }, "ACTIVE"),
     (error) => error.code === "INVALID_PROGRAM_TRANSITION",
   );
+});
+
+test("creation saves the budget and initial rule atomically, and unresolved claims block closure", async (t) => {
+  const programId = "11111111-1111-4111-8111-111111111111";
+  const criterion = { criterionName: "Adult applicant", fieldName: "AGE", operator: "GREATER_THAN_OR_EQUAL", expectedValue: 18, isRequired: true };
+  let program;
+  let unresolved = 1;
+  let transitions = 0;
+  const tx = {
+    program: {
+      create: async ({ data }) => {
+        assert.deepEqual(data.criteria, { create: [criterion] });
+        assert.equal(data.budgetAmount, 500);
+        program = { ...data, programId, status: "DRAFT", criteria: data.criteria.create };
+        return program;
+      },
+      findFirst: async () => program,
+      findUniqueOrThrow: async () => program,
+      updateMany: async ({ data }) => { transitions++; Object.assign(program, data); return { count: 1 }; },
+    },
+    claim: { count: async ({ where }) => {
+      assert.deepEqual(where, { distribution: { programId }, claimStatus: { in: ["PENDING", "VERIFIED"] } });
+      return unresolved;
+    } },
+    auditLog: { create: async () => {} },
+  };
+  const original = prisma.$transaction;
+  prisma.$transaction = async (work) => work(tx);
+  t.after(() => { prisma.$transaction = original; });
+  const invoke = (handler, validatedBody) => new Promise((resolve, reject) => handler({
+    auth: { userId: programId }, staffUser: { role: "SYSTEM_ADMIN" }, validatedParams: { programId }, validatedBody, headers: {},
+  }, { status() { return this; }, json: resolve }, reject));
+
+  await invoke(createProgram, { programCode: "QA", budgetAmount: 500, criteria: [criterion] });
+  program.budgetAmount = null;
+  await assert.rejects(invoke(activateProgram), { code: "INVALID_PROGRAM_BUDGET" });
+  program.budgetAmount = 500;
+  await invoke(activateProgram);
+  await assert.rejects(invoke(closeProgram), { code: "PROGRAM_HAS_UNRESOLVED_CLAIMS" });
+  assert.equal(program.status, "ACTIVE");
+  assert.equal(transitions, 1);
+  unresolved = 0;
+  assert.equal((await invoke(closeProgram)).data.program.status, "CLOSED");
 });

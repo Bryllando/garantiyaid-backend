@@ -3,7 +3,7 @@ import prisma from "../../lib/prisma.js";
 import { AppError } from "../../utils/AppError.js";
 import { idempotencyRequestHash } from "../../utils/idempotency.js";
 import { encryptImportHandoff } from "../../lib/importEncryption.js";
-import { createProgramSchema } from "./program.schemas.js";
+import { programImportDraftSchema } from "./program.schemas.js";
 import { PROGRAM_MANAGE_ROLES } from "./program.policy.js";
 import { assertProgramDetailsValid } from "./program.service.js";
 
@@ -16,10 +16,11 @@ export function assertProgramImportAccess(actor) {
 export function importMoney(value, field) {
   if (value == null || value.trim() === "") return null;
   const text = value.trim().replace(/^(?:PHP|₱)\s*/i, "");
-  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(text)) throw new Error(`${labels[field]}: Use a non-negative amount with up to two decimal places, for example 1,500.00.`);
+  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(text)) throw new Error(`${labels[field]}: Use a positive amount with up to two decimal places, for example 1,500.00.`);
   const [whole, fraction = ""] = text.replaceAll(",", "").split(".");
   const cents = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
   const max = field === "grantAmount" ? 999_999_999_999n : 99_999_999_999_999n;
+  if (cents === 0n) throw new Error(`${labels[field]}: Amount must be greater than zero.`);
   if (cents > max) throw new Error(`${labels[field]}: Amount exceeds the supported limit (${field === "grantAmount" ? "9,999,999,999.99" : "999,999,999,999.99"}).`);
   return `${cents / 100n}.${String(cents % 100n).padStart(2, "0")}`;
 }
@@ -33,7 +34,7 @@ export async function validateProgramImport(rows, actor, database = prisma) {
       try { amounts[field] = importMoney(input[field], field); }
       catch (error) { issues.push(error.message); amounts[field] = null; }
     }
-    const parsed = createProgramSchema.safeParse({ ...input, ...amounts });
+    const parsed = programImportDraftSchema.safeParse({ ...input, ...amounts });
     if (!parsed.success) issues.push(...parsed.error.issues.map(issue => `${labels[issue.path[0]] ?? "Record"}: ${issue.message}`));
     const record = parsed.success ? { ...parsed.data, ...amounts, requiredDocumentTypes: parsed.data.requiredDocumentTypes ?? [] } : input;
     if (parsed.success && !issues.length) {

@@ -110,8 +110,10 @@ export async function runIntegratedCases({ prisma, baseUrl, report }) {
   assert.equal(finishedImport.createdCount + finishedImport.failedCount, 1);
   check('A simultaneous manual registration and import create one person; interrupted import can resume safely');
 
-  const program = (await post('dswd', '/programs', { programName: 'Acceptance assistance', programCode: 'ACCEPTANCE-1', programType: 'CASH_ASSISTANCE', grantAmount: 1500, budgetAmount: 150000, requiredDocumentTypes: ['VALID_ID'] }, { status: 201 })).data.program;
-  await post('dswd', `/programs/${program.programId}/criteria`, { criterionName: 'Adult applicant', fieldName: 'AGE', operator: 'GREATER_THAN_OR_EQUAL', expectedValue: 18, isRequired: true }, { status: 201 });
+  const program = (await post('dswd', '/programs', {
+    programName: 'Acceptance assistance', programCode: 'ACCEPTANCE-1', programType: 'CASH_ASSISTANCE', grantAmount: 1500, budgetAmount: 150000, requiredDocumentTypes: ['VALID_ID'],
+    criteria: [{ criterionName: 'Adult applicant', fieldName: 'AGE', operator: 'GREATER_THAN_OR_EQUAL', expectedValue: 18 }],
+  }, { status: 201 })).data.program;
   await post('dswd', `/programs/${program.programId}/activate`);
   let serial = 0;
   async function approvedPerson(submitter = 'barangay') {
