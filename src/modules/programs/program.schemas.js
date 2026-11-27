@@ -96,6 +96,9 @@ export const programListQuerySchema = z.object({
   ),
 }).strict();
 
+export const programEligibilityPreviewQuerySchema = programListQuerySchema.pick({ page: true, pageSize: true })
+  .extend({ barangayId: z.uuid().optional() });
+
 const criterionFieldsSchema = {
   criterionName: z.string().trim().min(1).max(100),
   fieldName: z.preprocess(

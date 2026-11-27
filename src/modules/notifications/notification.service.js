@@ -7,6 +7,7 @@ import { normalizePhilippineMobileNumber } from "./simulatedSms.provider.js";
 
 const PHILIPPINE_TIME_ZONE = "Asia/Manila";
 const PHILIPPINE_OFFSET = "+08:00";
+const PROCESSING_LEASE_MS = 10 * 60_000;
 
 export const notificationPublicSelect = {
   notificationId: true,
@@ -226,7 +227,8 @@ export function assertNotificationDeliveryCurrent(notification, schedule, now = 
   }
   assertNotificationLifecycle(schedule, notification.notificationType);
   if (notification.deliveryContextHash !== notificationDeliveryContextHash(schedule, notification.notificationType)
-    || (notification.notificationType === "DISTRIBUTION_REMINDER" && (schedule.claim?.claimStatus === "CLAIMED" || new Date(schedule.slot.slotEnd) <= now))) {
+    || (["DISTRIBUTION_REMINDER", "DISTRIBUTION_OPENED"].includes(notification.notificationType)
+      && (schedule.claim?.claimStatus === "CLAIMED" || new Date(schedule.slot.slotEnd) <= now))) {
     throw new AppError(409, "NOTIFICATION_CONTEXT_CHANGED", "The recipient or appointment changed. Review the current details before queueing a new notice.");
   }
 }
@@ -411,6 +413,36 @@ export async function createNotificationRows(rows, database = prisma) {
   return { notifications, newlyCreated };
 }
 
+export async function recordDistributionOpeningNotices(distributionId, initiatedById, database, now = new Date()) {
+  const schedules = await database.schedule.findMany({
+    where: { distributionId, status: "SCHEDULED", beneficiary: { status: "ACTIVE" } },
+    select: notificationScheduleContextSelect,
+  });
+  if (schedules.length === 0) return 0;
+  const data = schedules.map((schedule) => notificationRowFromSchedule(schedule, {
+    notificationType: "DISTRIBUTION_OPENED",
+    initiatedById,
+    now,
+  }));
+  const result = await database.notification.createMany({ data, skipDuplicates: true });
+  return result.count;
+}
+
+export function pendingDistributionOpeningNotices(database = prisma, now = new Date()) {
+  return database.notification.findMany({
+    where: {
+      status: "PENDING",
+      channel: "SMS",
+      notificationType: "DISTRIBUTION_OPENED",
+      scheduledFor: { lte: now },
+      OR: [{ processingToken: null }, { processingStartedAt: { lt: new Date(now.getTime() - PROCESSING_LEASE_MS) } }],
+    },
+    select: { notificationId: true, scheduledFor: true },
+    orderBy: [{ scheduledFor: "asc" }, { notificationId: "asc" }],
+    take: 500,
+  });
+}
+
 export async function getNotificationOrThrow(notificationId, barangayId, database = prisma) {
   const notification = await database.notification.findFirst({
     where: {
@@ -427,7 +459,7 @@ export async function getNotificationOrThrow(notificationId, barangayId, databas
 
 export async function acquirePendingNotification(notificationId, database = prisma, now = new Date()) {
   const processingToken = randomUUID();
-  const staleBefore = new Date(now.getTime() - 10 * 60 * 1_000);
+  const staleBefore = new Date(now.getTime() - PROCESSING_LEASE_MS);
   const claimed = await database.notification.updateMany({
     where: {
       notificationId,

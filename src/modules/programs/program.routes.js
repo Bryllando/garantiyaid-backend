@@ -10,6 +10,7 @@ import {
   createProgram,
   deleteCriterion,
   getProgram,
+  getProgramEligibilityPreview,
   listPrograms,
   updateCriterion,
   updateProgram,
@@ -17,6 +18,7 @@ import {
 import {
   createProgramCriterionSchema,
   createProgramSchema,
+  programEligibilityPreviewQuerySchema,
   programCriterionParamsSchema,
   programIdSchema,
   programListQuerySchema,
@@ -48,6 +50,13 @@ programRoutes.get(
   authorizeRoles(...PROGRAM_READ_ROLES),
   validateParams(programIdSchema),
   getProgram,
+);
+programRoutes.get(
+  "/:programId/eligibility-preview",
+  authorizeRoles(...PROGRAM_MANAGE_ROLES),
+  validateParams(programIdSchema),
+  validateQuery(programEligibilityPreviewQuerySchema),
+  getProgramEligibilityPreview,
 );
 programRoutes.patch(
   "/:programId",

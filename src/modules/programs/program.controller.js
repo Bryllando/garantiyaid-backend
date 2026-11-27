@@ -2,6 +2,9 @@ import prisma from "../../lib/prisma.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
+import { philippineDate } from "../../lib/philippine-date.js";
+import { ELIGIBILITY_STATUSES, evaluateEnrollmentEligibility } from "../enrollments/enrollmentEligibility.service.js";
+import { assertRequiredDocuments } from "../enrollments/enrollment.service.js";
 import {
   assertProgramCriteriaValid,
   assertProgramDetailsValid,
@@ -98,6 +101,62 @@ export const listPrograms = asyncHandler(async (req, res) => {
 export const getProgram = asyncHandler(async (req, res) => {
   const program = await getProgramOrThrow(req.validatedParams.programId, req.staffUser);
   res.status(200).json({ success: true, data: { program } });
+});
+
+export const getProgramEligibilityPreview = asyncHandler(async (req, res) => {
+  const program = await getProgramOrThrow(req.validatedParams.programId, req.staffUser);
+  if (program.criteria.length === 0) {
+    throw new AppError(409, "PROGRAM_CRITERIA_REQUIRED", "Add an eligibility criterion to preview beneficiaries.");
+  }
+  const { page, pageSize, barangayId } = req.validatedQuery;
+  const where = { status: "ACTIVE", ...(barangayId ? { barangayId } : {}) };
+  const [beneficiaries, total] = await Promise.all([
+    prisma.beneficiary.findMany({
+      where,
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { beneficiaryId: "asc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: {
+        beneficiaryId: true,
+        firstName: true,
+        lastName: true,
+        birthDate: true,
+        sex: true,
+        barangayId: true,
+        barangay: { select: { barangayName: true } },
+        documents: {
+          where: { reviewStatus: "ACCEPTED" },
+          select: { documentType: true, documentName: true, reviewStatus: true },
+        },
+      },
+    }),
+    prisma.beneficiary.count({ where }),
+  ]);
+  const referenceDate = philippineDate();
+  const enrollmentDate = new Date(`${referenceDate}T00:00:00Z`);
+  const candidates = beneficiaries.map((beneficiary) => {
+    let status;
+    try {
+      status = evaluateEnrollmentEligibility({ program, beneficiary, enrollmentDate }, { preview: true }).overallStatus;
+      if (status === ELIGIBILITY_STATUSES.ELIGIBLE) {
+        assertRequiredDocuments(program, beneficiary.documents, { acceptedOnly: true });
+      }
+    } catch (error) {
+      if (!["REQUIRED_DOCUMENTS_NOT_ACCEPTED", "INVALID_ELIGIBILITY_DATA"].includes(error.code)) throw error;
+      status = ELIGIBILITY_STATUSES.REVIEW_REQUIRED;
+    }
+    return {
+      beneficiaryId: beneficiary.beneficiaryId,
+      firstName: beneficiary.firstName,
+      lastName: beneficiary.lastName,
+      barangayName: beneficiary.barangay.barangayName,
+      status,
+    };
+  });
+  res.set("Cache-Control", "private, no-store");
+  res.json({ success: true, data: {
+    candidates, referenceDate, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+  } });
 });
 
 export const updateProgram = asyncHandler(async (req, res) => {

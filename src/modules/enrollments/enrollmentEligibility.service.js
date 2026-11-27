@@ -253,7 +253,7 @@ function resultFor(criterion, actualValue, outcome, reason, { forceBlocking = fa
   };
 }
 
-export function evaluateEnrollmentEligibility(enrollment, { manualDecisions = [] } = {}) {
+export function evaluateEnrollmentEligibility(enrollment, { manualDecisions = [], preview = false } = {}) {
   if (!enrollment?.program || !enrollment?.beneficiary || !enrollment?.enrollmentDate) {
     invalidEligibilityData(
       "Enrollment eligibility requires the program, beneficiary, and enrollment date.",
@@ -316,6 +316,9 @@ export function evaluateEnrollmentEligibility(enrollment, { manualDecisions = []
       case "DOCUMENT_TYPE":
         passed = acceptedDocumentTypes.has(criterion.expectedValue);
         actualValue = { documentType: criterion.expectedValue, accepted: passed };
+        if (preview && !passed && criterion.isRequired !== false) {
+          return resultFor(criterion, actualValue, ELIGIBILITY_OUTCOMES.REVIEW_REQUIRED, "The required document needs staff review.", { forceBlocking: true });
+        }
         break;
       default:
         return null;

@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import prisma from "../src/lib/prisma.js";
-import { listDistributionSchedules } from "../src/modules/distributions/distributionSchedule.controller.js";
+import { listDistributionSchedules, openDistribution } from "../src/modules/distributions/distributionSchedule.controller.js";
+import { pendingDistributionOpeningNotices } from "../src/modules/notifications/notification.service.js";
 import {
   createDistributionScheduleSchema,
   distributionScheduleListQuerySchema,
@@ -283,6 +284,55 @@ test("opening readiness requires every active allocation to have a capacity-safe
     }),
     (error) => error.code === "DISTRIBUTION_NO_ACTIVE_ALLOCATIONS",
   );
+});
+
+test("opening commits one schedule SMS and exposes it for the notification worker", async (t) => {
+  const now = new Date("2099-08-20T00:00:00Z");
+  const distribution = { distributionId, status: "DRAFT", deliveryMode: "SIMULATED_WALLET", title: "Assistance",
+    barangayId: beneficiaryId, location: "Barangay hall", distributionDate: now, startTime: now, endTime: now, updatedAt: now };
+  const schedule = { scheduleId, distributionId, beneficiaryId, slotId, queueNumber: 1, status: "SCHEDULED",
+    distribution, beneficiary: { beneficiaryId, firstName: "QA", lastName: "Beneficiary", status: "ACTIVE", contactNumber: "09171234567" },
+    slot: { distributionId, capacity: 1, serviceAreas: [], slotStart: now, slotEnd: new Date("2099-08-20T01:00:00Z") } };
+  const notices = [];
+  const transaction = {
+    distribution: {
+      findFirst: async () => distribution,
+      updateMany: async ({ data }) => { Object.assign(distribution, data); return { count: 1 }; },
+    },
+    distributionAllocation: { findMany: async () => [{ allocationId, beneficiaryId }] },
+    schedule: { findMany: async () => [schedule] },
+    auditLog: { create: async () => {} },
+    notification: {
+      createMany: async ({ data, skipDuplicates }) => {
+        assert.equal(distribution.status, "OPEN");
+        assert.equal(skipDuplicates, true);
+        notices.push(...data);
+        return { count: data.length };
+      },
+      findMany: async ({ where }) => {
+        assert.equal(where.notificationType, "DISTRIBUTION_OPENED");
+        return notices.filter((notice) => notice.status === where.status);
+      },
+    },
+  };
+  const originals = { transaction: prisma.$transaction, findDistribution: prisma.distribution.findUniqueOrThrow };
+  prisma.$transaction = async (operation) => operation(transaction);
+  prisma.distribution.findUniqueOrThrow = async () => distribution;
+  t.after(() => {
+    prisma.$transaction = originals.transaction;
+    prisma.distribution.findUniqueOrThrow = originals.findDistribution;
+  });
+  const open = () => new Promise((resolve, reject) => openDistribution({
+    staffUser: { role: "SYSTEM_ADMIN" }, auth: { userId: beneficiaryId }, validatedParams: { distributionId }, headers: {},
+  }, { status() { return this; }, json: resolve }, reject));
+
+  assert.equal((await open()).data.openingNoticeCount, 1);
+  assert.equal(notices[0].scheduleId, scheduleId);
+  assert.equal(notices[0].status, "PENDING");
+  assert.match(notices[0].message, /queue 1/);
+  assert.equal((await pendingDistributionOpeningNotices(transaction)).length, 1);
+  await assert.rejects(open());
+  assert.equal(notices.length, 1);
 });
 
 test("schedule responses expose operational fields but omit sensitive beneficiary data", () => {

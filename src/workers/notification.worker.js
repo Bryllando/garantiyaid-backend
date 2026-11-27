@@ -2,7 +2,8 @@ import { Worker } from "bullmq";
 import prisma from "../lib/prisma.js";
 import { env } from "../config/env.js";
 import { createRedisConnection, closeRedisConnection } from "../lib/redis.js";
-import { NOTIFICATION_JOB_NAME, STAFF_EMAIL_JOB_NAME } from "../queues/notification.queue.js";
+import { closeNotificationQueue, enqueueNotificationJobs, NOTIFICATION_JOB_NAME, STAFF_EMAIL_JOB_NAME } from "../queues/notification.queue.js";
+import { pendingDistributionOpeningNotices } from "../modules/notifications/notification.service.js";
 import { markExhaustedNotificationJob, processNotificationJob } from "./notification.processor.js";
 import { markExhaustedStaffEmailJob, processStaffEmailJob } from "./staffEmail.processor.js";
 import { closeNotificationRealtimePublisher } from "../realtime/notification.relay.js";
@@ -54,12 +55,31 @@ worker.on("error", (error) => {
 });
 
 let shuttingDown = false;
+let openingNoticeTimer;
+
+// Opening notices are committed with the event, so Redis outages or API restarts cannot lose them.
+async function queueOpeningNotices() {
+  if (shuttingDown) return;
+  try {
+    const notices = await pendingDistributionOpeningNotices();
+    if (!shuttingDown && notices.length) await enqueueNotificationJobs(notices);
+  } catch (error) {
+    console.warn({ event: "OPENING_SMS_QUEUE_RETRY", errorName: error.name });
+  } finally {
+    if (!shuttingDown) openingNoticeTimer = setTimeout(queueOpeningNotices, 5000);
+  }
+}
+
+worker.once("ready", () => { void queueOpeningNotices(); });
+
 async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearTimeout(openingNoticeTimer);
   console.log(`${signal} received. Closing notification worker.`);
   try {
     await worker.close();
+    await closeNotificationQueue();
     await closeNotificationRealtimePublisher();
     await closeRedisConnection(connection);
     await prisma.$disconnect();

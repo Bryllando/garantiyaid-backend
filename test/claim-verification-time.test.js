@@ -8,7 +8,7 @@ process.env.FIELD_ENCRYPTION_KEY = 'ab'.repeat(32);
 process.env.DATABASE_URL = 'postgresql://test:test@127.0.0.1:1/unused';
 const db = {};
 globalThis.prisma = db;
-const { verifyQrClaim } = await import('../src/modules/distributions/distributionClaim.controller.js');
+const { previewQrClaim, verifyQrClaim } = await import('../src/modules/distributions/distributionClaim.controller.js');
 const { verifyBiometricClaim, submitClaimSignature } = await import('../src/modules/biometrics/biometricClaim.controller.js');
 const { processBiometricEnrollment, encryptBiometricTemplate } = await import('../src/modules/biometrics/biometric.service.js');
 const { claimIdentityRequirementSatisfied, assertPhysicalClaimReleasable, qrClaimPreviewOutcome } = await import('../src/modules/distributions/distributionClaim.service.js');
@@ -52,7 +52,7 @@ function fixture(requirement, existing = null) {
       return recordedRequest && ['userId', 'operation', 'idempotencyKey'].every(key => recordedRequest[key] === identity[key]) ? recordedRequest : null;
     }, create: async ({ data }) => { recordedRequest = data; return data; } },
   });
-  return { claim: () => claim, newRequest: () => { recordedRequest = null; } };
+  return { claim: () => claim, token, schedule, newRequest: () => { recordedRequest = null; } };
 }
 
 function invoke(handler, extra = {}, key = randomUUID()) {
@@ -129,19 +129,30 @@ test('QR-only completion records a stable time across replay and a later duplica
   assert.equal(state.claim().verifiedAt.toISOString(), verifiedAt);
 });
 
-test('combined QR and face verification records time only when the second check completes, in either order', async () => {
-  for (const first of ['QR', 'BIOMETRIC']) {
-    const state = fixture('QR_AND_BIOMETRIC');
-    const face = () => invoke(verifyBiometricClaim, { file: capture() });
-    assert.equal((await (first === 'QR' ? invoke(verifyQrClaim) : face())).status, 201);
-    assert.equal(state.claim().claimStatus, 'PENDING');
-    assert.equal(state.claim().verifiedAt, null);
-    state.newRequest();
-    const before = Date.now();
-    assert.equal((await (first === 'QR' ? face() : invoke(verifyQrClaim))).status, 201);
-    assert.equal(state.claim().claimStatus, 'VERIFIED');
-    assert.ok(state.claim().verifiedAt.getTime() >= before);
-  }
+test('combined verification requires face first and leaves a premature QR unused for the same retry', async () => {
+  const state = fixture('QR_AND_BIOMETRIC');
+  const key = randomUUID();
+  await assert.rejects(invoke(previewQrClaim), { code: 'BIOMETRIC_REQUIRED_BEFORE_QR' });
+  await assert.rejects(invoke(verifyQrClaim, {}, key), { code: 'BIOMETRIC_REQUIRED_BEFORE_QR' });
+  assert.equal(state.token.qrStatus, 'ACTIVE');
+  assert.equal(state.schedule.status, 'SCHEDULED');
+  assert.equal(state.claim(), null);
+
+  assert.equal((await invoke(verifyBiometricClaim, { file: capture() })).status, 201);
+  assert.equal(state.claim().claimStatus, 'PENDING');
+  assert.equal(state.claim().verifiedAt, null);
+  assert.equal((await invoke(previewQrClaim)).body.data.verificationCompleteAfterConfirm, true);
+  const before = Date.now();
+  assert.equal((await invoke(verifyQrClaim, {}, key)).status, 201);
+  assert.equal(state.claim().claimStatus, 'VERIFIED');
+  assert.equal(state.token.qrStatus, 'USED');
+  assert.ok(state.claim().verifiedAt.getTime() >= before);
+});
+
+test('an existing pending claim from the earlier QR-first workflow can still complete by face', async () => {
+  const state = fixture('QR_AND_BIOMETRIC', { claimStatus: 'PENDING', qrVerified: true, biometricVerified: false });
+  assert.equal((await invoke(verifyBiometricClaim, { file: capture() })).status, 201);
+  assert.equal(state.claim().claimStatus, 'VERIFIED');
 });
 
 test('face-only records completion, while face plus signature waits for the signature', async () => {

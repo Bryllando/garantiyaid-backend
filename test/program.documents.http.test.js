@@ -81,6 +81,37 @@ test('Other document names persist through create/read/edit and clear when Other
   assert.equal(response.status, 201, 'the complete manual example must pass real request validation');
 });
 
+test('program eligibility preview lists candidates without modifying beneficiary or enrollment records', async t => {
+  const age = { criterionId: programId, criterionName: 'Adult', fieldName: 'AGE', operator: 'GREATER_THAN_OR_EQUAL', expectedValue: 18 };
+  const applicant = { firstName: 'QA', lastName: 'Candidate', birthDate: new Date('1980-01-01'), barangay: { barangayName: 'QA barangay' },
+    documents: [{ documentType: 'VALID_ID', reviewStatus: 'ACCEPTED' }] };
+  let staff = actor;
+  replace(t, prisma.user, 'findUnique', async () => staff);
+  replace(t, prisma.staffSession, 'findFirst', async () => ({ sessionId: 'synthetic-session' }));
+  replace(t, prisma.program, 'findFirst', async () => ({ criteria: [age], requiredDocumentTypes: ['VALID_ID'] }));
+  replace(t, prisma.beneficiary, 'findMany', async ({ where, take }) => {
+    assert.deepEqual(where, { status: 'ACTIVE', barangayId: actor.userId });
+    assert.equal(take, 10);
+    return [
+      { ...applicant, beneficiaryId: 'adult' },
+      { ...applicant, beneficiaryId: 'missing-document', documents: [] },
+      { ...applicant, beneficiaryId: 'under-age', birthDate: new Date('2025-01-01') },
+    ];
+  });
+  replace(t, prisma.beneficiary, 'count', async () => 3);
+  const path = `/${programId}/eligibility-preview?barangayId=${actor.userId}&pageSize=10`;
+  const response = await request(path, 'GET');
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  const { candidates, pagination } = (await response.json()).data;
+  assert.deepEqual(candidates.map(({ status }) => status), ['ELIGIBLE', 'REVIEW_REQUIRED', 'INELIGIBLE']);
+  assert.deepEqual(Object.keys(candidates[0]), ['beneficiaryId', 'firstName', 'lastName', 'barangayName', 'status']);
+  assert.equal(pagination.total, 3);
+  staff = { ...actor, role: 'BARANGAY_FACILITATOR', barangayId: actor.userId };
+  const forbidden = await fetch(origin + path, { headers: { Authorization: `Bearer ${signAccessToken(staff)}` } });
+  assert.equal(forbidden.status, 403);
+});
+
 test('named Other uploads persist their metadata through the real multipart endpoint', async t => {
   const uploader = { ...actor, role: 'SYSTEM_ADMIN' };
   let stored;

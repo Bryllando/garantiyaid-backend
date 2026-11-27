@@ -525,6 +525,12 @@ export const reissueQrToken = asyncHandler(async (req, res) => {
   });
 });
 
+function assertBiometricBeforeQr(distribution, beneficiaryId) {
+  if (distribution.verificationRequirement === "QR_AND_BIOMETRIC") {
+    throw new AppError(409, "BIOMETRIC_REQUIRED_BEFORE_QR", "Complete the beneficiary's live face verification before confirming this QR.", { beneficiaryId });
+  }
+}
+
 export const previewQrClaim = asyncHandler(async (req, res) => {
   assertClaimVerifyAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
@@ -579,6 +585,8 @@ export const previewQrClaim = asyncHandler(async (req, res) => {
       ...(existingClaim ? { claimId: existingClaim.claimId } : {}),
     });
   }
+
+  if (!existingClaim) assertBiometricBeforeQr(distribution, qrToken.beneficiaryId);
 
   await prisma.auditLog.create({
     data: {
@@ -888,7 +896,7 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
           { scanLogId },
         );
       } else {
-        const verificationComplete = ["QR", "QR_OR_BIOMETRIC"].includes(distribution.verificationRequirement);
+        assertBiometricBeforeQr(distribution, qrToken.beneficiaryId);
         const createdClaim = await tx.claim.create({
           data: {
             beneficiaryId: qrToken.beneficiaryId,
@@ -896,8 +904,8 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
             scheduleId: schedule.scheduleId,
             verifiedById: req.auth.userId,
             allocationId: allocation.allocationId,
-            claimStatus: verificationComplete ? "VERIFIED" : "PENDING",
-            verifiedAt: verificationComplete ? now : null,
+            claimStatus: "VERIFIED",
+            verifiedAt: now,
             verificationMethod: distribution.verificationRequirement,
             biometricVerified: false,
             qrVerified: true,
@@ -930,13 +938,13 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
           submittedTokenHash,
           qrTokenId: qrToken.qrTokenId,
           claimId: createdClaim.claimId,
-          scanResult: verificationComplete ? "VERIFIED" : "PENDING_BIOMETRIC",
+          scanResult: "VERIFIED",
           deviceInfo,
         });
         await tx.auditLog.create({
           data: {
             userId: req.auth.userId,
-            action: verificationComplete ? "CLAIM_VERIFIED_BY_QR" : "CLAIM_AWAITING_BIOMETRIC",
+            action: "CLAIM_VERIFIED_BY_QR",
             entityAffected: "CLAIM",
             recordId: createdClaim.claimId,
             ipAddress: clientIpAddress(req),
@@ -956,14 +964,12 @@ export const verifyQrClaim = asyncHandler(async (req, res) => {
           success: true,
           data: {
             claim: claimMutationToResponse(createdClaim),
-            verificationComplete,
-            nextRequiredVerification: verificationComplete ? null : "BIOMETRIC",
+            verificationComplete: true,
+            nextRequiredVerification: null,
             walletTransactionCreated: false,
-            nextPhase: verificationComplete
-              ? distribution.deliveryMode === "PHYSICAL_GOODS"
-                ? "PHYSICAL_ASSISTANCE_RELEASE"
-                : "SIMULATED_WALLET_SETTLEMENT"
-              : "BIOMETRIC_VERIFICATION",
+            nextPhase: distribution.deliveryMode === "PHYSICAL_GOODS"
+              ? "PHYSICAL_ASSISTANCE_RELEASE"
+              : "SIMULATED_WALLET_SETTLEMENT",
           },
         });
       }

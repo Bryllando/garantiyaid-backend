@@ -325,12 +325,14 @@ export async function runIntegratedCases({ prisma, baseUrl, report }) {
   const combinedEvent = await prepareEvent('SIMULATED_WALLET', 'QR_AND_BIOMETRIC');
   const combinedPath = `/distributions/${combinedEvent.distributionId}`;
   const combinedTokens = (await post('admin', `${combinedPath}/qr-tokens/generate`, {}, { status: 201 })).data.qrTokens;
-  const pending = (await post('dswd', `${combinedPath}/claims/verify-qr`, { token: combinedTokens[0].token }, { status: 201, key: randomUUID() })).data.claim;
+  const combinedQrKey = randomUUID();
+  await post('dswd', `${combinedPath}/claims/verify-qr`, { token: combinedTokens[0].token }, { status: 409, key: combinedQrKey });
+  await verifyFace(person, combinedEvent, syntheticCapture('wrong-person'), 422, 'BIOMETRIC_NO_MATCH');
+  const pending = (await verifyFace(person, combinedEvent, identity.capture)).data.claim;
   assert.equal(pending.claimStatus, 'PENDING');
   await post('dswd', `${combinedPath}/claims/${pending.claimId}/credit`, {}, { status: 409, key: randomUUID() });
   await post('barangay', `${combinedPath}/claims/${pending.claimId}/receipt`, {}, { status: 409 });
-  await verifyFace(person, combinedEvent, syntheticCapture('wrong-person'), 422, 'BIOMETRIC_NO_MATCH');
-  const matched = await verifyFace(person, combinedEvent, identity.capture);
+  const matched = await post('dswd', `${combinedPath}/claims/verify-qr`, { token: combinedTokens[0].token }, { status: 201, key: combinedQrKey });
   assert.equal(matched.data.claim.claimStatus, 'VERIFIED');
   const creditKey = randomUUID();
   const credits = await Promise.all(['dswd', 'dswd2'].map(role => post(role, `${combinedPath}/claims/${pending.claimId}/credit`, {}, { key: role === 'dswd' ? creditKey : randomUUID(), status: null })));

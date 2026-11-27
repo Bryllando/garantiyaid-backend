@@ -395,18 +395,16 @@ try {
     generated.payload.data.qrTokens.map((row) => [row.beneficiaryId, row.token]),
   );
 
-  const alphaQr = await jsonRequest(`/distributions/${distribution.distributionId}/claims/verify-qr`, {
+  const alphaQrKey = randomUUID();
+  const alphaQr = () => jsonRequest(`/distributions/${distribution.distributionId}/claims/verify-qr`, {
     method: "POST",
     token: facilitatorToken,
-    idempotencyKey: randomUUID(),
-    body: { token: tokenByBeneficiary.get(beneficiaries[0].beneficiaryId), deviceInfo: "QR-first verification" },
+    idempotencyKey: alphaQrKey,
+    body: { token: tokenByBeneficiary.get(beneficiaries[0].beneficiaryId), deviceInfo: "Combined verification" },
   });
-  requireStatus(alphaQr, 201, "QR-first partial claim");
-  temporaryClaimIds.push(alphaQr.payload.data.claim.claimId);
-  if (
-    alphaQr.payload.data.claim.claimStatus !== "PENDING"
-    || alphaQr.payload.data.nextRequiredVerification !== "BIOMETRIC"
-  ) throw new Error("QR-first combined flow did not stop at PENDING biometric verification.");
+  const prematureQr = await alphaQr();
+  requireStatus(prematureQr, 409, "QR blocked before face verification");
+  requireError(prematureQr, "BIOMETRIC_REQUIRED_BEFORE_QR", "QR blocked before face verification");
 
   const alphaBiometricKey = randomUUID();
   const alphaBiometric = await multipartRequest(
@@ -415,22 +413,25 @@ try {
       token: facilitatorToken,
       capture: captures[0],
       idempotencyKey: alphaBiometricKey,
-      fields: { beneficiaryId: beneficiaries[0].beneficiaryId, deviceInfo: "Biometric-second verification" },
+      fields: { beneficiaryId: beneficiaries[0].beneficiaryId, deviceInfo: "Biometric-first verification" },
     },
   );
-  requireStatus(alphaBiometric, 201, "biometric completion after QR");
+  requireStatus(alphaBiometric, 201, "biometric-first verification");
+  temporaryClaimIds.push(alphaBiometric.payload.data.claim.claimId);
+  const completedAlpha = await alphaQr();
+  requireStatus(completedAlpha, 201, "QR completion after biometrics");
   if (
-    alphaBiometric.payload.data.claim.claimStatus !== "VERIFIED"
-    || !alphaBiometric.payload.data.claim.qrVerified
-    || !alphaBiometric.payload.data.claim.biometricVerified
-  ) throw new Error("QR-first combined claim was not fully verified.");
+    completedAlpha.payload.data.claim.claimStatus !== "VERIFIED"
+    || !completedAlpha.payload.data.claim.qrVerified
+    || !completedAlpha.payload.data.claim.biometricVerified
+  ) throw new Error("Combined claim was not fully verified.");
   const alphaReplay = await multipartRequest(
     `/distributions/${distribution.distributionId}/claims/verify-biometric`,
     {
       token: facilitatorToken,
       capture: captures[0],
       idempotencyKey: alphaBiometricKey,
-      fields: { beneficiaryId: beneficiaries[0].beneficiaryId, deviceInfo: "Biometric-second verification" },
+      fields: { beneficiaryId: beneficiaries[0].beneficiaryId, deviceInfo: "Biometric-first verification" },
     },
   );
   requireStatus(alphaReplay, 201, "biometric idempotent replay");
@@ -565,7 +566,7 @@ try {
 
   console.log("Biometric consent and identity verification passed.");
   console.log("Verified consent gating/history, transient captures, encrypted templates, RBAC,");
-  console.log("re-enrollment, QR-first and biometric-first combined claims, replay protection,");
+  console.log("re-enrollment, biometric-first combined claims, QR prerequisites and replay protection,");
   console.log("liveness/no-match logging, revocation/deletion, privacy, and wallet-credit compatibility.");
 } finally {
   if (server) {

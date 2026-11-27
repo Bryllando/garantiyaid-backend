@@ -5,6 +5,7 @@ import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AppError } from "../../utils/AppError.js";
 import { clientIpAddress } from "../../utils/clientIp.js";
 import { publishDistributionUpdated, publishScheduleUpdated } from "../../realtime/publishers.js";
+import { recordDistributionOpeningNotices } from "../notifications/notification.service.js";
 import {
   assertDistributionManageAllowed,
   assertDistributionReadAllowed,
@@ -748,7 +749,7 @@ export const openDistribution = asyncHandler(async (req, res) => {
   assertDistributionManageAllowed(req.staffUser);
   const { distributionId } = req.validatedParams;
 
-  await runScheduleTransaction(async (tx) => {
+  const openingNoticeCount = await runScheduleTransaction(async (tx) => {
     const distribution = await getDistributionScheduleParentOrThrow(
       distributionId,
       req.staffUser,
@@ -768,6 +769,7 @@ export const openDistribution = asyncHandler(async (req, res) => {
         "Distribution event status changed while this request was being processed. Refresh and try again.",
       );
     }
+    const noticeCount = await recordDistributionOpeningNotices(distributionId, req.auth.userId, tx);
     await tx.auditLog.create({
       data: {
         userId: req.auth.userId,
@@ -782,9 +784,11 @@ export const openDistribution = asyncHandler(async (req, res) => {
           schedulesFrozen: true,
           allocationsFrozen: true,
           slotsFrozen: true,
+          openingNoticeCount: noticeCount,
         },
       },
     });
+    return noticeCount;
   });
 
   const distribution = await prisma.distribution.findUniqueOrThrow({
@@ -794,6 +798,6 @@ export const openDistribution = asyncHandler(async (req, res) => {
   await publishDistributionUpdated(distribution, "OPENED");
   return res.status(200).json({
     success: true,
-    data: { distribution: distributionToResponse(distribution) },
+    data: { distribution: distributionToResponse(distribution), openingNoticeCount },
   });
 });
