@@ -46,6 +46,7 @@ import {
   hashChatbotSessionToken,
   listGenericChatbotMessages,
   listAdminChatbotConversations,
+  listStaffChatbotEscalations,
   processGenericChatbotTurn,
   referChatbotEscalationToBarangay,
   redactChatbotText,
@@ -261,7 +262,7 @@ test("controlled answers never claim personal access or external AI and escalate
     assert.equal(escalationReasonForIntent(intent, 0.99), "PERSONAL_DATA_REQUIRED");
   }
   assert.equal(controlledChatbotAnswer("CLAIM_PROCESS", "en").requiresEscalation, false);
-  assert.equal(controlledChatbotAnswer("UNKNOWN", "en").requiresEscalation, false);
+  assert.equal(controlledChatbotAnswer("UNKNOWN", "en").requiresEscalation, true);
 });
 
 test("chat text redaction removes credentials, tokens, PhilSys-like IDs, and full contact numbers before storage", () => {
@@ -331,6 +332,38 @@ test("multi-turn processing stores deterministic order, controlled bot answers, 
   }, database);
   assert.deepEqual(history.messages.map((message) => message.sequence), [1, 2, 3, 4]);
   assert.deepEqual(history.pagination, { page: 1, pageSize: 20, total: 4, totalPages: 1 });
+});
+
+test("an unrecognized public inquiry immediately reaches the administrator escalation inbox once", async () => {
+  const database = inMemoryChatbotDatabase();
+  const now = new Date("2099-01-01T00:00:00.000Z");
+  const created = await createGenericChatbotSession({ language: "en" }, database, now);
+  const review = { page: 1, pageSize: 20, status: "ESCALATED", assignedToMe: false };
+  const admin = { role: "SYSTEM_ADMIN", userId: staffAId };
+  database.chatbotSession.findMany = async ({ where }) => (
+    database.state.session.status === where.status ? [database.state.session] : []
+  );
+  database.chatbotSession.count = async ({ where }) => Number(database.state.session.status === where.status);
+  const send = (messageText) => processGenericChatbotTurn(
+    { sessionId, token: created.sessionToken, messageText },
+    database,
+    now,
+    async () => assert.fail("Escalated inquiries must use the controlled reply"),
+  );
+
+  assert.equal((await listStaffChatbotEscalations(admin, review, database)).pagination.total, 0);
+  const first = await send("Can a caregiver accompany me?");
+  assert.equal(first.classification.intent, "UNKNOWN");
+  assert.equal(first.escalatedNow, true);
+  assert.equal(first.session.status, "ESCALATED");
+  assert.equal(first.session.escalationReason, "UNKNOWN_INTENT");
+  assert.match(first.botMessage.messageText, /forwarded to GarantiyAid staff for review/);
+  const queue = await listStaffChatbotEscalations(admin, review, database);
+  assert.deepEqual(queue.escalations.map((item) => item.sessionId), [sessionId]);
+
+  const followUp = await send("I need staff assistance");
+  assert.equal(followUp.escalatedNow, false);
+  assert.equal(database.state.audits.filter((entry) => entry.action === "CHATBOT_SESSION_ESCALATED").length, 1);
 });
 
 test("public process explanations persist as controlled text and never bypass session ownership or personal-data escalation", async () => {

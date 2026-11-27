@@ -361,6 +361,7 @@ export async function processGenericChatbotTurn(
   if (explanation) localizedAnswer.messageText = explanation.messageText;
   const externalAnswer = !chatbotSessionExpired(answerSession, now)
     && !["RESOLVED", "ENDED"].includes(answerSession.status)
+    && !localizedAnswer.requiresEscalation
     && !explanation
     && classification.intent !== "GREETING"
     && !isSystemOverviewQuestion(classification.normalizedText)
