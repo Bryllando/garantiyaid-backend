@@ -185,16 +185,16 @@ try {
     "replacement of a non-rejected document check",
   );
 
-  const forbiddenAdminCreate = await request("/programs", {
+  const forbiddenFacilitatorCreate = await request("/programs", {
     method: "POST",
-    token: adminToken,
+    token: facilitatorToken,
     body: {
       programName: "Forbidden verification program",
       programCode: `${verificationCode}-A`,
       programType: "TEST",
     },
   });
-  requireStatus(forbiddenAdminCreate, 403, "SYSTEM_ADMIN program creation RBAC check");
+  requireStatus(forbiddenFacilitatorCreate, 403, "BARANGAY_FACILITATOR program creation RBAC check");
 
   const createProgram = await request("/programs", {
     method: "POST",

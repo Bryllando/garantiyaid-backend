@@ -18,9 +18,13 @@ const request = (path, method, body) => fetch(origin + path, { method, headers: 
 test('Other document names persist through create/read/edit and clear when Other is removed', async t => {
   let stored;
   const audits = [];
+  const fundingAndCriteria = {
+    budgetAmount: '10000.00',
+    criteria: [{ criterionName: 'Adult applicant', fieldName: 'AGE', operator: 'GREATER_THAN_OR_EQUAL', expectedValue: 18 }],
+  };
   const db = {
     program: {
-      create: async ({ data, select }) => { assert.equal(select.otherRequiredDocumentName, true); stored = { ...data, programId, status: 'DRAFT', criteria: [] }; return structuredClone(stored); },
+      create: async ({ data, select }) => { assert.equal(select.otherRequiredDocumentName, true); stored = { ...data, programId, status: 'DRAFT', criteria: data.criteria.create }; return structuredClone(stored); },
       findFirst: async ({ select }) => { assert.equal(select.otherRequiredDocumentName, true); return structuredClone(stored); },
       update: async ({ data, select }) => { assert.equal(select.otherRequiredDocumentName, true); Object.assign(stored, data); return structuredClone(stored); },
     },
@@ -31,7 +35,12 @@ test('Other document names persist through create/read/edit and clear when Other
   replace(t, prisma, '$transaction', async callback => callback(db));
   replace(t, prisma.program, 'findFirst', db.program.findFirst);
 
-  let response = await request('', 'POST', { programName: 'Test assistance', programCode: 'TEST-NAME', programType: 'TEST', requiredDocumentTypes: ['OTHER'], otherRequiredDocumentName: ' Request letter ' });
+  const fields = { programName: 'Test assistance', programCode: 'TEST-NAME', programType: 'TEST', requiredDocumentTypes: ['OTHER'], otherRequiredDocumentName: ' Request letter ' };
+  const incomplete = await request('', 'POST', fields);
+  assert.equal(incomplete.status, 400);
+  assert.deepEqual((await incomplete.json()).error.details.fields.map(({ field }) => field).sort(), ['budgetAmount', 'criteria']);
+  assert.equal(stored, undefined);
+  let response = await request('', 'POST', { ...fields, ...fundingAndCriteria });
   assert.equal(response.status, 201);
   assert.equal((await response.json()).data.program.otherRequiredDocumentName, 'Request letter');
   response = await request(`/${programId}`, 'GET');
@@ -68,7 +77,7 @@ test('Other document names persist through create/read/edit and clear when Other
     assert.equal(error.code, 'VALIDATION_ERROR');
     assert.ok(error.details.fields[0].field.startsWith('otherRequiredDocumentNames'));
   }
-  response = await request('', 'POST', { programName: 'TEST – Community Cash Assistance', programCode: 'TEST-CASH-2026-01', programType: 'CASH_ASSISTANCE', description: 'Practice program.', grantAmount: '1000.00', budgetAmount: '10000.00', applicationStartDate: '2026-11-08', applicationEndDate: '2026-12-31', requiredDocumentTypes: ['VALID_ID', 'BARANGAY_CERTIFICATE', 'OTHER'], otherRequiredDocumentNames: ['Request letter', 'Certificate of indigency'] });
+  response = await request('', 'POST', { ...fundingAndCriteria, programName: 'TEST – Community Cash Assistance', programCode: 'TEST-CASH-2026-01', programType: 'CASH_ASSISTANCE', description: 'Practice program.', grantAmount: '1000.00', applicationStartDate: '2026-11-08', applicationEndDate: '2026-12-31', requiredDocumentTypes: ['VALID_ID', 'BARANGAY_CERTIFICATE', 'OTHER'], otherRequiredDocumentNames: ['Request letter', 'Certificate of indigency'] });
   assert.equal(response.status, 201, 'the complete manual example must pass real request validation');
 });
 
